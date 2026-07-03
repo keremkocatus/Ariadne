@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PanelLeft, Play, Loader2 } from "lucide-react";
 import { SqlEditor } from "@/components/editor/SqlEditor";
+import { ObjectInfoPanel } from "@/components/editor/ObjectInfoPanel";
 import { ResultView } from "@/components/query/ResultView";
 import { Explorer } from "@/components/explorer/Explorer";
 import { ConnectionMenu } from "@/components/connection/ConnectionMenu";
@@ -8,7 +9,7 @@ import { registerEventBridge } from "@/lib/events";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSchemaStore } from "@/stores/schemaStore";
 import { useUiStore } from "@/stores/uiStore";
-import { isAriadneError, runQuery, type AriadneError, type RunResult } from "@/lib/api";
+import { isAriadneError, runQuery, type AriadneError, type ObjectInfo, type RunResult } from "@/lib/api";
 
 export default function App() {
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
@@ -20,6 +21,7 @@ export default function App() {
   const [result, setResult] = useState<RunResult | null>(null);
   const [error, setError] = useState<AriadneError | null>(null);
   const [running, setRunning] = useState(false);
+  const [peek, setPeek] = useState<ObjectInfo | null>(null);
 
   useEffect(() => {
     const p = registerEventBridge();
@@ -115,8 +117,9 @@ export default function App() {
         )}
 
         <main className="flex min-w-0 flex-1 flex-col">
-          <div className="min-h-0 flex-[3] border-b border-border">
-            <SqlEditor value={sql} onChange={setSql} onRun={run} />
+          <div className="relative min-h-0 flex-[3] border-b border-border">
+            <SqlEditor value={sql} onChange={setSql} onRun={run} onPeek={setPeek} />
+            {peek && <ObjectInfoPanel info={peek} onClose={() => setPeek(null)} />}
           </div>
           <div className="min-h-0 flex-[2] overflow-auto bg-bg-elev">
             <ResultView result={result} error={error} />

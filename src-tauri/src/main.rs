@@ -3,6 +3,7 @@
 
 mod cache;
 mod commands;
+mod complete;
 mod db;
 mod error;
 mod profiles;
@@ -30,6 +31,9 @@ fn main() {
             commands::schema::get_schema_snapshot,
             commands::schema::refresh_schema,
             commands::query::run_query,
+            commands::complete::get_completions,
+            commands::complete::get_object_info,
+            commands::complete::get_signature_help,
         ])
         .run(tauri::generate_context!())
         .expect("Ariadne başlatılamadı");

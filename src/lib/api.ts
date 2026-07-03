@@ -155,3 +155,76 @@ export interface RunResult {
 export function runQuery(connectionId: string, sql: string): Promise<RunResult> {
   return invoke("run_query", { connectionId, sql });
 }
+
+// ---- Completion (design 02 §3, 04) ----
+export type CompletionKind =
+  | "table"
+  | "view"
+  | "column"
+  | "function"
+  | "schema"
+  | "keyword"
+  | "join";
+
+export interface CompletionItem {
+  label: string;
+  kind: CompletionKind;
+  insert_text: string;
+  is_snippet: boolean;
+  detail?: string | null;
+  sort_key: string;
+}
+export interface CompletionResult {
+  items: CompletionItem[];
+  replace_range: { start: number; end: number };
+}
+
+export interface ObjColumn {
+  name: string;
+  type_name: string;
+  not_null: boolean;
+  is_pk: boolean;
+}
+export interface ObjFk {
+  columns: string[];
+  ref_table: string;
+  ref_columns: string[];
+  constraint_name: string;
+}
+export interface ObjectInfo {
+  schema: string;
+  name: string;
+  kind: string;
+  estimated_rows: number;
+  comment?: string | null;
+  columns: ObjColumn[];
+  primary_key: string[];
+  foreign_keys: ObjFk[];
+}
+export interface SignatureHelp {
+  label: string;
+  parameters: string[];
+  active_parameter: number;
+}
+
+export function getCompletions(
+  connectionId: string,
+  sql: string,
+  cursorOffset: number,
+): Promise<CompletionResult> {
+  return invoke("get_completions", { connectionId, sql, cursorOffset });
+}
+export function getObjectInfo(
+  connectionId: string,
+  sql: string,
+  cursorOffset: number,
+): Promise<ObjectInfo | null> {
+  return invoke("get_object_info", { connectionId, sql, cursorOffset });
+}
+export function getSignatureHelp(
+  connectionId: string,
+  sql: string,
+  cursorOffset: number,
+): Promise<SignatureHelp | null> {
+  return invoke("get_signature_help", { connectionId, sql, cursorOffset });
+}
