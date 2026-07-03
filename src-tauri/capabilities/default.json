@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Ariadne ana pencere yetkileri (M0: yalnızca core).",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
