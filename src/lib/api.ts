@@ -146,14 +146,37 @@ export type StatementResult =
   | { kind: "affected"; command: string; row_count: number }
   | { kind: "empty"; command: string };
 export type TxStatus = "idle" | "in_transaction" | "aborted";
+export interface Confirmation {
+  statement_index: number;
+  kind: "update" | "delete" | "truncate";
+  table: string;
+  estimated_rows: number | null;
+}
 export interface RunResult {
   query_id: string;
   statements: StatementResult[];
   tx_status: TxStatus;
+  needs_confirmation?: Confirmation | null;
 }
 
-export function runQuery(connectionId: string, sql: string): Promise<RunResult> {
-  return invoke("run_query", { connectionId, sql });
+export function runQuery(
+  connectionId: string,
+  sql: string,
+  tabId: string,
+  queryId: string,
+  confirmed?: boolean,
+  maxRowsPerPage?: number,
+): Promise<RunResult> {
+  return invoke("run_query", { connectionId, sql, tabId, queryId, confirmed, maxRowsPerPage });
+}
+export function fetchPage(connectionId: string, queryId: string): Promise<Page> {
+  return invoke("fetch_page", { connectionId, queryId });
+}
+export function cancelQuery(connectionId: string, queryId: string): Promise<void> {
+  return invoke("cancel_query", { connectionId, queryId });
+}
+export function closeResult(connectionId: string, tabId: string): Promise<void> {
+  return invoke("close_result", { connectionId, tabId });
 }
 
 // ---- Completion (design 02 §3, 04) ----

@@ -12,6 +12,8 @@ use sqlx::{Column, Executor, PgPool, Row, TypeInfo};
 
 use crate::error::AriadneError;
 
+pub mod exec;
+
 #[derive(Debug, Serialize)]
 pub struct RunResult {
     pub query_id: String,

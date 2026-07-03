@@ -48,6 +48,7 @@ pub async fn connect(
         pool,
         schema_cache: ArcSwap::from_pointee(empty_cache(server_version)),
         info: info.clone(),
+        exec: Default::default(),
     });
 
     state

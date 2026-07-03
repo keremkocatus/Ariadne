@@ -1,9 +1,14 @@
-//! Query komutları (design 02 §3). M1: connection_id üzerinden çalışır,
-//! DDL sonrası cache'i otomatik tazeler. Cursor/pagination/tx M3'te.
+//! Query komutları (design 02 §3, 05). M3: cursor'lu execution, pagination,
+//! cancel, tab=session transaction, destructive guard.
+//!
+//! API notu (design'dan pratik sapma): run_query request'i client-üretimli
+//! `query_id` taşır (çalışırken cancel için); fetch_page/cancel/close ayrıca
+//! `connection_id` alır. Frontend ikisini de bilir.
 
 use tauri::{AppHandle, State};
 
-use crate::db::{self, RunResult};
+use crate::db::exec::{self, Page, RunArgs, RunResult, PAGE_SIZE};
+use crate::db::touches_schema;
 use crate::error::AriadneError;
 use crate::state::AppState;
 
@@ -13,16 +18,60 @@ use super::schema::spawn_cache_refresh;
 pub async fn run_query(
     connection_id: String,
     sql: String,
+    tab_id: String,
+    query_id: String,
+    confirmed: Option<bool>,
+    max_rows_per_page: Option<i64>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<RunResult, AriadneError> {
     let conn = state.connection(&connection_id)?;
-    let result = db::run_query(&sql, &conn.pool).await?;
+    let result = exec::run_query(
+        &conn.exec,
+        &conn.pool,
+        RunArgs {
+            sql: &sql,
+            tab_id: &tab_id,
+            query_id: &query_id,
+            confirmed: confirmed.unwrap_or(false),
+            page_size: max_rows_per_page.unwrap_or(PAGE_SIZE),
+        },
+    )
+    .await?;
 
     // Ariadne içinden çalıştırılan DDL kendi cache'imizi bayatlatır → sessiz refresh.
-    if db::touches_schema(&sql) {
+    if touches_schema(&sql) {
         spawn_cache_refresh(app, conn);
     }
-
     Ok(result)
+}
+
+#[tauri::command]
+pub async fn fetch_page(
+    connection_id: String,
+    query_id: String,
+    state: State<'_, AppState>,
+) -> Result<Page, AriadneError> {
+    let conn = state.connection(&connection_id)?;
+    exec::fetch_page(&conn.exec, &query_id).await
+}
+
+#[tauri::command]
+pub async fn cancel_query(
+    connection_id: String,
+    query_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AriadneError> {
+    let conn = state.connection(&connection_id)?;
+    exec::cancel_query(&conn.exec, &conn.pool, &query_id).await
+}
+
+#[tauri::command]
+pub async fn close_result(
+    connection_id: String,
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AriadneError> {
+    let conn = state.connection(&connection_id)?;
+    exec::close_result(&conn.exec, &tab_id).await
 }

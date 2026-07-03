@@ -49,6 +49,8 @@ pub struct ActiveConnection {
     pub pool: PgPool,
     pub schema_cache: ArcSwap<SchemaCache>,
     pub info: ConnectionInfo,
+    /// Cursor'lar, tab session'ları, iptal için PID'ler (design 05).
+    pub exec: crate::db::exec::ExecRegistry,
 }
 
 /// connect dönüşü (design 02 §3).

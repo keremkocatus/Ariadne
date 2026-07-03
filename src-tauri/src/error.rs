@@ -61,14 +61,23 @@ impl From<sqlx::Error> for AriadneError {
     fn from(err: sqlx::Error) -> Self {
         use sqlx::Error as E;
         match &err {
-            E::Database(db) => AriadneError {
-                kind: ErrorKind::QueryError,
-                message: db.message().to_string(),
-                detail: None,
-                sqlstate: db.code().map(|c| c.into_owned()),
-                position: None,
-                hint: None,
-            },
+            E::Database(db) => {
+                let sqlstate = db.code().map(|c| c.into_owned());
+                // 57014 = query_canceled: kullanıcı iptali; UI hata gibi göstermez (design 05 §3).
+                let kind = if sqlstate.as_deref() == Some("57014") {
+                    ErrorKind::QueryCancelled
+                } else {
+                    ErrorKind::QueryError
+                };
+                AriadneError {
+                    kind,
+                    message: db.message().to_string(),
+                    detail: None,
+                    sqlstate,
+                    position: None,
+                    hint: None,
+                }
+            }
             E::PoolTimedOut => AriadneError::new(
                 ErrorKind::ConnectionFailed,
                 "Connection pool timed out",

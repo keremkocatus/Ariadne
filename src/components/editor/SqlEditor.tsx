@@ -1,5 +1,5 @@
-import Editor, { type OnMount } from "@monaco-editor/react";
-import { useRef } from "react";
+import Editor, { type OnMount, type Monaco } from "@monaco-editor/react";
+import { useEffect, useRef } from "react";
 import type { editor } from "monaco-editor";
 import { registerSqlProviders } from "@/lib/monaco/providers";
 import { getObjectInfo, type ObjectInfo } from "@/lib/api";
@@ -12,15 +12,44 @@ interface SqlEditorProps {
   onRun: () => void;
   /** Alt+F1 nesne bilgisi (null = imleçteki identifier çözülemedi). */
   onPeek?: (info: ObjectInfo | null) => void;
+  /** SQL hata marker'ı (design 05 hata sunumu): byte offset + mesaj. */
+  marker?: { offset: number; message: string } | null;
 }
 
-export function SqlEditor({ value, onChange, onRun, onPeek }: SqlEditorProps) {
+export function SqlEditor({ value, onChange, onRun, onPeek, marker }: SqlEditorProps) {
   const runRef = useRef(onRun);
   runRef.current = onRun;
   const peekRef = useRef(onPeek);
   peekRef.current = onPeek;
+  const edRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<Monaco | null>(null);
+
+  // Hata marker'ını modele işle (kırmızı alt çizgi + hover mesajı).
+  useEffect(() => {
+    const ed = edRef.current;
+    const monaco = monacoRef.current;
+    const model = ed?.getModel();
+    if (!ed || !monaco || !model) return;
+    if (!marker) {
+      monaco.editor.setModelMarkers(model, "ariadne", []);
+      return;
+    }
+    const pos = model.getPositionAt(marker.offset);
+    monaco.editor.setModelMarkers(model, "ariadne", [
+      {
+        severity: monaco.MarkerSeverity.Error,
+        message: marker.message,
+        startLineNumber: pos.lineNumber,
+        startColumn: pos.column,
+        endLineNumber: pos.lineNumber,
+        endColumn: pos.column + 1,
+      },
+    ]);
+  }, [marker]);
 
   const handleMount: OnMount = (ed, monaco) => {
+    edRef.current = ed;
+    monacoRef.current = monaco;
     registerSqlProviders();
 
     // Çalıştırma: Ctrl+Enter (M0 kabul) + Ctrl+E + F5 (SSMS).
