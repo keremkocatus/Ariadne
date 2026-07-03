@@ -37,6 +37,16 @@ pg_query = "6"
 
 uuid = { version = "1", features = ["v4"] }
 
+# Şema cache: immutable snapshot + lock'suz okuma (design 03 §5).
+arc-swap = "1"
+smallvec = "1"
+# Cache lookup indeksleri / running query haritası.
+dashmap = "6"
+# fetched_at zaman damgası + "cache: 2 dk önce" göstergesi.
+chrono = { version = "0.4", features = ["serde"] }
+# OS keychain — Windows Credential Manager öncelikli (design 06 §2).
+keyring = { version = "3", features = ["windows-native"] }
+
 [profile.dev]
 # Geliştirmede daha hızlı link.
 incremental = true

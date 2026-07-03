@@ -71,7 +71,7 @@ impl From<sqlx::Error> for AriadneError {
             },
             E::PoolTimedOut => AriadneError::new(
                 ErrorKind::ConnectionFailed,
-                "Bağlantı havuzu zaman aşımına uğradı",
+                "Connection pool timed out",
             ),
             E::Io(_) | E::Tls(_) | E::Configuration(_) => {
                 AriadneError::new(ErrorKind::ConnectionFailed, err.to_string())

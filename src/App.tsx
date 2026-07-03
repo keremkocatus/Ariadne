@@ -1,122 +1,173 @@
-import { useCallback, useState } from "react";
-import { SqlEditor } from "./components/editor/SqlEditor";
-import {
-  isAriadneError,
-  runQuery,
-  type AriadneError,
-  type RunResult,
-  type StatementResult,
-} from "./lib/api";
-
-// M0 kabul kriteri: bu sorguyu yazıp Ctrl+Enter → sonucu gör.
-const INITIAL_SQL = "SELECT version();";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { PanelLeft, Play, Loader2 } from "lucide-react";
+import { SqlEditor } from "@/components/editor/SqlEditor";
+import { ResultView } from "@/components/query/ResultView";
+import { Explorer } from "@/components/explorer/Explorer";
+import { ConnectionMenu } from "@/components/connection/ConnectionMenu";
+import { registerEventBridge } from "@/lib/events";
+import { useConnectionStore } from "@/stores/connectionStore";
+import { useSchemaStore } from "@/stores/schemaStore";
+import { useUiStore } from "@/stores/uiStore";
+import { isAriadneError, runQuery, type AriadneError, type RunResult } from "@/lib/api";
 
 export default function App() {
-  const [sql, setSql] = useState(INITIAL_SQL);
-  const [running, setRunning] = useState(false);
+  const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
+  const activeInfo = useConnectionStore((s) => s.activeInfo());
+  const cacheEntry = useSchemaStore((s) => (activeConnectionId ? s.byConnection[activeConnectionId] : undefined));
+  const { sidebarVisible, sidebarWidth, toggleSidebar, setSidebarWidth } = useUiStore();
+
+  const [sql, setSql] = useState("SELECT version();");
   const [result, setResult] = useState<RunResult | null>(null);
   const [error, setError] = useState<AriadneError | null>(null);
+  const [running, setRunning] = useState(false);
+
+  useEffect(() => {
+    const p = registerEventBridge();
+    return () => void p.then((un) => un());
+  }, []);
 
   const run = useCallback(async () => {
     if (running) return;
+    if (!activeConnectionId) {
+      setError({ kind: "connection_failed", message: "Connect to a database first" });
+      return;
+    }
     setRunning(true);
     setError(null);
     try {
-      const res = await runQuery(sql);
-      setResult(res);
+      setResult(await runQuery(activeConnectionId, sql));
     } catch (e) {
       setResult(null);
-      setError(
-        isAriadneError(e)
-          ? e
-          : { kind: "internal", message: String(e) },
-      );
+      setError(isAriadneError(e) ? e : { kind: "internal", message: String(e) });
     } finally {
       setRunning(false);
     }
-  }, [sql, running]);
+  }, [running, activeConnectionId, sql]);
+
+  const openRelation = useCallback(
+    (schema: string, name: string) => {
+      const next = `SELECT * FROM "${schema}"."${name}" LIMIT 500;`;
+      setSql(next);
+      if (activeConnectionId) {
+        setRunning(true);
+        setError(null);
+        runQuery(activeConnectionId, next)
+          .then((r) => setResult(r))
+          .catch((e) => {
+            setResult(null);
+            setError(isAriadneError(e) ? e : { kind: "internal", message: String(e) });
+          })
+          .finally(() => setRunning(false));
+      }
+    },
+    [activeConnectionId],
+  );
+
+  // Global kısayollar: Ctrl+B sidebar, F5 çalıştır (editör dışıysa Explorer yenilesin).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleSidebar]);
 
   return (
     <div className="flex h-full flex-col bg-bg text-fg">
-      {/* Başlık şeridi */}
-      <header className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="font-mono text-xs tracking-wide text-fg-muted">
-          ariadne <span className="opacity-40">— M0</span>
-        </span>
+      {/* Toolbar */}
+      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-2">
+        <button
+          className="rounded p-1 text-fg-muted hover:bg-bg-elev hover:text-fg"
+          onClick={toggleSidebar}
+          title="Sidebar (Ctrl+B)"
+        >
+          <PanelLeft size={15} />
+        </button>
+        <ConnectionMenu />
         <button
           onClick={run}
-          disabled={running}
-          className="rounded border border-border bg-bg-elev px-3 py-1 text-xs font-medium hover:border-fg-muted disabled:opacity-40"
+          disabled={running || !activeConnectionId}
+          className="inline-flex items-center gap-1.5 rounded border border-fg bg-fg px-2.5 py-1 text-xs font-medium text-bg hover:opacity-90 disabled:opacity-40"
           title="Ctrl+Enter / Ctrl+E"
         >
-          {running ? "Running…" : "Run ▸"}
+          {running ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
+          Run
         </button>
+        <div className="ml-auto font-mono text-[11px] tracking-wide text-fg-muted">ariadne — M1</div>
       </header>
 
-      {/* Editör */}
-      <div className="min-h-0 flex-[3] border-b border-border">
-        <SqlEditor value={sql} onChange={setSql} onRun={run} />
-      </div>
-
-      {/* Sonuç / hata — M0: ham <pre> (design 10 M0) */}
-      <div className="min-h-0 flex-[2] overflow-auto bg-bg-elev p-3">
-        {error ? (
-          <ErrorView error={error} />
-        ) : result ? (
-          <ResultView result={result} />
-        ) : (
-          <p className="font-mono text-xs text-fg-muted">
-            Sonuç burada görünecek. Ctrl+Enter ile çalıştır.
-          </p>
+      {/* Gövde */}
+      <div className="flex min-h-0 flex-1">
+        {sidebarVisible && (
+          <>
+            <aside style={{ width: sidebarWidth }} className="shrink-0 border-r border-border">
+              <Explorer
+                connectionId={activeConnectionId}
+                profileId={activeInfo?.profile_id ?? null}
+                onOpenRelation={openRelation}
+              />
+            </aside>
+            <ResizeHandle width={sidebarWidth} onResize={setSidebarWidth} />
+          </>
         )}
+
+        <main className="flex min-w-0 flex-1 flex-col">
+          <div className="min-h-0 flex-[3] border-b border-border">
+            <SqlEditor value={sql} onChange={setSql} onRun={run} />
+          </div>
+          <div className="min-h-0 flex-[2] overflow-auto bg-bg-elev">
+            <ResultView result={result} error={error} />
+          </div>
+        </main>
       </div>
+
+      {/* Status bar */}
+      <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-border px-2 text-[11px] text-fg-muted">
+        {activeInfo ? (
+          <>
+            <span className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full" style={{ background: activeInfo.color || "#4ade80" }} />
+              {activeInfo.database} · PostgreSQL {activeInfo.server_version.split(" ")[0]}
+            </span>
+            <span>cache: {cacheEntry?.snapshot ? relTime(cacheEntry.snapshot.fetched_at) : "—"}</span>
+          </>
+        ) : (
+          <span>no connection</span>
+        )}
+        <span className="ml-auto">v0.0.0</span>
+      </footer>
     </div>
   );
 }
 
-function ErrorView({ error }: { error: AriadneError }) {
+function ResizeHandle({ width, onResize }: { width: number; onResize: (w: number) => void }) {
+  const startX = useRef(0);
+  const startW = useRef(0);
+  const onDown = (e: React.MouseEvent) => {
+    startX.current = e.clientX;
+    startW.current = width;
+    const onMove = (ev: MouseEvent) => onResize(startW.current + (ev.clientX - startX.current));
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
   return (
-    <pre className="font-mono text-xs whitespace-pre-wrap text-danger">
-      [{error.kind}
-      {error.sqlstate ? ` ${error.sqlstate}` : ""}] {error.message}
-      {error.hint ? `\nHINT: ${error.hint}` : ""}
-      {error.detail ? `\n\n${error.detail}` : ""}
-    </pre>
+    <div
+      onMouseDown={onDown}
+      className="w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-border"
+    />
   );
 }
 
-function ResultView({ result }: { result: RunResult }) {
-  return (
-    <div className="space-y-4">
-      {result.statements.map((s, i) => (
-        <pre
-          key={i}
-          className="font-mono text-xs whitespace-pre text-fg"
-        >
-          {formatStatement(s)}
-        </pre>
-      ))}
-      <p className="font-mono text-[11px] text-fg-muted">
-        tx: {result.tx_status}
-      </p>
-    </div>
-  );
-}
-
-function formatStatement(s: StatementResult): string {
-  switch (s.kind) {
-    case "affected":
-      return `${s.command} — ${s.row_count} row(s)`;
-    case "empty":
-      return `${s.command}`;
-    case "rows": {
-      const header = s.columns.map((c) => c.name).join("\t");
-      const sep = s.columns.map((c) => "─".repeat(c.name.length)).join("\t");
-      const body = s.first_page.rows
-        .map((row) => row.map((v) => (v === null ? "∅" : v)).join("\t"))
-        .join("\n");
-      const footer = `\n(${s.first_page.fetched_total} row(s), ${s.first_page.elapsed_ms} ms)`;
-      return `${header}\n${sep}\n${body}${footer}`;
-    }
-  }
+function relTime(iso: string): string {
+  const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60) return `${Math.floor(secs)}s ago`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  return `${Math.floor(secs / 3600)}h ago`;
 }

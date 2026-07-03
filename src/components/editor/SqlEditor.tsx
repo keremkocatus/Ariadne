@@ -22,6 +22,8 @@ export function SqlEditor({ value, onChange, onRun }: SqlEditorProps) {
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyE, () =>
       runRef.current(),
     );
+    // F5 de çalıştırır (SSMS; editör odaklıyken — design 07 §3).
+    ed.addCommand(monaco.KeyCode.F5, () => runRef.current());
     ed.focus();
   };
 
@@ -44,7 +46,7 @@ export function SqlEditor({ value, onChange, onRun }: SqlEditorProps) {
   return (
     <Editor
       height="100%"
-      defaultLanguage="sql"
+      defaultLanguage="pgsql"
       theme="vs-dark"
       value={value}
       onChange={(v) => onChange(v ?? "")}

@@ -1,18 +1,28 @@
-//! Query komutları (design 02 §3). M0: sadece `run_query`.
+//! Query komutları (design 02 §3). M1: connection_id üzerinden çalışır,
+//! DDL sonrası cache'i otomatik tazeler. Cursor/pagination/tx M3'te.
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::db::{self, RunResult};
 use crate::error::AriadneError;
 use crate::state::AppState;
 
-/// M0: tek hardcoded bağlantı → cursor'suz çalıştır → tek sayfa dön.
-/// connection_id / tab_id / pagination M1–M3'te eklenecek.
+use super::schema::spawn_cache_refresh;
+
 #[tauri::command]
 pub async fn run_query(
+    connection_id: String,
     sql: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<RunResult, AriadneError> {
-    let pool = state.pool().await?;
-    db::run_query(&sql, pool).await
+    let conn = state.connection(&connection_id)?;
+    let result = db::run_query(&sql, &conn.pool).await?;
+
+    // Ariadne içinden çalıştırılan DDL kendi cache'imizi bayatlatır → sessiz refresh.
+    if db::touches_schema(&sql) {
+        spawn_cache_refresh(app, conn);
+    }
+
+    Ok(result)
 }
