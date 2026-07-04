@@ -15,6 +15,7 @@ import { CommandPalette } from "@/components/layout/CommandPalette";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { saveSqlFile } from "@/lib/fileActions";
 import { toast } from "sonner";
+import { offerReconnect } from "@/lib/sessionResume";
 import { registerEventBridge } from "@/lib/events";
 import { getRunSelection } from "@/lib/editorRun";
 import { useGlobalShortcuts } from "@/lib/shortcuts";
@@ -59,6 +60,12 @@ export default function App() {
   useEffect(() => {
     if (useTabsStore.getState().tabs.length === 0) addTab();
   }, [addTab]);
+
+  // Profiller yüklenince açılış reconnect daveti (design 17 §P1-V3). offerReconnect
+  // kendi içinde tek-sefer korumalı; restore edilmiş eşleşen tab yoksa sessiz.
+  useEffect(() => {
+    void useConnectionStore.getState().loadProfiles().then(offerReconnect);
+  }, []);
 
   useGlobalShortcuts();
 

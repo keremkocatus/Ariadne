@@ -168,6 +168,10 @@ interface TabsState {
   /// Bağlantı kapandığında o bağlantıya bağlı tab'ların çalışan/tx durumunu
   /// temizler (design 12 §P1-M1 item 5) — bkz. setConnection'daki not.
   releaseTabsForConnection: (connectionId: string) => void;
+  /// Açılışta reconnect sonrası: eski (ölü) bağlantı id'lerine bağlı restore
+  /// edilmiş tab'ları yeni bağlantıya taşır (design 17 §P1-V3). Restore edilen
+  /// tab'lar idle (emptyQuery) olduğundan doğrudan yeniden atanır.
+  remapConnection: (oldConnectionIds: string[], newConnectionId: string) => void;
 
   run: (id: string, opts?: RunOpts) => Promise<void>;
   fetchMore: (id: string) => Promise<void>;
@@ -366,6 +370,15 @@ export const useTabsStore = create<TabsState>()(
         t.connectionId === connectionId
           ? { ...t, query: { ...t.query, running: false, txStatus: "idle", hasMore: false, fetchingMore: false } }
           : t,
+      ),
+    }));
+  },
+
+  remapConnection(oldConnectionIds, newConnectionId) {
+    const old = new Set(oldConnectionIds);
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.connectionId && old.has(t.connectionId) ? { ...t, connectionId: newConnectionId } : t,
       ),
     }));
   },
