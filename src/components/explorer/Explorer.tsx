@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tree } from "react-arborist";
 import { Pin, RefreshCw, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -102,12 +102,33 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
   }, []);
 
   // Tek tık = peek (zararsız, sadece bilgi); çift tık = aç (design 15 §P1-U3).
-  const peekNode = (node: TreeNode) => {
+  // Tek-tık peek DEBOUNCE edilir (design 19 N2): peek paneli akış-içi bir flex
+  // çocuğu (max-h-42%), açılınca ağaç alanını küçültüp satırları kaydırır; bu
+  // kayma çift-tık'ın iki tıklamasını farklı satırlara düşürüp `dblclick`'in hiç
+  // ateşlenmemesine yol açıyordu. Peek'i geciktirince çift-tık aradaki timer'ı
+  // iptal eder → peek AÇILMAZ, kayma OLMAZ, activate hemen çalışır.
+  const clickTimer = useRef<number | null>(null);
+  const cancelPendingPeek = () => {
+    if (clickTimer.current != null) {
+      window.clearTimeout(clickTimer.current);
+      clickTimer.current = null;
+    }
+  };
+  useEffect(() => cancelPendingPeek, []);
+  const peekRelation = (node: TreeNode) => {
     if (node.ntype === "relation" && node.rel && node.schema) {
       setPeek({ schema: node.schema, rel: node.rel });
     }
   };
+  const peekNode = (node: TreeNode) => {
+    cancelPendingPeek();
+    clickTimer.current = window.setTimeout(() => {
+      clickTimer.current = null;
+      peekRelation(node);
+    }, 220);
+  };
   const activateNode = (node: TreeNode) => {
+    cancelPendingPeek(); // çift-tık: bekleyen peek'i iptal et (kayma olmasın)
     if (node.ntype === "relation" && node.rel && node.schema) {
       onOpenRelation(node.schema, node.rel.name);
     } else if (node.ntype === "function" && node.fn) {
@@ -444,17 +465,22 @@ function Empty({ text }: { text: string }) {
   return <div className="p-3 text-xs text-fg-muted">{text}</div>;
 }
 
-// Container boyutunu ölçüp react-arborist'e height verir.
+// Container boyutunu ölçüp react-arborist'e height verir. **Callback ref** kullanır
+// (design 19 N4): ölçülen div yalnız snapshot HAZIR dalında render edilir; mount-anı
+// `useEffect([])` ile kurulan bir observer, div henüz yokken (Loading) çalışıp `null`
+// görür ve bir daha kurulmazdı → snapshot gelince height 0'da kalıp ağaç boş çizilirdi
+// (sekme gidip gelince remount ile "düzeliyordu"). Callback ref düğüm mount olunca
+// kurar, deps sorunu yaşamaz → yeni bağlantıda ağaç HEMEN gelir.
 function useSize() {
-  const ref = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
-  useEffect(() => {
-    if (!ref.current) return;
-    const ro = new ResizeObserver((entries) => {
-      setHeight(entries[0].contentRect.height);
-    });
-    ro.observe(ref.current);
-    return () => ro.disconnect();
+  const roRef = useRef<ResizeObserver | null>(null);
+  const ref = useCallback((node: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
+    if (node) {
+      const ro = new ResizeObserver((entries) => setHeight(entries[0].contentRect.height));
+      ro.observe(node);
+      roRef.current = ro;
+    }
   }, []);
   return { ref, height };
 }

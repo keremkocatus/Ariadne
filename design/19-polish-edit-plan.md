@@ -180,6 +180,20 @@ hâlâ sorunsa `onActivate`'in çağrıldığını (log) + `openRelation`'ın `r
 gittiğini doğrula. Gerekirse çift-tık'ı NodeRow yerine react-arborist'in
 `onActivate`/`onDoubleClick` API'sine taşı, ya da tek-tık peek gecikmesini kaldır.
 
+**UYGULANDI (N2 kök neden bulundu — İKİ katman):**
+- (a) N4 (ağaç hiç render olmuyor) → callback-ref ile düzeltildi (aşağıdaki `useSize`).
+- (b) **Peek-shift yarışı (asıl statik neden):** `PeekPanel` akış-içi bir flex çocuğu
+  (`max-h-[42%]`), tek-tık'ta açılınca `flex-1` ağaç alanını KÜÇÜLTÜR → satırlar
+  yukarı kayar. Çift-tık'ın 1. tıklaması peek'i açıp layout'u kaydırdığından 2.
+  tıklama farklı bir satıra denk gelir; tarayıcı `dblclick`'i yalnız iki tık AYNI
+  elemandaysa ateşler → hiç ateşlenmez → SELECT açılmaz. **Ağaç görünürken bile**
+  reprodüksiyonu bu açıklar. Çözüm: react-arborist'in `Tree.onActivate` prop'u
+  KULLANILMADI — çünkü DefaultRow `node.handleClick` ile **tek tıkta** `activate()`
+  çağırıyor (her tıkta tab açardı, doğrulandı). Bunun yerine **tek-tık peek 220ms
+  debounce** edildi: çift-tık aradaki timer'ı iptal eder → peek açılmaz, kayma olmaz,
+  `activateNode` hemen çalışır. peek/activate hem ağaç hem pinned/arama listelerinde
+  tutarlı. (plan option (c)).
+
 ### Kabul
 
 - Yeni bir profile bağlanınca Explorer ağacı (şemalar/Tables/…) **hemen** görünür;
