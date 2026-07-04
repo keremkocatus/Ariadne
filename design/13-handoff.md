@@ -31,10 +31,11 @@ Kullanıcı önceliğiyle sıralı (Q&A 2026-07-04). Her milestone "çalışan u
 
 1. ~~**P1-M1 — Multi-connection eşzamanlı + hızlı geçiş**~~ ✅ **tamamlandı**, elle test edildi (yukarı bakın).
 2. ~~**P1-M1.5 — design/14'teki GUI backlog'unun derin planlaması.**~~ ✅ **Plan design/15**, senaryolar design/16.
-   ~~**P1-U1…U4 — GUI backlog uygulaması.**~~ ✅ **HEPSİ tamamlandı (2026-07-04)**, `p1-u-gui-backlog` dalında 6 commit (U1, U2, U3a, U3b, U4a, U4b). Gate her commit'te yeşil. **Kalan iş: dalı main'e merge et + canlı DB duman testi** (`npm run tauri dev`) — U1 iki-DB akışı, seçim-run + marker, peek index/trigger, Alt+F1 overlay, sağ-tık filtre, roller, .sql aç/kaydet+dirty. Ö1/Ö6 (boş-durum kartı, yeni-tab başlangıç içeriği) ve Ö2/Ö3/Ö4/Ö7/Ö8 uygulanmadı (design/16 §4 sıralaması; Ö4/Ö6 M4/M5 bağımlı).
-3. **P1-M2 — Yerel SQLite depo + cache disk persist** (design 12 §P1-M2). **Buradan devam et.** `rusqlite` + `store/` modülü; cache build-girdilerini `postcard` ile diske yaz, `connect`'te load-then-refresh. Bu depo M4 history'nin de altyapısı. Not: U4 ayarları şimdilik localStorage'da; liste büyürse bu depoya taşınır.
-4. **P1-M3 — Okunaklı EXPLAIN (ANALYZE)** (design 12 §P1-M3). `classify` zaten `ExplainStmt` görüyor; `StatementResult::Explain{plan_json}` + ağaç UI; DML'de ANALYZE otomatik `BEGIN…ROLLBACK` sarmalı.
-5. **P1-M4 — Query history + snippets**, **P1-M5 — konfor paketi** (force kill, tam CSV export, hücre tam-değer, frequency ranking, açık tema).
+   ~~**P1-U1…U4 — GUI backlog uygulaması.**~~ ✅ **HEPSİ tamamlandı (2026-07-04)**, `p1-u-gui-backlog` dalında 6 commit (U1, U2, U3a, U3b, U4a, U4b). Gate her commit'te yeşil. **Kalan iş: dalı main'e merge et + canlı DB duman testi** (`npm run tauri dev`) — U1 iki-DB akışı, seçim-run + marker, peek index/trigger, Alt+F1 overlay, sağ-tık filtre, roller, .sql aç/kaydet+dirty. Ö1/Ö6 (boş-durum kartı, yeni-tab başlangıç içeriği) ve Ö2/Ö3/Ö4/Ö7/Ö8 uygulanmadı — **derin teknik planı design/17'de (P1-V1…V4; Ö6/Ö8 orada ertelenmiş)**.
+3. **P1-V1…V3 — senaryo-türevi hızlı kazanımlar** (design/17): V1 görünürlük paketi (RO rozeti + boş-durum kartı + bitiş sinyali, frontend-only), V2 grid zengin kopyalama, V3 açılışta tek-tık reconnect + tab remap. Toplam 2–3 küçük oturum; M2'ye bağımlılıkları yok.
+4. **P1-M2 — Yerel SQLite depo + cache disk persist** (design 12 §P1-M2). `rusqlite` + `store/` modülü; cache build-girdilerini `postcard` ile diske yaz, `connect`'te load-then-refresh. Bu depo M4 history'nin de altyapısı. Not: U4 ayarları şimdilik localStorage'da; liste büyürse bu depoya taşınır.
+5. **P1-M3 — Okunaklı EXPLAIN (ANALYZE)** (design 12 §P1-M3). `classify` zaten `ExplainStmt` görüyor; `StatementResult::Explain{plan_json}` + ağaç UI; DML'de ANALYZE otomatik `BEGIN…ROLLBACK` sarmalı.
+6. **P1-V4 — Activity paneli + cancel/kill backend'i** (design/17 §P1-V4) — design/12 M5'in "force kill" kalemini de üstlenir. **P1-M4 — Query history + snippets**, **P1-M5 — kalan konfor paketi** (tam CSV export, hücre tam-değer, frequency ranking, açık tema).
 
 Sözleşme değişiklikleri (02'ye işlenecek) özeti design/12 §4'te.
 
@@ -50,8 +51,8 @@ Sözleşme değişiklikleri (02'ye işlenecek) özeti design/12 §4'te.
 > "design/13'ü oku; `p1-u-gui-backlog` dalını (P1-U1…U4 tamam) main'e merge et ve
 > `npm run tauri dev` ile canlı DB duman testi yap (iki-DB switch, seçim-run+marker,
 > peek index/trigger, Alt+F1 overlay, sağ-tık filtre, roller, .sql aç/kaydet).
-> Sonra Faz 1 **P1-M2**'ye (yerel SQLite depo, design/12 §P1-M2) geç. İsteğe bağlı
-> küçük işler: design/16 Ö1/Ö2/Ö3/Ö5/Ö7 (boş-durum kartı, reconnect daveti,
-> grid zengin kopyalama, read-only rozeti, bitiş sinyali)."
+> Sonra **design/17'deki P1-V1'den başla** (V1 görünürlük paketi → V2 grid
+> kopyalama → V3 reconnect daveti), ardından Faz 1 **P1-M2**'ye (yerel SQLite
+> depo, design/12 §P1-M2) geç. V4 (Activity + kill) M3 sonrasına planlı."
 
 Memory: `m0-status.md` güncel durumu tutuyor.

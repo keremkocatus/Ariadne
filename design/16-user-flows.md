@@ -155,7 +155,15 @@ bağlanma (Ö2'nin otomatik hali — hata seli riski).
 
 ## 5. Sonraki adım
 
-U-milestone'ları uygulanırken "Hemen" sınıfı öneriler ilgili milestone'un kabul
+> **GÜNCELLEME (2026-07-04):** P1-U1…U4, buradaki "Hemen" ekleri OLMADAN
+> tamamlandı — Ö1–Ö8'in tamamı açık kaldı. Derin teknik plan **design/17**'ye
+> yazıldı: Ö5+Ö1+Ö7 → **P1-V1**, Ö3 → **P1-V2**, Ö2 → **P1-V3**, Ö4 (+M5
+> force-kill) → **P1-V4**; Ö6/Ö8 orada §6'da ertelenmiş. Ayrıca Ö2'nin
+> "connectionId → profil eşlemesi persist'te var" varsayımı YANLIŞ çıktı
+> (eşleme oturumla ölüyor) — düzeltme design/17 §P1-V3 madde 1'de.
+
+~~U-milestone'ları uygulanırken "Hemen" sınıfı öneriler ilgili milestone'un kabul
 listesine eklenerek gidilir; "Yakın dönem" olanlar U4 sonrasında ayrı küçük
-oturumlar. Bu dosya yeni senaryo/bulgu çıktıkça design/14 yerine güncellenecek
-yaşayan belgedir (14 ham yakalama listesiydi; planı 15, senaryoları 16 taşır).
+oturumlar.~~ Bu dosya yeni senaryo/bulgu çıktıkça design/14 yerine güncellenecek
+yaşayan belgedir (14 ham yakalama listesiydi; planı 15, senaryoları 16,
+Ö-önerilerinin milestone planını 17 taşır).
