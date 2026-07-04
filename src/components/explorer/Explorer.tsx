@@ -3,9 +3,14 @@ import { Tree } from "react-arborist";
 import { Pin, RefreshCw, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fuzzyMatch } from "@/lib/fuzzy";
-import { useSchemaStore } from "@/stores/schemaStore";
+import {
+  useSchemaStore,
+  EMPTY_FILTER,
+  isCategoryActive,
+  type CategoryFilter,
+} from "@/stores/schemaStore";
 import { refreshSchema, type SnapFn, type SnapRel } from "@/lib/api";
-import { buildTree, flatten, type TreeNode } from "./tree";
+import { buildTree, filterSnapshot, flatten, type TreeNode } from "./tree";
 import { iconFor } from "./icons";
 import { NodeRow } from "./NodeRow";
 import { PeekPanel } from "./PeekPanel";
@@ -33,13 +38,28 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
   const pinsMap = useSchemaStore((s) => s.pins);
   const pins = (profileId ? pinsMap[profileId] : undefined) ?? EMPTY_PINS;
   const togglePin = useSchemaStore((s) => s.togglePin);
+  // Explorer grup filtresi (design 15 §P1-U3): sağ-tık ile ad/tür filtresi.
+  const filter = useSchemaStore((s) => (connectionId ? s.filters[connectionId] : undefined)) ?? EMPTY_FILTER;
+  const [filterMenu, setFilterMenu] = useState<{ which: "rel" | "fn"; x: number; y: number } | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
   const [peek, setPeek] = useState<PeekTarget | null>(null);
   const { ref: sizeRef, height } = useSize();
 
   const snapshot = entry?.snapshot;
-  const treeData = useMemo(() => (snapshot ? buildTree(snapshot) : []), [snapshot]);
+  const treeData = useMemo(
+    () => (snapshot ? buildTree(filterSnapshot(snapshot, filter)) : []),
+    [snapshot, filter],
+  );
+
+  const which = (node: TreeNode): "rel" | "fn" => (node.name.startsWith("Functions") ? "fn" : "rel");
+  const openFilterMenu = (node: TreeNode, e: React.MouseEvent) => {
+    if (node.ntype !== "category") return;
+    e.preventDefault();
+    setFilterMenu({ which: which(node), x: e.clientX, y: e.clientY });
+  };
+  const isCatFiltered = (node: TreeNode) =>
+    node.ntype === "category" && isCategoryActive(filter[which(node)]);
 
   // Aramada düz liste (nesting'ten kurtul, design 07 §2).
   const flat = useMemo(() => (snapshot ? flatten(snapshot) : []), [snapshot]);
@@ -185,6 +205,8 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
                       {...props}
                       onPeek={peekNode}
                       onActivate={activateNode}
+                      onContextMenu={openFilterMenu}
+                      isFiltered={isCatFiltered}
                       onPin={(node) =>
                         node.rel &&
                         profileId &&
@@ -210,6 +232,114 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
           )}
         </>
       )}
+
+      {filterMenu && connectionId && (
+        <FilterPopover
+          which={filterMenu.which}
+          x={filterMenu.x}
+          y={filterMenu.y}
+          filter={filter[filterMenu.which]}
+          connectionId={connectionId}
+          onClose={() => setFilterMenu(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---- Sağ-tık filtre popover'ı (design 15 §P1-U3) ----
+
+const REL_KINDS: [string, string][] = [
+  ["table", "Table"],
+  ["view", "View"],
+  ["mat_view", "Materialized"],
+  ["foreign", "Foreign"],
+  ["partitioned", "Partitioned"],
+  ["sequence", "Sequence"],
+];
+const FN_KINDS: [string, string][] = [
+  ["function", "Function"],
+  ["procedure", "Procedure"],
+  ["aggregate", "Aggregate"],
+  ["window", "Window"],
+  ["trigger", "Trigger fn"],
+];
+
+function FilterPopover({
+  which,
+  x,
+  y,
+  filter,
+  connectionId,
+  onClose,
+}: {
+  which: "rel" | "fn";
+  x: number;
+  y: number;
+  filter: CategoryFilter;
+  connectionId: string;
+  onClose: () => void;
+}) {
+  const setFilter = useSchemaStore((s) => s.setFilter);
+  const clearFilter = useSchemaStore((s) => s.clearFilter);
+  const kinds = which === "fn" ? FN_KINDS : REL_KINDS;
+  const toggleKind = (k: string) => {
+    const set = new Set(filter.kinds);
+    if (set.has(k)) set.delete(k);
+    else set.add(k);
+    setFilter(connectionId, which, { kinds: [...set] });
+  };
+
+  return (
+    // Tam ekran örtü: dışına tık ya da Escape kapatır.
+    <div
+      className="fixed inset-0 z-40"
+      onClick={onClose}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+    >
+      <div
+        className="absolute w-52 rounded-md border border-border bg-bg-elev p-2 text-xs shadow-2xl"
+        style={{ left: Math.min(x, window.innerWidth - 220), top: Math.min(y, window.innerHeight - 240) }}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.key === "Escape" && onClose()}
+      >
+        <div className="mb-1 text-[10px] uppercase tracking-wide text-fg-muted">
+          Filter {which === "fn" ? "functions" : "tables"}
+        </div>
+        <input
+          autoFocus
+          value={filter.name}
+          onChange={(e) => setFilter(connectionId, which, { name: e.target.value })}
+          placeholder="Name contains…"
+          className="mb-2 w-full rounded border border-border bg-bg px-1.5 py-0.5 outline-none focus:border-fg-muted"
+        />
+        <div className="space-y-0.5">
+          {kinds.map(([k, label]) => (
+            <label key={k} className="flex cursor-pointer items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={filter.kinds.includes(k)}
+                onChange={() => toggleKind(k)}
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+        <div className="mt-2 flex justify-between">
+          <button
+            className="text-fg-muted hover:text-fg"
+            onClick={() => clearFilter(connectionId, which)}
+          >
+            Clear
+          </button>
+          <button className="text-fg-muted hover:text-fg" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -9,6 +9,7 @@ interface UiState {
   toggleSidebar: () => void;
   setSidebarWidth: (w: number) => void;
   toggleResults: () => void;
+  setResultsVisible: (v: boolean) => void;
   setPaletteOpen: (open: boolean) => void;
 }
 
@@ -22,6 +23,7 @@ export const useUiStore = create<UiState>()(
       toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
       setSidebarWidth: (w) => set({ sidebarWidth: Math.max(180, Math.min(560, w)) }),
       toggleResults: () => set((s) => ({ resultsVisible: !s.resultsVisible })),
+      setResultsVisible: (v) => set({ resultsVisible: v }),
       setPaletteOpen: (open) => set({ paletteOpen: open }),
     }),
     {

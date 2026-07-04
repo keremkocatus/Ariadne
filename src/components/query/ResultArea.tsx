@@ -1,14 +1,22 @@
 import { ResultGrid } from "@/components/grid/ResultGrid";
+import { ObjectInfoView } from "@/components/editor/ObjectInfoPanel";
 import { errorTitle } from "@/lib/errors";
 import type { AriadneError, StatementResult } from "@/lib/api";
 import { useTabsStore } from "@/stores/tabsStore";
 
 /// Aktif tab'ın sonuç bölgesi. Kısmi sonuçta (design 11 §H2) hata bandı ÜSTTE,
-/// o ana kadar biriken sonuçlar ALTTA birlikte gösterilir.
+/// o ana kadar biriken sonuçlar ALTTA birlikte gösterilir. Alt+F1 nesne bilgisi
+/// bir overlay olarak sonucu geçici olarak örter (design 15 §P1-U3).
 export function ResultArea({ tabId, onFetchMore }: { tabId: string; onFetchMore: () => void }) {
   const tab = useTabsStore((s) => s.tabs.find((t) => t.id === tabId));
+  const setInfoResult = useTabsStore((s) => s.setInfoResult);
   const q = tab?.query;
   if (!q) return null;
+
+  // Object-info overlay: sonuç state'i EZİLMEZ, kapatınca geri gelir.
+  if (q.infoResult) {
+    return <ObjectInfoView info={q.infoResult} onClose={() => setInfoResult(tabId, null)} />;
+  }
 
   const cancelled = q.error?.kind === "query_cancelled";
   const showError = q.error && !cancelled;

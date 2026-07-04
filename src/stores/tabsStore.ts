@@ -5,6 +5,7 @@ import type {
   AriadneError,
   ColumnMeta,
   Confirmation,
+  ObjectInfo,
   StatementResult,
   TxStatus,
 } from "@/lib/api";
@@ -40,6 +41,9 @@ export interface QueryState {
   /// Onay bekleyen run'ın opts'u (design 15 §P1-U2 riski): confirm sonrası AYNI
   /// seçim/SQL ile koşulmalı — aksi halde onaylanan seçimken tüm metin koşar.
   pendingRun: RunOpts | null;
+  /// Alt+F1 nesne bilgisi sonuç alanında overlay olarak gösterilir (design 15
+  /// §P1-U3). Kapatılınca (null) altındaki sorgu sonucu geri gelir — sonuç EZİLMEZ.
+  infoResult: ObjectInfo | null;
 }
 
 /// run() opsiyonları (design 15 §P1-U2). `sql` verilirse seçim koşulur.
@@ -77,6 +81,7 @@ function emptyQuery(): QueryState {
     selectionOffset: 0,
     markerStale: false,
     pendingRun: null,
+    infoResult: null,
   };
 }
 
@@ -131,6 +136,8 @@ interface TabsState {
   txControl: (id: string, sql: "COMMIT" | "ROLLBACK") => Promise<void>;
   dismissConfirmation: (id: string) => void;
   markFrozen: (tabId: string) => void;
+  /// Alt+F1 nesne bilgisini sonuç alanı overlay'ine koyar (null = kapat).
+  setInfoResult: (tabId: string, info: ObjectInfo | null) => void;
 
   active: () => Tab | null;
 }
@@ -291,6 +298,7 @@ export const useTabsStore = create<TabsState>()(
       ranSelection,
       selectionOffset,
       pendingRun: null,
+      infoResult: null,
       queryId,
     });
     try {
@@ -383,6 +391,10 @@ export const useTabsStore = create<TabsState>()(
   markFrozen(tabId) {
     // Cursor sunucuda kapandı: yeni sayfa çekilemez, "yeniden çalıştır" bandı gösterilir.
     patchQuery(set, tabId, { frozen: true, hasMore: false });
+  },
+
+  setInfoResult(tabId, info) {
+    patchQuery(set, tabId, { infoResult: info });
   },
 
   active() {

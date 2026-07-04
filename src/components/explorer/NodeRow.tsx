@@ -12,11 +12,15 @@ export function NodeRow({
   onActivate,
   onPin,
   isPinned,
+  onContextMenu,
+  isFiltered,
 }: NodeRendererProps<TreeNode> & {
   onPeek: (n: TreeNode) => void;
   onActivate: (n: TreeNode) => void;
   onPin: (n: TreeNode) => void;
   isPinned: (n: TreeNode) => boolean;
+  onContextMenu: (n: TreeNode, e: React.MouseEvent) => void;
+  isFiltered: (n: TreeNode) => boolean;
 }) {
   const d = node.data;
   const isLeaf = d.ntype === "relation" || d.ntype === "function";
@@ -33,6 +37,7 @@ export function NodeRow({
         else node.toggle();
       }}
       onDoubleClick={() => isLeaf && onActivate(d)}
+      onContextMenu={(e) => onContextMenu(d, e)}
     >
       {!isLeaf ? (
         <ChevronRight
@@ -44,6 +49,9 @@ export function NodeRow({
       )}
       {iconFor(d)}
       <span className="truncate">{d.name}</span>
+      {d.ntype === "category" && isFiltered(d) && (
+        <span className="shrink-0 rounded bg-warn/20 px-1 text-[9px] text-warn">filtered</span>
+      )}
       {d.rel && d.rel.estimated_rows > 0 && (
         <span className="ml-auto shrink-0 pl-2 text-[10px] text-fg-muted">
           ~{formatRows(d.rel.estimated_rows)}

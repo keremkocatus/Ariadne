@@ -10,11 +10,31 @@ interface SchemaEntry {
   snapshot?: SchemaSnapshot;
 }
 
+/// Explorer grup filtresi (design 15 §P1-U3): ad substring + tür seçimi.
+/// `kinds` boşsa tüm türler. Tables/Functions için ayrı tutulur.
+export interface CategoryFilter {
+  name: string;
+  kinds: string[];
+}
+export interface ExplorerFilter {
+  rel: CategoryFilter;
+  fn: CategoryFilter;
+}
+export const EMPTY_FILTER: ExplorerFilter = {
+  rel: { name: "", kinds: [] },
+  fn: { name: "", kinds: [] },
+};
+export function isCategoryActive(f: CategoryFilter): boolean {
+  return f.name.trim() !== "" || f.kinds.length > 0;
+}
+
 interface SchemaState {
   byConnection: Record<string, SchemaEntry>;
   /** profil bazında pin'ler: profileId → ["public.users", ...] (kalıcı) */
   pins: Record<string, string[]>;
   search: string;
+  /** connection bazında Explorer filtresi (oturumluk, persist edilmez) */
+  filters: Record<string, ExplorerFilter>;
 
   loadSnapshot: (connectionId: string) => Promise<void>;
   onRefreshStarted: (connectionId: string) => void;
@@ -23,6 +43,10 @@ interface SchemaState {
   setSearch: (q: string) => void;
   togglePin: (profileId: string, qualified: string) => void;
   isPinned: (profileId: string, qualified: string) => boolean;
+
+  getFilter: (connectionId: string | null) => ExplorerFilter;
+  setFilter: (connectionId: string, which: "rel" | "fn", patch: Partial<CategoryFilter>) => void;
+  clearFilter: (connectionId: string, which: "rel" | "fn") => void;
 
   entry: (connectionId: string | null) => SchemaEntry | undefined;
 }
@@ -33,6 +57,7 @@ export const useSchemaStore = create<SchemaState>()(
       byConnection: {},
       pins: {},
       search: "",
+      filters: {},
 
       async loadSnapshot(connectionId) {
         set((s) => ({
@@ -85,6 +110,34 @@ export const useSchemaStore = create<SchemaState>()(
 
       isPinned(profileId, qualified) {
         return (get().pins[profileId] ?? []).includes(qualified);
+      },
+
+      getFilter(connectionId) {
+        return (connectionId ? get().filters[connectionId] : undefined) ?? EMPTY_FILTER;
+      },
+
+      setFilter(connectionId, which, patch) {
+        set((s) => {
+          const cur = s.filters[connectionId] ?? EMPTY_FILTER;
+          return {
+            filters: {
+              ...s.filters,
+              [connectionId]: { ...cur, [which]: { ...cur[which], ...patch } },
+            },
+          };
+        });
+      },
+
+      clearFilter(connectionId, which) {
+        set((s) => {
+          const cur = s.filters[connectionId] ?? EMPTY_FILTER;
+          return {
+            filters: {
+              ...s.filters,
+              [connectionId]: { ...cur, [which]: { name: "", kinds: [] } },
+            },
+          };
+        });
       },
 
       entry(connectionId) {

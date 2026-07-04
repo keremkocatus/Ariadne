@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { SqlEditor } from "@/components/editor/SqlEditor";
-import { ObjectInfoPanel } from "@/components/editor/ObjectInfoPanel";
 import { Explorer } from "@/components/explorer/Explorer";
 import { TabBar } from "@/components/query/TabBar";
 import { ResultArea } from "@/components/query/ResultArea";
@@ -22,18 +21,27 @@ import { getFunctionSource, isAriadneError, type ObjectInfo, type SnapFn } from 
 
 export default function App() {
   const connections = useConnectionStore((s) => s.connections);
-  const { sidebarVisible, sidebarWidth, setSidebarWidth, resultsVisible } = useUiStore();
+  const { sidebarVisible, sidebarWidth, setSidebarWidth, resultsVisible, setResultsVisible } = useUiStore();
 
   const active = useTabsStore((s) => s.active());
   const closeRequest = useTabsStore((s) => s.closeRequest);
-  const { addTab, setSql, run, fetchMore, dismissConfirmation, resolveClose, renameTab } = useTabsStore();
+  const { addTab, setSql, run, fetchMore, dismissConfirmation, resolveClose, renameTab, setInfoResult } =
+    useTabsStore();
   // Explorer aktif *tab'ın* bağlantısını gösterir, global aktif bağlantıyı değil
   // (design 12 §P1-M1) — tab değişince şema de değişir.
   const tabConnectionId = active?.connectionId ?? null;
   const tabConnectionInfo = tabConnectionId ? (connections[tabConnectionId] ?? null) : null;
   const tabConnectionClosed = !!tabConnectionId && !tabConnectionInfo;
 
-  const [peek, setPeek] = useState<ObjectInfo | null>(null);
+  // Alt+F1 nesne bilgisi sonuç alanına akar (design 15 §P1-U3); panel gizliyse aç.
+  const showObjectInfo = useCallback(
+    (info: ObjectInfo | null) => {
+      if (!active || !info) return;
+      setInfoResult(active.id, info);
+      if (!resultsVisible) setResultsVisible(true);
+    },
+    [active, resultsVisible, setInfoResult, setResultsVisible],
+  );
 
   useEffect(() => {
     const p = registerEventBridge();
@@ -120,10 +128,9 @@ export default function App() {
                     connectionId={tabConnectionId}
                     onChange={(v) => setSql(active.id, v)}
                     onRun={runActive}
-                    onPeek={setPeek}
+                    onPeek={showObjectInfo}
                     marker={errorMarker}
                   />
-                  {peek && <ObjectInfoPanel info={peek} onClose={() => setPeek(null)} />}
                 </div>
               </div>
               {resultsVisible && (

@@ -1,6 +1,7 @@
 // Explorer ağaç modeli + saf dönüşümler (design 07 §2). JSX içermez → test
 // edilebilir düz fonksiyonlar. react-arborist bu düğümleri render eder.
 import type { SchemaSnapshot, SnapFn, SnapRel } from "@/lib/api";
+import type { ExplorerFilter } from "@/stores/schemaStore";
 
 export interface TreeNode {
   id: string;
@@ -92,6 +93,33 @@ export function flatten(snap: SchemaSnapshot): TreeNode[] {
     }
   }
   return out;
+}
+
+/// Explorer filtresini snapshot'a uygular (design 15 §P1-U3): ad substring + tür.
+/// Yeni bir snapshot döndürür; buildTree/flatten bunu görür, count'lar da güncellenir.
+export function filterSnapshot(snap: SchemaSnapshot, f: ExplorerFilter): SchemaSnapshot {
+  const relName = f.rel.name.trim().toLowerCase();
+  const fnName = f.fn.name.trim().toLowerCase();
+  const relKinds = new Set(f.rel.kinds);
+  const fnKinds = new Set(f.fn.kinds);
+  if (!relName && !fnName && relKinds.size === 0 && fnKinds.size === 0) return snap;
+  return {
+    ...snap,
+    schemas: snap.schemas.map((sc) => ({
+      ...sc,
+      relations: sc.relations.filter(
+        (r) =>
+          (!relName || r.name.toLowerCase().includes(relName)) &&
+          (relKinds.size === 0 || relKinds.has(r.kind)),
+      ),
+      functions: sc.functions.filter((fn) => {
+        if (fnName && !fn.name.toLowerCase().includes(fnName)) return false;
+        if (fnKinds.size === 0) return true;
+        if (fn.is_trigger && fnKinds.has("trigger")) return true;
+        return fnKinds.has(fn.kind);
+      }),
+    })),
+  };
 }
 
 export function formatRows(n: number): string {
