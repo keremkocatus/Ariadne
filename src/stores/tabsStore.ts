@@ -145,6 +145,8 @@ export const useTabsStore = create<TabsState>((set, get) => ({
         fetchedTotal: rowsStmt?.kind === "rows" ? rowsStmt.first_page.fetched_total : 0,
         elapsedMs: rowsStmt?.kind === "rows" ? rowsStmt.first_page.elapsed_ms : 0,
         extra: res.statements.filter((s) => s.kind !== "rows"),
+        // Kısmi sonuç: statements + (varsa) hata birlikte gösterilir (design 11 §H2).
+        error: res.error ?? null,
         capped: false,
       });
     } catch (e) {

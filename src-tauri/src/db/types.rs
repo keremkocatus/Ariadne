@@ -3,6 +3,8 @@
 
 use serde::Serialize;
 
+use crate::error::AriadneError;
+
 #[derive(Debug, Serialize)]
 pub struct RunResult {
     pub query_id: String,
@@ -10,6 +12,13 @@ pub struct RunResult {
     pub tx_status: TxStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub needs_confirmation: Option<Confirmation>,
+    /// Bir statement hata verdiyse: o ana kadarki `statements` korunur, hata burada
+    /// döner (psql davranışı, design 05 §1 / 11 §H2). Kalan statement'lar çalışmaz.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<AriadneError>,
+    /// Hatalı statement'ın script içindeki 0-based indeksi (UI "statement N" mesajı için).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_statement_index: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]

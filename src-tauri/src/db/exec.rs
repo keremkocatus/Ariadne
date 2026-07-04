@@ -108,6 +108,8 @@ pub async fn run_query(
 
     let mut results: Vec<StatementResult> = Vec::new();
     let mut needs_confirmation = None;
+    let mut run_error: Option<AriadneError> = None;
+    let mut error_statement_index: Option<usize> = None;
 
     // Row döndüren SON statement cursor yoluna girer; diğerleri normal.
     let last_rows_idx = stmts
@@ -153,9 +155,11 @@ pub async fn run_query(
                 if st.tx == TxStatus::InTransaction {
                     st.tx = TxStatus::Aborted;
                 }
-                finalize_conn(&mut st).await;
-                reg.running.remove(args.query_id);
-                return Err(e);
+                // Kısmi sonuç: o ana kadar biriken `results` korunur, hata RunResult'a
+                // gömülür ve kalan statement'lar çalıştırılmaz (psql, design 11 §H2).
+                run_error = Some(e);
+                error_statement_index = Some(idx);
+                break;
             }
         }
 
@@ -174,6 +178,8 @@ pub async fn run_query(
         statements: results,
         tx_status,
         needs_confirmation,
+        error: run_error,
+        error_statement_index,
     })
 }
 
