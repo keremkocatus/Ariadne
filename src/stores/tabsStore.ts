@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create, type StoreApi } from "zustand";
 import * as api from "@/lib/api";
 import type {
   AriadneError,
@@ -73,11 +73,13 @@ interface TabsState {
   active: () => Tab | null;
 }
 
-function patchQuery(set: any, id: string, patch: Partial<QueryState>) {
-  set((s: TabsState) => ({
-    tabs: s.tabs.map((t) =>
-      t.id === id ? { ...t, query: { ...t.query, ...patch } } : t,
-    ),
+function patchQuery(
+  set: StoreApi<TabsState>["setState"],
+  id: string,
+  patch: Partial<QueryState>,
+) {
+  set((s) => ({
+    tabs: s.tabs.map((t) => (t.id === id ? { ...t, query: { ...t.query, ...patch } } : t)),
   }));
 }
 
