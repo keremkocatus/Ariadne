@@ -7,6 +7,7 @@ import { useSchemaStore } from "@/stores/schemaStore";
 import { useTabsStore, isPristine } from "@/stores/tabsStore";
 import { useUiStore } from "@/stores/uiStore";
 import { isAriadneError, refreshSchema } from "@/lib/api";
+import { dismissReconnectToast } from "@/lib/sessionResume";
 
 // Zaten-bağlı bir bağlantıya geçerken snapshot bu yaştan eskiyse arka planda
 // tazelenir (design 15 §P1-U1 madde 4). Eşik ayarlardan gelir (design 15 §P1-U4).
@@ -48,6 +49,7 @@ export async function connectProfile(profileId: string, databaseOverride?: strin
     const existing = conn.findConnection(profileId, databaseOverride);
     if (existing) {
       focusConnection(existing);
+      dismissReconnectToast(profileId, databaseOverride);
       return;
     }
   }
@@ -55,6 +57,10 @@ export async function connectProfile(profileId: string, databaseOverride?: strin
     const id = await conn.connect(profileId, databaseOverride);
     await useSchemaStore.getState().loadSnapshot(id);
     focusConnection(id);
+    // Bu (profil, DB) için bekleyen reconnect daveti varsa söndür (design 18 §P1-W1
+    // N2) — kullanıcı menüden bağlandı, davet artık gereksiz.
+    const db = useConnectionStore.getState().connections[id]?.database;
+    if (db) dismissReconnectToast(profileId, db);
   } catch (e) {
     toast.error("Could not connect", {
       description: isAriadneError(e) ? e.message : String(e),

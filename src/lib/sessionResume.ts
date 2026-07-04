@@ -7,13 +7,28 @@ import { toast } from "sonner";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSchemaStore } from "@/stores/schemaStore";
 import { useTabsStore } from "@/stores/tabsStore";
-import { isAriadneError } from "@/lib/api";
+import { isAriadneError, type ConnectionProfile } from "@/lib/api";
 
 // Aynı açılışta ikinci kez davet üretmeyi engeller (StrictMode / tekrar çağrı).
 let offered = false;
 
+// Davet toast'ı bu kadar durur (design 18 §P1-W1 N2 — eskiden Infinity, takılıyordu).
+const RECONNECT_TOAST_MS = 30_000;
+
+/// Bir (profil, DB) davet toast'ının stabil id'si — üst üste yığılmasın + başka
+/// yoldan bağlanınca söndürülebilsin (design 18 §P1-W1).
+export function reconnectToastId(profileId: string, database: string): string {
+  return `reconnect:${profileId}:${database}`;
+}
+
+/// O (profil, DB) için bekleyen reconnect davetini söndürür — kullanıcı menüden
+/// bağlandığında connectProfile bunu çağırır (design 18 §P1-W1 N2).
+export function dismissReconnectToast(profileId: string, database: string): void {
+  toast.dismiss(reconnectToastId(profileId, database));
+}
+
 interface Invite {
-  profileId: string;
+  profile: ConnectionProfile;
   database: string;
   oldIds: Set<string>;
 }
@@ -29,9 +44,10 @@ function collectInvites(): Invite[] {
     if (conn.connections[cid]) continue; // zaten canlı (açılışta olmaz ama garanti)
     const rec = conn.lastSession[cid];
     if (!rec) continue;
-    if (!conn.profiles.some((p) => p.id === rec.profileId)) continue; // profil silinmiş
+    const profile = conn.profiles.find((p) => p.id === rec.profileId);
+    if (!profile) continue; // profil silinmiş
     const key = `${rec.profileId}::${rec.database}`;
-    const inv = byPair.get(key) ?? { profileId: rec.profileId, database: rec.database, oldIds: new Set() };
+    const inv = byPair.get(key) ?? { profile, database: rec.database, oldIds: new Set() };
     inv.oldIds.add(cid);
     byPair.set(key, inv);
   }
@@ -43,14 +59,15 @@ function collectInvites(): Invite[] {
 async function reconnectAndRemap(inv: Invite): Promise<void> {
   const conn = useConnectionStore.getState();
   try {
-    let newId = conn.findConnection(inv.profileId, inv.database);
+    let newId = conn.findConnection(inv.profile.id, inv.database);
     if (!newId) {
-      newId = await conn.connect(inv.profileId, inv.database);
+      newId = await conn.connect(inv.profile.id, inv.database);
       await useSchemaStore.getState().loadSnapshot(newId);
     }
     useTabsStore.getState().remapConnection([...inv.oldIds], newId);
     useConnectionStore.getState().setActive(newId);
     useConnectionStore.getState().forgetSession([...inv.oldIds]);
+    dismissReconnectToast(inv.profile.id, inv.database);
   } catch (e) {
     toast.error("Could not reconnect", {
       description: isAriadneError(e) ? e.message : String(e),
@@ -65,10 +82,14 @@ export function offerReconnect(): void {
   offered = true;
   const invites = collectInvites().slice(0, 3);
   for (const inv of invites) {
-    const conn = useConnectionStore.getState();
-    const name = conn.profiles.find((p) => p.id === inv.profileId)?.name ?? inv.database;
-    toast(`Reconnect to ${name}?`, {
-      duration: Infinity,
+    const p = inv.profile;
+    // Etiket: profil adı + sunucu/DB (design 18 §P1-W1 N1) — aynı DB adının iki
+    // sunucudaki hali host ile ayrışsın.
+    toast(`Reconnect to ${p.name}?`, {
+      id: reconnectToastId(p.id, inv.database),
+      description: `${p.user}@${p.host}:${p.port} · ${inv.database}`,
+      duration: RECONNECT_TOAST_MS,
+      closeButton: true,
       action: {
         label: "Reconnect",
         onClick: () => void reconnectAndRemap(inv),
