@@ -19,6 +19,11 @@ export function ResultArea({ tabId, onFetchMore }: { tabId: string; onFetchMore:
     <div className="flex h-full flex-col">
       {cancelled && <p className="p-3 font-mono text-xs text-fg-muted">Query cancelled.</p>}
       {showError && <ErrorBanner err={q.error!} />}
+      {q.frozen && (
+        <div className="shrink-0 border-b border-warn/40 bg-warn/5 px-3 py-1.5 text-[11px] text-warn">
+          Result expired after being idle — re-run the query to continue paging.
+        </div>
+      )}
       {hasRows ? (
         <div className="min-h-0 flex-1">
           <ResultGrid

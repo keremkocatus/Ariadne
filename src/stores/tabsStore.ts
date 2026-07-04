@@ -27,6 +27,8 @@ export interface QueryState {
   txStatus: TxStatus;
   needsConfirmation?: Confirmation | null;
   capped: boolean;
+  /// Idle cursor sunucu tarafında kapatıldı (design 11 §H7) → sonuç donduruldu.
+  frozen: boolean;
 }
 
 export interface Tab {
@@ -48,6 +50,7 @@ function emptyQuery(): QueryState {
     fetchingMore: false,
     txStatus: "idle",
     capped: false,
+    frozen: false,
   };
 }
 
@@ -72,6 +75,7 @@ interface TabsState {
   cancel: (id: string) => Promise<void>;
   txControl: (id: string, sql: "COMMIT" | "ROLLBACK") => Promise<void>;
   dismissConfirmation: (id: string) => void;
+  markFrozen: (tabId: string) => void;
 
   active: () => Tab | null;
 }
@@ -157,6 +161,7 @@ export const useTabsStore = create<TabsState>((set, get) => ({
       running: true,
       error: null,
       needsConfirmation: null,
+      frozen: false,
       connectionId: connId,
       queryId,
     });
@@ -233,6 +238,11 @@ export const useTabsStore = create<TabsState>((set, get) => ({
 
   dismissConfirmation(id) {
     patchQuery(set, id, { needsConfirmation: null });
+  },
+
+  markFrozen(tabId) {
+    // Cursor sunucuda kapandı: yeni sayfa çekilemez, "yeniden çalıştır" bandı gösterilir.
+    patchQuery(set, tabId, { frozen: true, hasMore: false });
   },
 
   active() {

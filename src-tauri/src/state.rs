@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 
 use arc_swap::ArcSwap;
@@ -54,6 +55,8 @@ pub struct ActiveConnection {
     pub info: ConnectionInfo,
     /// Cursor'lar, tab session'ları, iptal için PID'ler (design 05).
     pub exec: crate::db::exec::ExecRegistry,
+    /// Çalışan bir cache refresh var mı — üst üste istekleri birleştirir (design 03 §5 / 11 §H7).
+    pub refreshing: AtomicBool,
 }
 
 /// connect dönüşü (design 02 §3).

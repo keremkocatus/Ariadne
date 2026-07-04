@@ -38,7 +38,15 @@ pub async fn refresh_schema(
 
 /// Arka planda cache fetch + atomik swap + event. connect ve refresh_schema ortak
 /// kullanır. Hata olursa eski snapshot korunur (design 06 §4) — sessiz log.
+///
+/// Debounce (design 03 §5 / 11 §H7): zaten çalışan bir refresh varsa yenisi
+/// başlatılmaz (üst üste DDL'ler tek fetch'e birleşir).
 pub fn spawn_cache_refresh(app: AppHandle, conn: Arc<ActiveConnection>) {
+    use std::sync::atomic::Ordering;
+    // swap(true): önceki değer true ise başka refresh çalışıyor → atla.
+    if conn.refreshing.swap(true, Ordering::AcqRel) {
+        return;
+    }
     let connection_id = conn.id.clone();
     let _ = app.emit(
         "schema:refresh_started",
@@ -59,14 +67,14 @@ pub fn spawn_cache_refresh(app: AppHandle, conn: Arc<ActiveConnection>) {
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     "schema cache refreshed"
                 );
-                let _ = app.emit("schema:refreshed", ConnPayload { connection_id });
             }
             Err(e) => {
                 // Eski snapshot immutable olarak kalır; kullanıcı yine çalışabilir.
                 tracing::warn!(connection_id = %connection_id, error = %e.message, "schema refresh failed");
-                let _ = app.emit("schema:refreshed", ConnPayload { connection_id });
             }
         }
+        conn.refreshing.store(false, Ordering::Release);
+        let _ = app.emit("schema:refreshed", ConnPayload { connection_id });
     });
 }
 

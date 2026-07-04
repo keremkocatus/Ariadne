@@ -36,6 +36,8 @@ struct TabState {
     /// Cursor'un yaşaması için Ariadne'nin açtığı iç READ ONLY tx (kullanıcı tx'i değil).
     internal_tx: bool,
     cursor: Option<Cursor>,
+    /// Son cursor aktivitesi (aç/fetch). Idle auto-close için (design 05 §2 / 11 §H7).
+    last_fetch: std::time::Instant,
 }
 
 impl TabState {
@@ -46,6 +48,7 @@ impl TabState {
             tx: TxStatus::Idle,
             internal_tx: false,
             cursor: None,
+            last_fetch: std::time::Instant::now(),
         }
     }
 }
@@ -99,6 +102,34 @@ impl ExecRegistry {
                 st.conn = None;
             }
         }
+    }
+
+    /// `idle`'dan uzun süredir dokunulmamış **iç READ ONLY tx** cursor'larını kapatır
+    /// (design 05 §2 / 11 §H7): açık kalan tx vacuum'u geciktirmesin. Kapatılan
+    /// tab'ların id'lerini döndürür (frontend'e `result:frozen` için). Kullanıcı
+    /// transaction'ı olan cursor'lara DOKUNMAZ — onları kullanıcı yönetir.
+    pub async fn sweep_idle_cursors(&self, idle: std::time::Duration) -> Vec<String> {
+        let now = std::time::Instant::now();
+        let mut frozen = Vec::new();
+        // Tab Arc'larını topla (DashMap guard'ını await boyunca tutma).
+        let entries: Vec<(String, Arc<Mutex<TabState>>)> = self
+            .tabs
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
+        for (tab_id, tab) in entries {
+            let Ok(mut st) = tab.try_lock() else { continue };
+            let is_idle_internal = st.cursor.is_some()
+                && st.internal_tx
+                && st.tx == TxStatus::Idle
+                && now.duration_since(st.last_fetch) >= idle;
+            if is_idle_internal {
+                close_cursor(&mut st).await; // iç tx'i de commit eder
+                st.conn = None; // pool'a iade
+                frozen.push(tab_id);
+            }
+        }
+        frozen
     }
 }
 
@@ -299,6 +330,7 @@ async fn open_cursor_and_fetch(
         name,
         has_more,
     });
+    st.last_fetch = std::time::Instant::now();
 
     let fetched_total = page_rows.len();
     Ok(StatementResult::Rows {
@@ -396,6 +428,7 @@ pub async fn fetch_page(reg: &ExecRegistry, query_id: &str) -> Result<Page, Aria
     if let Some(cur) = st.cursor.as_mut() {
         cur.has_more = has_more;
     }
+    st.last_fetch = std::time::Instant::now();
     let fetched_total = page_rows.len();
     Ok(Page {
         rows: page_rows,

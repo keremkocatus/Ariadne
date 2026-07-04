@@ -14,9 +14,23 @@ mod logging;
 mod profiles;
 mod state;
 
-use tauri::Manager;
+use std::sync::Arc;
+use std::time::Duration;
 
-use state::AppState;
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager};
+
+use state::{ActiveConnection, AppState};
+
+/// Idle cursor kontrol periyodu ve eşiği (design 05 §2 / 11 §H7).
+const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+const CURSOR_IDLE_LIMIT: Duration = Duration::from_secs(15 * 60);
+
+#[derive(Clone, Serialize)]
+struct FrozenPayload {
+    connection_id: String,
+    tab_id: String,
+}
 
 /// Uygulamayı kurar ve çalıştırır. `main.rs`'in tek işi budur.
 pub fn run() {
@@ -31,6 +45,7 @@ pub fn run() {
             let config_dir = app.path().app_config_dir()?;
             tracing::info!("Ariadne started");
             app.manage(AppState::new(config_dir));
+            spawn_idle_cursor_sweeper(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -52,4 +67,34 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("Ariadne başlatılamadı");
+}
+
+/// Periyodik olarak tüm bağlantıların idle iç-tx cursor'larını kapatır (design 11 §H7):
+/// uzun açık kalan READ ONLY tx'ler prod'da vacuum'u geciktirmesin. Kapatılan tab
+/// için `result:frozen` event'i → grid "sonuç dondu, yeniden çalıştır" bandı gösterir.
+fn spawn_idle_cursor_sweeper(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut ticker = tokio::time::interval(SWEEP_INTERVAL);
+        loop {
+            ticker.tick().await;
+            // RwLock guard'ını await boyunca tutma: bağlantıları klonlayıp bırak.
+            let conns: Vec<Arc<ActiveConnection>> = {
+                let state = app.state::<AppState>();
+                let guard = state.connections.read().unwrap();
+                guard.values().cloned().collect()
+            };
+            for conn in conns {
+                for tab_id in conn.exec.sweep_idle_cursors(CURSOR_IDLE_LIMIT).await {
+                    tracing::info!(connection_id = %conn.id, tab_id = %tab_id, "idle cursor closed");
+                    let _ = app.emit(
+                        "result:frozen",
+                        FrozenPayload {
+                            connection_id: conn.id.clone(),
+                            tab_id,
+                        },
+                    );
+                }
+            }
+        }
+    });
 }

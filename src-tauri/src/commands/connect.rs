@@ -50,6 +50,7 @@ pub async fn connect(
         schema_cache: ArcSwap::from_pointee(empty_cache(server_version)),
         info: info.clone(),
         exec: Default::default(),
+        refreshing: std::sync::atomic::AtomicBool::new(false),
     });
 
     state
