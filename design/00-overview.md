@@ -72,8 +72,9 @@ Görsel şölen (ER diagram, dashboard, monitoring) bilinçli olarak **kapsam d�
 | 08 | testing.md | Rust unit/integration, frontend, e2e stratejisi |
 | 09 | packaging.md | Bundler, code signing, auto-update |
 | 10 | roadmap.md | Faz 0/1/2, milestone'lar, kabul kriterleri |
-| 11 | phase0-refactor.md | Faz 0 sonrası yapısal refactor + design-sapması sertleştirme planı |
+| 11 | phase0-refactor.md | Faz 0 sonrası yapısal refactor + design-sapması sertleştirme planı (uygulandı) |
 | 12 | phase1-plan.md | Faz 1 analiz ve milestone planı (öncelik: multi-connection, cache persist, EXPLAIN) |
+| 13 | handoff.md | Oturum devir notu: nerede kaldık, sırada ne var (soğuk başlangıç haritası) |
 
 ## 7. Stack güncellik notları (Temmuz 2026 itibarıyla doğrulandı)
 
