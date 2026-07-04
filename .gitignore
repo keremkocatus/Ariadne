@@ -33,3 +33,4 @@ src-tauri/gen/
 
 # Local secrets (DB URLs, etc.) — never commit
 .env
+.claude/
