@@ -4,6 +4,12 @@
 > kod incelemesinin çıktısı. Karar (Q&A): kapsam = **yapısal refactor + design
 > sapmalarını kapatan sertleştirme** birlikte. CI/testcontainers/criterion bilinçli
 > olarak ertelendi (§6).
+>
+> ✅ **DURUM (2026-07-04): tamamlandı** — `phase0-refactor` branch'inde R1–R6 +
+> H1–H8 sırayla, her adım ayrı commit + doğrulama ile uygulandı. Kapanış: 39 Rust
+> unit testi yeşil (34→39, +position/+estimate testleri), `cargo clippy
+> --all-targets -D warnings` temiz, `cargo fmt --check` temiz, `tsc --noEmit` temiz,
+> `npm run build` (vite) geçiyor. Kalan: PR merge + Faz 0 çıkış ölçümleri (§6 son satır).
 
 ## 1. İnceleme özeti: neler iyi, neler borç
 
