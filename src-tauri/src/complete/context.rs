@@ -56,6 +56,9 @@ pub struct CompletionContext {
     pub relations: Vec<RelRef>,
     pub prefix: String,
     pub qualifier: Option<String>,
+    /// Analiz sırasında belirlenir; clause bazlı aday üretimi zaten `clause`'u
+    /// kullanır, bu alan Phase 1'de DML-özel önerileri için okunacak.
+    #[allow(dead_code)]
     pub stmt_kind: StmtKind,
     /// İmleç string/comment içinde → öneri verilmez (design 04 §7).
     pub suppress: bool,

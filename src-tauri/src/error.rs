@@ -28,7 +28,11 @@ pub enum ErrorKind {
     ConnectionLost,
     QueryError,
     QueryCancelled,
+    // Hata taksonomisinin parçaları; ayrık UI sunumu Phase 1'de (şimdilik sqlx
+    // timeout'u QueryError'a düşer, pg_query hataları sunucuya bırakılır).
+    #[allow(dead_code)]
     Timeout,
+    #[allow(dead_code)]
     ParseError,
     KeyringError,
     Internal,
@@ -50,6 +54,8 @@ impl AriadneError {
         Self::new(ErrorKind::Internal, message)
     }
 
+    /// Client-side pg_query parse hatası kurucusu (Phase 1'de inline marker için).
+    #[allow(dead_code)]
     pub fn parse(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::ParseError, message)
     }

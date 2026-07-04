@@ -45,9 +45,13 @@ impl AppState {
 
 pub struct ActiveConnection {
     pub id: ConnectionId,
+    /// Bağlantıyı profiline geri bağlar (reconnect / pin çözümü — Phase 1).
+    #[allow(dead_code)]
     pub profile_id: ProfileId,
     pub pool: PgPool,
     pub schema_cache: ArcSwap<SchemaCache>,
+    /// connect anındaki sunucu bilgisi; şimdilik frontend'e ayrıca döner.
+    #[allow(dead_code)]
     pub info: ConnectionInfo,
     /// Cursor'lar, tab session'ları, iptal için PID'ler (design 05).
     pub exec: crate::db::exec::ExecRegistry,

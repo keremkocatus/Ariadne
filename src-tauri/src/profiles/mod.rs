@@ -26,19 +26,6 @@ pub enum SslMode {
     VerifyFull,
 }
 
-impl SslMode {
-    /// libpq sslmode string'i (sqlx `PgConnectOptions` bunu anlar).
-    pub fn as_libpq(self) -> &'static str {
-        match self {
-            SslMode::Disable => "disable",
-            SslMode::Prefer => "prefer",
-            SslMode::Require => "require",
-            SslMode::VerifyCa => "verify-ca",
-            SslMode::VerifyFull => "verify-full",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionProfile {
     pub id: ProfileId,

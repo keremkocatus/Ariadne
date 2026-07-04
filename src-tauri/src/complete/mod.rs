@@ -17,6 +17,8 @@ pub enum CompletionKind {
     View,
     Column,
     Function,
+    /// Şema-önerisi ikonu; schema-qualified completion Phase 1'de üretecek.
+    #[allow(dead_code)]
     Schema,
     Keyword,
     Join,

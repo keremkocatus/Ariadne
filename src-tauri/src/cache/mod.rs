@@ -68,6 +68,9 @@ pub enum ArgMode {
     Out,
     InOut,
     Variadic,
+    /// TABLE(...) dönüşlü fonksiyon arg'ı. Katalogdan modellenir; signature help
+    /// bunu Phase 1'de ayrı gösterecek. Şimdilik `In` gibi ele alınır.
+    #[allow(dead_code)]
     Table,
 }
 
@@ -76,7 +79,10 @@ pub struct Column {
     pub name: String,
     pub type_name: String, // format_type() çıktısı: "int4", "varchar(255)"
     pub not_null: bool,
+    // Katalogdan doldurulur; object-detail paneli / inline-edit (Phase 1) okuyacak.
+    #[allow(dead_code)]
     pub has_default: bool,
+    #[allow(dead_code)]
     pub comment: Option<String>,
     pub attnum: i16, // dahili: PK/FK attnum çözümü için
 }
@@ -118,6 +124,8 @@ pub struct FnArg {
     pub name: Option<String>,
     pub type_name: String,
     pub mode: ArgMode,
+    /// DEFAULT'lu arg (çağrıda atlanabilir). Signature help Phase 1'de gösterecek.
+    #[allow(dead_code)]
     pub has_default: bool,
 }
 
@@ -152,25 +160,10 @@ impl Function {
 #[derive(Debug, Clone)]
 pub struct SchemaInfo {
     pub name: String,
+    /// Katalogdan; explorer'da şema sahibini göstermek için (Phase 1).
+    #[allow(dead_code)]
     pub owner: String,
     pub is_system: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SearchKind {
-    Table,
-    View,
-    MatView,
-    Function,
-    Sequence,
-}
-
-#[derive(Debug, Clone)]
-pub struct SearchEntry {
-    pub name_lc: String,
-    pub schema: String,
-    pub kind: SearchKind,
-    pub id: u32,
 }
 
 /// Immutable şema snapshot'ı + hızlı lookup indeksleri.
@@ -188,7 +181,6 @@ pub struct SchemaCache {
     pub table_by_name: HashMap<String, SmallVec<[TableId; 2]>>, // "name" (lc) → ids
     pub function_by_name: HashMap<String, SmallVec<[FunctionId; 2]>>,
     pub fk_adjacency: HashMap<TableId, Vec<FkEdge>>, // iki yönlü (design 03 §1)
-    pub search_index: Vec<SearchEntry>,
 }
 
 impl SchemaCache {
@@ -204,7 +196,6 @@ impl SchemaCache {
     ) -> Self {
         let mut table_by_qualified = HashMap::with_capacity(tables.len());
         let mut table_by_name: HashMap<String, SmallVec<[TableId; 2]>> = HashMap::new();
-        let mut search_index: Vec<SearchEntry> = Vec::with_capacity(tables.len() + functions.len());
 
         for t in &tables {
             table_by_qualified.insert(format!("{}.{}", t.schema, t.name).to_lowercase(), t.id);
@@ -212,18 +203,6 @@ impl SchemaCache {
                 .entry(t.name.to_lowercase())
                 .or_default()
                 .push(t.id);
-            let kind = match t.kind {
-                RelKind::Table | RelKind::Foreign | RelKind::Partitioned => SearchKind::Table,
-                RelKind::View => SearchKind::View,
-                RelKind::MatView => SearchKind::MatView,
-                RelKind::Sequence => SearchKind::Sequence,
-            };
-            search_index.push(SearchEntry {
-                name_lc: t.name.to_lowercase(),
-                schema: t.schema.clone(),
-                kind,
-                id: t.id,
-            });
         }
 
         let mut function_by_name: HashMap<String, SmallVec<[FunctionId; 2]>> = HashMap::new();
@@ -232,12 +211,6 @@ impl SchemaCache {
                 .entry(f.name.to_lowercase())
                 .or_default()
                 .push(f.id);
-            search_index.push(SearchEntry {
-                name_lc: f.name.to_lowercase(),
-                schema: f.schema.clone(),
-                kind: SearchKind::Function,
-                id: f.id,
-            });
         }
 
         // FK grafiği iki yönlü: bir tablodan hem giden hem gelen FK'lar görünür.
@@ -266,7 +239,6 @@ impl SchemaCache {
             table_by_name,
             function_by_name,
             fk_adjacency,
-            search_index,
         }
     }
 
