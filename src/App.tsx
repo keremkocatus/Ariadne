@@ -5,6 +5,7 @@ import { Explorer } from "@/components/explorer/Explorer";
 import { TabBar } from "@/components/query/TabBar";
 import { ResultArea } from "@/components/query/ResultArea";
 import { ConfirmDialog } from "@/components/query/ConfirmDialog";
+import { CloseTabDialog } from "@/components/query/CloseTabDialog";
 import { Toolbar } from "@/components/layout/Toolbar";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { ResizeHandle } from "@/components/layout/ResizeHandle";
@@ -22,7 +23,8 @@ export default function App() {
 
   const tabs = useTabsStore((s) => s.tabs);
   const activeTabId = useTabsStore((s) => s.activeTabId);
-  const { addTab, setSql, run, fetchMore, dismissConfirmation } = useTabsStore();
+  const closeRequest = useTabsStore((s) => s.closeRequest);
+  const { addTab, setSql, run, fetchMore, dismissConfirmation, resolveClose } = useTabsStore();
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
 
   const [peek, setPeek] = useState<ObjectInfo | null>(null);
@@ -111,6 +113,14 @@ export default function App() {
             void run(active.id, true);
           }}
           onCancel={() => dismissConfirmation(active.id)}
+        />
+      )}
+
+      {closeRequest && (
+        <CloseTabDialog
+          onCommit={() => void resolveClose("commit")}
+          onRollback={() => void resolveClose("rollback")}
+          onCancel={() => void resolveClose("cancel")}
         />
       )}
     </div>

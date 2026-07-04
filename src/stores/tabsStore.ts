@@ -58,9 +58,12 @@ function newTab(sql = "SELECT version();"): Tab {
 interface TabsState {
   tabs: Tab[];
   activeTabId: string | null;
+  /// Açık tx'li olduğu için kapatılması onay bekleyen tab (design 05 §7 / 11 §H4).
+  closeRequest: string | null;
 
   addTab: (sql?: string) => string;
   closeTab: (id: string) => void;
+  resolveClose: (action: "commit" | "rollback" | "cancel") => Promise<void>;
   setActive: (id: string) => void;
   setSql: (id: string, sql: string) => void;
 
@@ -71,6 +74,23 @@ interface TabsState {
   dismissConfirmation: (id: string) => void;
 
   active: () => Tab | null;
+}
+
+/// Tab'ı gerçekten kapatır: backend cursor/tx kaynağını bırakır, tab'ı listeden siler.
+function rawCloseTab(
+  set: StoreApi<TabsState>["setState"],
+  get: () => TabsState,
+  id: string,
+) {
+  const tab = get().tabs.find((t) => t.id === id);
+  const connId = tab?.query.connectionId;
+  if (connId) void api.closeResult(connId, id).catch(() => {});
+  set((s) => {
+    const tabs = s.tabs.filter((t) => t.id !== id);
+    const activeTabId =
+      s.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : s.activeTabId;
+    return { tabs, activeTabId };
+  });
 }
 
 function patchQuery(
@@ -86,6 +106,7 @@ function patchQuery(
 export const useTabsStore = create<TabsState>((set, get) => ({
   tabs: [],
   activeTabId: null,
+  closeRequest: null,
 
   addTab(sql) {
     const t = newTab(sql);
@@ -94,15 +115,25 @@ export const useTabsStore = create<TabsState>((set, get) => ({
   },
 
   closeTab(id) {
+    // Açık tx varsa doğrudan kapatma — Commit/Rollback/Cancel onayı iste (design 05 §7).
     const tab = get().tabs.find((t) => t.id === id);
-    const connId = tab?.query.connectionId;
-    if (connId) void api.closeResult(connId, id).catch(() => {});
-    set((s) => {
-      const tabs = s.tabs.filter((t) => t.id !== id);
-      const activeTabId =
-        s.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : s.activeTabId;
-      return { tabs, activeTabId };
-    });
+    if (tab && tab.query.txStatus !== "idle") {
+      set({ closeRequest: id });
+      return;
+    }
+    rawCloseTab(set, get, id);
+  },
+
+  async resolveClose(action) {
+    const id = get().closeRequest;
+    if (!id) return;
+    if (action === "cancel") {
+      set({ closeRequest: null });
+      return;
+    }
+    await get().txControl(id, action === "commit" ? "COMMIT" : "ROLLBACK");
+    set({ closeRequest: null });
+    rawCloseTab(set, get, id);
   },
 
   setActive(id) {
