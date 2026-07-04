@@ -15,6 +15,9 @@ use crate::state::AppState;
 
 use super::schema::spawn_cache_refresh;
 
+// Tauri IPC sınırı: her argüman JS invoke payload'ından ayrı deserialize edilir;
+// struct'a paketlemek api.ts sözleşmesini bozar (design 02 §1). Bilinçli sınır.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn run_query(
     connection_id: String,
