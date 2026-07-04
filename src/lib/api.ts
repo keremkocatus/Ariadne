@@ -119,6 +119,8 @@ export interface SnapFn {
   name: string;
   signature: string;
   kind: FnKind;
+  /** Dönüş tipi `trigger` mı — Explorer "trigger function" filtresi (design 15 §P1-U3). */
+  is_trigger: boolean;
   comment?: string | null;
 }
 export interface SnapSchema {
@@ -139,6 +141,36 @@ export function getSchemaSnapshot(connectionId: string): Promise<SchemaSnapshot>
 }
 export function refreshSchema(connectionId: string): Promise<void> {
   return invoke("refresh_schema", { connectionId });
+}
+
+// ---- İlişki detayı + fonksiyon kaynağı (on-demand, design 15 §P1-U3) ----
+export interface IndexInfo {
+  name: string;
+  definition: string;
+  is_unique: boolean;
+  is_primary: boolean;
+}
+export interface TriggerInfo {
+  name: string;
+  timing: string;
+  events: string;
+  function: string;
+}
+export interface RelationDetails {
+  indexes: IndexInfo[];
+  triggers: TriggerInfo[];
+  size_bytes: number;
+  live_rows: number;
+}
+export function getRelationDetails(
+  connectionId: string,
+  schema: string,
+  name: string,
+): Promise<RelationDetails> {
+  return invoke("get_relation_details", { connectionId, schema, name });
+}
+export function getFunctionSource(connectionId: string, fnOid: number): Promise<string> {
+  return invoke("get_function_source", { connectionId, fnOid });
 }
 
 // ---- Query (design 02 §3, 05) ----

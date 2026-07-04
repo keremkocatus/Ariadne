@@ -8,11 +8,13 @@ import { iconFor } from "./icons";
 export function NodeRow({
   node,
   style,
-  onOpen,
+  onPeek,
+  onActivate,
   onPin,
   isPinned,
 }: NodeRendererProps<TreeNode> & {
-  onOpen: (n: TreeNode) => void;
+  onPeek: (n: TreeNode) => void;
+  onActivate: (n: TreeNode) => void;
   onPin: (n: TreeNode) => void;
   isPinned: (n: TreeNode) => boolean;
 }) {
@@ -26,10 +28,11 @@ export function NodeRow({
         node.isSelected && "bg-bg-elev",
       )}
       onClick={() => {
-        if (isLeaf) onOpen(d);
+        // Tek tık: yaprakta peek, grupta aç/kapa (design 15 §P1-U3).
+        if (isLeaf) onPeek(d);
         else node.toggle();
       }}
-      onDoubleClick={() => isLeaf && onOpen(d)}
+      onDoubleClick={() => isLeaf && onActivate(d)}
     >
       {!isLeaf ? (
         <ChevronRight

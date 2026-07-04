@@ -140,6 +140,9 @@ pub struct Function {
     pub args: Vec<FnArg>,
     pub return_type: String,
     pub kind: FnKind,
+    /// Dönüş tipi `trigger` mı — Explorer'da "trigger function" filtresi için
+    /// (design 15 §P1-U3). `kind`'den bağımsız (trigger fn'ler prokind='f').
+    pub is_trigger: bool,
     pub comment: Option<String>,
 }
 

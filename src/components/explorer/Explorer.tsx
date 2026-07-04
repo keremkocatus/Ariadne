@@ -4,7 +4,7 @@ import { Pin, RefreshCw, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fuzzyMatch } from "@/lib/fuzzy";
 import { useSchemaStore } from "@/stores/schemaStore";
-import { refreshSchema, type SnapRel } from "@/lib/api";
+import { refreshSchema, type SnapFn, type SnapRel } from "@/lib/api";
 import { buildTree, flatten, type TreeNode } from "./tree";
 import { iconFor } from "./icons";
 import { NodeRow } from "./NodeRow";
@@ -16,9 +16,15 @@ interface Props {
   connectionId: string | null;
   profileId: string | null;
   onOpenRelation: (schema: string, name: string) => void;
+  onOpenFunction: (fn: SnapFn) => void;
 }
 
-export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
+interface PeekTarget {
+  schema: string;
+  rel: SnapRel;
+}
+
+export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFunction }: Props) {
   const entry = useSchemaStore((s) => (connectionId ? s.byConnection[connectionId] : undefined));
   const search = useSchemaStore((s) => s.search);
   const setSearch = useSchemaStore((s) => s.setSearch);
@@ -29,7 +35,7 @@ export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
   const togglePin = useSchemaStore((s) => s.togglePin);
 
   const searchRef = useRef<HTMLInputElement>(null);
-  const [peek, setPeek] = useState<SnapRel | null>(null);
+  const [peek, setPeek] = useState<PeekTarget | null>(null);
   const { ref: sizeRef, height } = useSize();
 
   const snapshot = entry?.snapshot;
@@ -58,10 +64,17 @@ export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const openNode = (node: TreeNode) => {
+  // Tek tık = peek (zararsız, sadece bilgi); çift tık = aç (design 15 §P1-U3).
+  const peekNode = (node: TreeNode) => {
     if (node.ntype === "relation" && node.rel && node.schema) {
-      setPeek(node.rel);
+      setPeek({ schema: node.schema, rel: node.rel });
+    }
+  };
+  const activateNode = (node: TreeNode) => {
+    if (node.ntype === "relation" && node.rel && node.schema) {
       onOpenRelation(node.schema, node.rel.name);
+    } else if (node.ntype === "function" && node.fn) {
+      onOpenFunction(node.fn);
     }
   };
 
@@ -125,7 +138,8 @@ export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
                   icon={<Pin size={12} className="text-fg-muted" />}
                   label={n.name}
                   sub={n.schema}
-                  onClick={() => openNode(n)}
+                  onClick={() => peekNode(n)}
+                  onDoubleClick={() => activateNode(n)}
                   onPin={() => profileId && togglePin(profileId, `${n.schema}.${n.name}`)}
                   pinned
                 />
@@ -143,7 +157,8 @@ export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
                     icon={iconFor(n)}
                     label={n.name}
                     sub={n.schema}
-                    onClick={() => openNode(n)}
+                    onClick={() => peekNode(n)}
+                    onDoubleClick={() => activateNode(n)}
                     onPin={
                       n.ntype === "relation" && profileId
                         ? () => togglePin(profileId, `${n.schema}.${n.name}`)
@@ -168,7 +183,8 @@ export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
                   {(props) => (
                     <NodeRow
                       {...props}
-                      onOpen={openNode}
+                      onPeek={peekNode}
+                      onActivate={activateNode}
                       onPin={(node) =>
                         node.rel &&
                         profileId &&
@@ -184,7 +200,14 @@ export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
             )}
           </div>
 
-          {peek && <PeekPanel rel={peek} onClose={() => setPeek(null)} />}
+          {peek && (
+            <PeekPanel
+              schema={peek.schema}
+              rel={peek.rel}
+              connectionId={connectionId}
+              onClose={() => setPeek(null)}
+            />
+          )}
         </>
       )}
     </div>
@@ -198,6 +221,7 @@ function Row({
   label,
   sub,
   onClick,
+  onDoubleClick,
   onPin,
   pinned,
 }: {
@@ -205,6 +229,7 @@ function Row({
   label: string;
   sub?: string;
   onClick: () => void;
+  onDoubleClick?: () => void;
   onPin?: () => void;
   pinned?: boolean;
 }) {
@@ -212,6 +237,7 @@ function Row({
     <div
       className="group flex h-6 cursor-pointer items-center gap-1.5 px-2 text-xs hover:bg-bg-elev"
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
     >
       {icon}
       <span className="truncate">{label}</span>

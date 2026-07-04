@@ -238,7 +238,9 @@ async fn fetch_functions(pool: &PgPool) -> Result<Vec<Function>, AriadneError> {
         "SELECT p.oid::int8 AS oid, n.nspname AS schema, p.proname AS name, \
                 pg_catalog.pg_get_function_arguments(p.oid) AS args, \
                 pg_catalog.pg_get_function_result(p.oid) AS result, \
-                p.prokind AS prokind, obj_description(p.oid, 'pg_proc') AS comment \
+                p.prokind AS prokind, \
+                (p.prorettype = 'pg_catalog.trigger'::pg_catalog.regtype) AS is_trigger, \
+                obj_description(p.oid, 'pg_proc') AS comment \
          FROM pg_catalog.pg_proc p \
          JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
          WHERE {NOT_SYSTEM}"
@@ -257,6 +259,7 @@ async fn fetch_functions(pool: &PgPool) -> Result<Vec<Function>, AriadneError> {
                     .try_get::<Option<String>, _>("result")?
                     .unwrap_or_else(|| "void".to_string()),
                 kind: FnKind::from_pg(r.try_get("prokind")?),
+                is_trigger: r.try_get::<Option<bool>, _>("is_trigger")?.unwrap_or(false),
                 comment: r.try_get("comment")?,
             })
         })

@@ -11,13 +11,14 @@ import { Toolbar } from "@/components/layout/Toolbar";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { ResizeHandle } from "@/components/layout/ResizeHandle";
 import { CommandPalette } from "@/components/layout/CommandPalette";
+import { toast } from "sonner";
 import { registerEventBridge } from "@/lib/events";
 import { getRunSelection } from "@/lib/editorRun";
 import { useGlobalShortcuts } from "@/lib/shortcuts";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useTabsStore } from "@/stores/tabsStore";
-import type { ObjectInfo } from "@/lib/api";
+import { getFunctionSource, isAriadneError, type ObjectInfo, type SnapFn } from "@/lib/api";
 
 export default function App() {
   const connections = useConnectionStore((s) => s.connections);
@@ -25,7 +26,7 @@ export default function App() {
 
   const active = useTabsStore((s) => s.active());
   const closeRequest = useTabsStore((s) => s.closeRequest);
-  const { addTab, setSql, run, fetchMore, dismissConfirmation, resolveClose } = useTabsStore();
+  const { addTab, setSql, run, fetchMore, dismissConfirmation, resolveClose, renameTab } = useTabsStore();
   // Explorer aktif *tab'ın* bağlantısını gösterir, global aktif bağlantıyı değil
   // (design 12 §P1-M1) — tab değişince şema de değişir.
   const tabConnectionId = active?.connectionId ?? null;
@@ -61,6 +62,23 @@ export default function App() {
     [addTab, run, tabConnectionId],
   );
 
+  // Fonksiyona çift tık → kaynağını yeni düzenlenebilir tab'da aç (design 15 §P1-U3).
+  const openFunction = useCallback(
+    async (fn: SnapFn) => {
+      if (!tabConnectionId) return;
+      try {
+        const src = await getFunctionSource(tabConnectionId, fn.oid);
+        const id = addTab(src, tabConnectionId);
+        renameTab(id, fn.name);
+      } catch (e) {
+        toast.error("Couldn't open function source", {
+          description: isAriadneError(e) ? e.message : String(e),
+        });
+      }
+    },
+    [addTab, renameTab, tabConnectionId],
+  );
+
   const q = active?.query;
   // Marker: seçim koşulduysa offset tam metne kaydırılır; SQL düzenlenince
   // (markerStale) marker gizlenir ama hata bandı kalır (design 15 §P1-U2).
@@ -82,6 +100,7 @@ export default function App() {
                 connectionId={tabConnectionId}
                 profileId={tabConnectionInfo?.profile_id ?? null}
                 onOpenRelation={openRelation}
+                onOpenFunction={openFunction}
               />
             </aside>
             <ResizeHandle width={sidebarWidth} onResize={setSidebarWidth} />

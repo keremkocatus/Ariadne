@@ -55,6 +55,7 @@ impl SchemaCache {
                     name: f.name.clone(),
                     signature: f.signature(),
                     kind: f.kind,
+                    is_trigger: f.is_trigger,
                     comment: f.comment.clone(),
                 });
             }
@@ -118,5 +119,6 @@ pub struct SnapFn {
     pub name: String,
     pub signature: String,
     pub kind: FnKind,
+    pub is_trigger: bool,
     pub comment: Option<String>,
 }

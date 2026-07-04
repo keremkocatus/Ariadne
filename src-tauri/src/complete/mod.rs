@@ -291,6 +291,7 @@ mod golden {
             }],
             return_type: "setof orders".into(),
             kind: FnKind::Function,
+            is_trigger: false,
             comment: None,
         };
         SchemaCache::build(

@@ -58,6 +58,8 @@ pub fn run() {
             commands::connect::list_databases,
             commands::schema::get_schema_snapshot,
             commands::schema::refresh_schema,
+            commands::details::get_relation_details,
+            commands::details::get_function_source,
             commands::query::run_query,
             commands::query::fetch_page,
             commands::query::cancel_query,
