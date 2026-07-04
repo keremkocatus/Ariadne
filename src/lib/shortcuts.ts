@@ -26,9 +26,12 @@ export function useGlobalShortcuts() {
         // Sonuç panelini gizle/göster (SSMS).
         e.preventDefault();
         useUiStore.getState().toggleResults();
-      } else if (e.ctrlKey && k === "t") {
+      } else if (e.ctrlKey && (k === "t" || k === "n")) {
+        // Ctrl+T / Ctrl+N: yeni query tab'ı, aktif tab'ın bağlantısına bağlı
+        // (design 18 §P1-W3 N7). Ctrl+N SSMS "New Query" muadili.
         e.preventDefault();
-        tabs.addTab("");
+        const connId = tabs.tabs.find((t) => t.id === tabs.activeTabId)?.connectionId ?? null;
+        tabs.addTab("", connId);
       } else if (e.ctrlKey && k === "w") {
         e.preventDefault();
         if (tabs.activeTabId) tabs.closeTab(tabs.activeTabId);

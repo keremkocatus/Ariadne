@@ -14,6 +14,9 @@ import { buildTree, defaultOpenState, filterSnapshot, flatten, type TreeNode } f
 import { iconFor } from "./icons";
 import { NodeRow } from "./NodeRow";
 import { PeekPanel } from "./PeekPanel";
+import { ContextBar } from "./ContextBar";
+import { QuickActionMenu } from "./QuickActionMenu";
+import { useTabsStore } from "@/stores/tabsStore";
 
 const EMPTY_PINS: string[] = [];
 
@@ -44,6 +47,8 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
 
   const searchRef = useRef<HTMLInputElement>(null);
   const [peek, setPeek] = useState<PeekTarget | null>(null);
+  // Şema düğümü sağ-tık → "New query here" menüsü (design 18 §P1-W3 N7).
+  const [schemaMenu, setSchemaMenu] = useState<{ schema: string; x: number; y: number } | null>(null);
   const { ref: sizeRef, height } = useSize();
 
   const snapshot = entry?.snapshot;
@@ -56,10 +61,15 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
   const initialOpen = useMemo(() => (snapshot ? defaultOpenState(snapshot) : {}), [snapshot]);
 
   const which = (node: TreeNode): "rel" | "fn" => (node.name.startsWith("Functions") ? "fn" : "rel");
+  // Sağ-tık: kategori → filtre popover'ı; şema → "New query here" (design 18 §P1-W3).
   const openFilterMenu = (node: TreeNode, e: React.MouseEvent) => {
-    if (node.ntype !== "category") return;
-    e.preventDefault();
-    setFilterMenu({ which: which(node), x: e.clientX, y: e.clientY });
+    if (node.ntype === "category") {
+      e.preventDefault();
+      setFilterMenu({ which: which(node), x: e.clientX, y: e.clientY });
+    } else if (node.ntype === "schema") {
+      e.preventDefault();
+      setSchemaMenu({ schema: node.name, x: e.clientX, y: e.clientY });
+    }
   };
   // "more" düğümüne tık → o kategorinin filtre popover'ını aç (design 18 §P1-W2 N4).
   const openMoreFilter = (node: TreeNode, e: React.MouseEvent) => {
@@ -127,6 +137,9 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
 
   return (
     <div className="flex h-full flex-col">
+      {/* Server ▸ database bağlam çubuğu (design 18 §P1-W3) */}
+      <ContextBar connectionId={connectionId} />
+
       {/* Arama + refresh */}
       <div className="flex items-center gap-1 border-b border-border p-1.5">
         <div className="relative flex-1">
@@ -251,6 +264,20 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
           filter={filter[filterMenu.which]}
           connectionId={connectionId}
           onClose={() => setFilterMenu(null)}
+        />
+      )}
+
+      {schemaMenu && connectionId && (
+        <QuickActionMenu
+          x={schemaMenu.x}
+          y={schemaMenu.y}
+          onClose={() => setSchemaMenu(null)}
+          actions={[
+            {
+              label: "New query here",
+              onClick: () => useTabsStore.getState().addTab("", connectionId),
+            },
+          ]}
         />
       )}
     </div>
