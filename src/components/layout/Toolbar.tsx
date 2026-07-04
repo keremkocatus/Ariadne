@@ -1,4 +1,5 @@
-import { PanelLeft, Play, Square, Check, Undo2, Settings, FolderOpen, Save } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { PanelLeft, Play, Square, Zap, Check, Undo2, Settings, FolderOpen, Save } from "lucide-react";
 import { ConnectionMenu } from "@/components/connection/ConnectionMenu";
 import { useUiStore } from "@/stores/uiStore";
 import { useTabsStore } from "@/stores/tabsStore";
@@ -6,12 +7,15 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { getRunSelection } from "@/lib/editorRun";
 import { openSqlFile, saveSqlFile } from "@/lib/fileActions";
 
+// Cancel bu süre içinde sorguyu bitirmezse "Force kill" belirir (design 17 §P1-V4).
+const FORCE_KILL_ARM_MS = 5000;
+
 /// Üst araç çubuğu: sidebar toggle, bağlantı seçici, Run/Cancel, tx kontrol
 /// butonları (design 07 §2). Durumu store'lardan okur — App'e prop bağı yoktur.
 export function Toolbar() {
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   const active = useTabsStore((s) => s.active());
-  const { run, cancel, txControl } = useTabsStore();
+  const { run, cancel, forceKill, txControl } = useTabsStore();
   const connections = useConnectionStore((s) => s.connections);
   const q = active?.query;
   // connectionId olması yetmez — o bağlantı kapanmış olabilir (design 12 §P1-M1),
@@ -19,8 +23,27 @@ export function Toolbar() {
   // hataya yol açar; banner zaten nedeni açıklıyor.
   const canRun = !!active?.connectionId && !!connections[active.connectionId];
 
+  // Force kill: Cancel'dan 5 sn sonra hâlâ koşan sorgu için (design 17 §P1-V4).
+  // `armed` = force-kill'in gösterileceği queryId. Sorgu bitince sıfırlanır.
+  const [armed, setArmed] = useState<string | null>(null);
+  const armTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!q?.running) setArmed(null);
+  }, [q?.running]);
+
   const runActive = () => {
     if (active) void run(active.id, getRunSelection() ?? undefined);
+  };
+
+  const onCancel = () => {
+    if (!active) return;
+    const qid = active.query.queryId;
+    void cancel(active.id);
+    if (armTimer.current) clearTimeout(armTimer.current);
+    armTimer.current = setTimeout(() => {
+      const cur = useTabsStore.getState().tabs.find((t) => t.id === active.id);
+      if (cur?.query.running && cur.query.queryId === qid) setArmed(qid ?? null);
+    }, FORCE_KILL_ARM_MS);
   };
 
   return (
@@ -49,13 +72,24 @@ export function Toolbar() {
         <Save size={15} />
       </button>
       {q?.running ? (
-        <button
-          onClick={() => active && cancel(active.id)}
-          className="inline-flex items-center gap-1.5 rounded border border-danger/50 px-2.5 py-1 text-xs font-medium text-danger hover:bg-danger/10"
-          title="Cancel (Esc)"
-        >
-          <Square size={11} /> Cancel
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={onCancel}
+            className="inline-flex items-center gap-1.5 rounded border border-danger/50 px-2.5 py-1 text-xs font-medium text-danger hover:bg-danger/10"
+            title="Cancel (Esc)"
+          >
+            <Square size={11} /> Cancel
+          </button>
+          {armed === q.queryId && (
+            <button
+              onClick={() => active && void forceKill(active.id)}
+              className="inline-flex items-center gap-1.5 rounded border border-danger bg-danger/10 px-2.5 py-1 text-xs font-medium text-danger hover:bg-danger/20"
+              title="pg_terminate_backend — cancel didn't stop it"
+            >
+              <Zap size={11} /> Force kill
+            </button>
+          )}
+        </div>
       ) : (
         <button
           onClick={runActive}

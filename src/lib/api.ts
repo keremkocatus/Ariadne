@@ -173,6 +173,34 @@ export function getFunctionSource(connectionId: string, fnOid: number): Promise<
   return invoke("get_function_source", { connectionId, fnOid });
 }
 
+// ---- Sunucu aktivitesi + backend sinyalleme (design 17 §P1-V4) ----
+export interface ActivityRow {
+  pid: number;
+  datname?: string | null;
+  usename?: string | null;
+  application_name: string;
+  client_addr?: string | null;
+  state?: string | null;
+  wait_event?: string | null;
+  backend_start?: string | null;
+  query_start?: string | null;
+  duration_ms?: number | null;
+  query: string;
+  is_self: boolean;
+  is_app: boolean;
+}
+export function listActivity(connectionId: string): Promise<ActivityRow[]> {
+  return invoke("list_activity", { connectionId });
+}
+export type SignalMode = "cancel" | "terminate";
+export function signalBackend(
+  connectionId: string,
+  pid: number,
+  mode: SignalMode,
+): Promise<boolean> {
+  return invoke("signal_backend", { connectionId, pid, mode });
+}
+
 // ---- Roller (design 15 §P1-U4, salt-okunur) ----
 export interface RoleInfo {
   name: string;
@@ -245,6 +273,10 @@ export function fetchPage(connectionId: string, queryId: string): Promise<Page> 
 }
 export function cancelQuery(connectionId: string, queryId: string): Promise<void> {
   return invoke("cancel_query", { connectionId, queryId });
+}
+/// Donmuş sorgunun backend'ini öldürür (design 17 §P1-V4). Dönen bool: sinyallendi mi.
+export function forceKillQuery(connectionId: string, queryId: string): Promise<boolean> {
+  return invoke("force_kill_query", { connectionId, queryId });
 }
 export function closeResult(connectionId: string, tabId: string): Promise<void> {
   return invoke("close_result", { connectionId, tabId });

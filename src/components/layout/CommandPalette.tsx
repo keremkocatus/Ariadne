@@ -101,6 +101,17 @@ export function CommandPalette() {
               <Item onSelect={() => run(() => useUiStore.getState().toggleResults())}>
                 Toggle results panel
               </Item>
+              <Item
+                onSelect={() =>
+                  run(() => {
+                    const ui = useUiStore.getState();
+                    if (!ui.sidebarVisible) ui.toggleSidebar();
+                    ui.setSidebarTab("activity");
+                  })
+                }
+              >
+                Show server activity
+              </Item>
               <Item onSelect={() => run(() => useUiStore.getState().setSettingsOpen(true))}>
                 Open settings
               </Item>

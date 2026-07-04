@@ -487,6 +487,31 @@ pub async fn cancel_query(
     Ok(())
 }
 
+// ---- force_kill_query (design 17 §P1-V4 madde 2 / design 05 §9) ----
+
+/// Çalışan bir sorgunun backend'ini `pg_terminate_backend` ile öldürür — cancel'ın
+/// 5 sn içinde etki etmediği donmuş sorgu için. pid `running` map'inden çözülür
+/// (frontend pid'i bilmez); bağlantı sunucu tarafında düşer, tab banner yoluna
+/// toparlanır (releaseTabsForConnection). Dönen bool: backend bulundu/sinyallendi mi.
+pub async fn force_kill_query(
+    reg: &ExecRegistry,
+    pool: &PgPool,
+    query_id: &str,
+) -> Result<bool, AriadneError> {
+    let Some(entry) = reg.running.get(query_id) else {
+        return Ok(false); // zaten bitmiş
+    };
+    let pid = entry.value().1;
+    drop(entry);
+    let mut c = pool.acquire().await.map_err(AriadneError::from)?;
+    let killed: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+        .bind(pid)
+        .fetch_one(&mut *c)
+        .await
+        .map_err(AriadneError::from)?;
+    Ok(killed)
+}
+
 // ---- close_result (tab kapanınca / yeni sorgu) ----
 
 pub async fn close_result(reg: &ExecRegistry, tab_id: &str) -> Result<(), AriadneError> {
@@ -643,5 +668,37 @@ mod tests {
             "kind={:?}",
             err.kind
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
+    async fn force_kill_terminates_backend() {
+        let pool = pool().await;
+        let reg = std::sync::Arc::new(ExecRegistry::default());
+        let p2 = pool.clone();
+        let reg2 = reg.clone();
+
+        let handle = tokio::spawn(async move {
+            run_query(&reg2, &p2, args("SELECT pg_sleep(10)", "tk", "qk")).await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        // pg_terminate_backend → true (backend vardı ve sinyallendi).
+        let killed = force_kill_query(&reg, &pool, "qk").await.unwrap();
+        assert!(killed, "force_kill mevcut backend'i sinyallemeli");
+
+        // Backend koparıldı → sorgu hata ile bitmeli. FETCH hatası kısmi-sonuç
+        // yolundan Ok(RunResult{error}) olarak gömülebilir (design 11 §H2) ya da
+        // transport hatası Err olabilir; ikisi de "temiz başarı değil".
+        let res = handle.await.unwrap();
+        let errored = match &res {
+            Ok(rr) => rr.error.is_some(),
+            Err(_) => true,
+        };
+        assert!(errored, "terminate edilen sorgu hata ile bitmeli");
+
+        // Zaten bitmiş bir query_id için false (map'te yok).
+        let again = force_kill_query(&reg, &pool, "qk").await.unwrap();
+        assert!(!again, "bitmiş sorgu için false");
     }
 }

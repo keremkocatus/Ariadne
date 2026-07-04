@@ -104,7 +104,9 @@ async fn fetch_indexes(
         .map(|r| {
             Ok(IndexInfo {
                 name: r.try_get("name")?,
-                definition: r.try_get::<Option<String>, _>("definition")?.unwrap_or_default(),
+                definition: r
+                    .try_get::<Option<String>, _>("definition")?
+                    .unwrap_or_default(),
                 is_unique: r.try_get("is_unique")?,
                 is_primary: r.try_get("is_primary")?,
             })
@@ -147,7 +149,9 @@ async fn fetch_triggers(
             Ok(TriggerInfo {
                 name: r.try_get("name")?,
                 timing: r.try_get("timing")?,
-                events: r.try_get::<Option<String>, _>("events")?.unwrap_or_default(),
+                events: r
+                    .try_get::<Option<String>, _>("events")?
+                    .unwrap_or_default(),
                 function: r.try_get("function")?,
             })
         })

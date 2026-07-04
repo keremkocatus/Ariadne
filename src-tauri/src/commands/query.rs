@@ -89,6 +89,19 @@ pub async fn cancel_query(
     exec::cancel_query(&conn.exec, &conn.pool, &query_id).await
 }
 
+/// Donmuş sorgunun backend'ini öldürür (design 17 §P1-V4 madde 2). Cancel 5 sn
+/// içinde etki etmezse frontend "Force kill" butonuyla buraya düşer; pid sunucu
+/// tarafında query_id'den çözülür.
+#[tauri::command]
+pub async fn force_kill_query(
+    connection_id: String,
+    query_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, AriadneError> {
+    let conn = state.connection(&connection_id)?;
+    exec::force_kill_query(&conn.exec, &conn.pool, &query_id).await
+}
+
 #[tauri::command]
 pub async fn close_result(
     connection_id: String,

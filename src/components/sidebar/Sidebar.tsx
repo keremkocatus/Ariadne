@@ -1,13 +1,12 @@
-// Sol panel: Explorer + Roles arasında dar sekmelerle geçiş (design 15 §P1-U4).
-// M4'ün History paneli de aynı düzene oturacak.
-import { useState } from "react";
-import { Table2, Users } from "lucide-react";
+// Sol panel: Explorer / Roles / Activity arasında dar sekmelerle geçiş (design 15
+// §P1-U4 + design 17 §P1-V4). Sekme durumu uiStore'da (palette programatik geçebilsin).
+import { Table2, Users, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Explorer } from "@/components/explorer/Explorer";
 import { RolesPanel } from "@/components/roles/RolesPanel";
+import { ActivityPanel } from "@/components/activity/ActivityPanel";
+import { useUiStore } from "@/stores/uiStore";
 import type { SnapFn } from "@/lib/api";
-
-type SidebarTab = "explorer" | "roles";
 
 interface Props {
   connectionId: string | null;
@@ -17,7 +16,8 @@ interface Props {
 }
 
 export function Sidebar({ connectionId, profileId, onOpenRelation, onOpenFunction }: Props) {
-  const [tab, setTab] = useState<SidebarTab>("explorer");
+  const tab = useUiStore((s) => s.sidebarTab);
+  const setTab = useUiStore((s) => s.setSidebarTab);
 
   return (
     <div className="flex h-full flex-col">
@@ -28,6 +28,9 @@ export function Sidebar({ connectionId, profileId, onOpenRelation, onOpenFunctio
         <TabButton active={tab === "roles"} onClick={() => setTab("roles")} icon={<Users size={12} />}>
           Roles
         </TabButton>
+        <TabButton active={tab === "activity"} onClick={() => setTab("activity")} icon={<Activity size={12} />}>
+          Activity
+        </TabButton>
       </div>
       <div className="min-h-0 flex-1">
         {tab === "explorer" ? (
@@ -37,8 +40,10 @@ export function Sidebar({ connectionId, profileId, onOpenRelation, onOpenFunctio
             onOpenRelation={onOpenRelation}
             onOpenFunction={onOpenFunction}
           />
-        ) : (
+        ) : tab === "roles" ? (
           <RolesPanel connectionId={connectionId} />
+        ) : (
+          <ActivityPanel connectionId={connectionId} />
         )}
       </div>
     </div>

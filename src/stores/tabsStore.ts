@@ -176,6 +176,8 @@ interface TabsState {
   run: (id: string, opts?: RunOpts) => Promise<void>;
   fetchMore: (id: string) => Promise<void>;
   cancel: (id: string) => Promise<void>;
+  /// Donmuş sorgunun backend'ini öldürür (design 17 §P1-V4): cancel etki etmezse.
+  forceKill: (id: string) => Promise<void>;
   txControl: (id: string, sql: "COMMIT" | "ROLLBACK") => Promise<void>;
   dismissConfirmation: (id: string) => void;
   markFrozen: (tabId: string) => void;
@@ -500,6 +502,13 @@ export const useTabsStore = create<TabsState>()(
     const tab = get().tabs.find((t) => t.id === id);
     if (tab?.connectionId && tab.query.queryId) {
       await api.cancelQuery(tab.connectionId, tab.query.queryId).catch(() => {});
+    }
+  },
+
+  async forceKill(id) {
+    const tab = get().tabs.find((t) => t.id === id);
+    if (tab?.connectionId && tab.query.queryId) {
+      await api.forceKillQuery(tab.connectionId, tab.query.queryId).catch(() => {});
     }
   },
 

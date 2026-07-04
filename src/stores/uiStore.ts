@@ -18,9 +18,14 @@ export const DEFAULT_SETTINGS: Settings = {
   longQueryNoticeSeconds: 10,
 };
 
+/// Sol panel sekmesi (design 15 §P1-U4 + design 17 §P1-V4). uiStore'da tutulur ki
+/// palette "Show activity" gibi eylemler programatik sekme değiştirebilsin.
+export type SidebarTab = "explorer" | "roles" | "activity";
+
 interface UiState {
   sidebarVisible: boolean;
   sidebarWidth: number;
+  sidebarTab: SidebarTab;
   resultsVisible: boolean;
   paletteOpen: boolean;
   settingsOpen: boolean;
@@ -30,6 +35,7 @@ interface UiState {
   settings: Settings;
   toggleSidebar: () => void;
   setSidebarWidth: (w: number) => void;
+  setSidebarTab: (tab: SidebarTab) => void;
   toggleResults: () => void;
   setResultsVisible: (v: boolean) => void;
   setPaletteOpen: (open: boolean) => void;
@@ -43,6 +49,7 @@ export const useUiStore = create<UiState>()(
     (set) => ({
       sidebarVisible: true,
       sidebarWidth: 260,
+      sidebarTab: "explorer",
       resultsVisible: true,
       paletteOpen: false,
       settingsOpen: false,
@@ -50,6 +57,7 @@ export const useUiStore = create<UiState>()(
       settings: DEFAULT_SETTINGS,
       toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
       setSidebarWidth: (w) => set({ sidebarWidth: Math.max(180, Math.min(560, w)) }),
+      setSidebarTab: (tab) => set({ sidebarTab: tab }),
       toggleResults: () => set((s) => ({ resultsVisible: !s.resultsVisible })),
       setResultsVisible: (v) => set({ resultsVisible: v }),
       setPaletteOpen: (open) => set({ paletteOpen: open }),
@@ -64,6 +72,7 @@ export const useUiStore = create<UiState>()(
       partialize: (s) => ({
         sidebarVisible: s.sidebarVisible,
         sidebarWidth: s.sidebarWidth,
+        sidebarTab: s.sidebarTab,
         resultsVisible: s.resultsVisible,
         settings: s.settings,
       }),
