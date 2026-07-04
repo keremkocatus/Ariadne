@@ -1,5 +1,11 @@
 # 18 — Explorer & Navigasyon İyileştirmeleri (GUI turu 2 → P1-W milestone'ları)
 
+> **DURUM (2026-07-04): P1-W1…W3'ün HEPSİ tamamlandı** ve `p1-u-gui-backlog`
+> dalına commit'lendi (W1 reconnect toast netliği+takılma, W2 Explorer hijyeni,
+> W3 bağlam çubuğu + New Query/Ctrl+N). Hepsi frontend-only; gate her commit'te
+> yeşil (tsc + vite build). **Canlı DB elle testi henüz yapılmadı.** W3'te
+> bilinçli UX kararı: sığ bağlam çubuğu (tam nested ağaç yerine) — §P1-W3 analizi.
+
 > Tarih: 2026-07-04. Girdi: kullanıcının v0.0.1 sonrası ikinci GUI test turu (7
 > ham not). Bu dosya notları design/15/17 tarzında (neredeyiz / plan / kabul /
 > risk) analiz edip **P1-W1…W3** milestone'larına böler. "W" = workflow/explorer
