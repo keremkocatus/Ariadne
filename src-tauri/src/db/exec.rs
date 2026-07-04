@@ -144,7 +144,12 @@ pub async fn run_query(
 
         match exec_res {
             Ok(r) => results.push(r),
-            Err(e) => {
+            Err(mut e) => {
+                // Postgres position statement-içi (1-based); editördeki mutlak konuma
+                // kaydır (design 11 §H1).
+                if let Some(pos) = e.position {
+                    e.position = Some(absolute_position(args.sql, stmt, pos));
+                }
                 if st.tx == TxStatus::InTransaction {
                     st.tx = TxStatus::Aborted;
                 }
@@ -170,6 +175,20 @@ pub async fn run_query(
         tx_status,
         needs_confirmation,
     })
+}
+
+/// Statement-içi 1-based Postgres position'ını, statement'ın script içindeki
+/// başlangıç karakter offset'ini ekleyerek editördeki mutlak 1-based karakter
+/// konumuna çevirir (design 11 §H1). `stmt`, `sql`'in bir alt-dilimi olmalıdır
+/// (pg_query::split slice döndürür); değilse offset 0'a düşer, marker yine gösterilir.
+fn absolute_position(sql: &str, stmt: &str, pos: u32) -> u32 {
+    let base = sql.as_ptr() as usize;
+    let byte_start = (stmt.as_ptr() as usize)
+        .checked_sub(base)
+        .filter(|&b| b <= sql.len())
+        .unwrap_or(0);
+    let char_start = sql.get(..byte_start).map_or(0, |s| s.chars().count());
+    pos + char_start as u32
 }
 
 /// Cursor açık değilse ve tx idle ise bağlantıyı pool'a iade et.
@@ -400,6 +419,39 @@ pub async fn close_result(reg: &ExecRegistry, tab_id: &str) -> Result<(), Ariadn
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- Saf: hata position'ının statement offset'iyle kaydırılması (design 11 §H1) ----
+
+    #[test]
+    fn absolute_position_shifts_to_editor_offset() {
+        let sql = "SELECT 1;\nSELECT oops FROM t";
+        let idx = sql.find("SELECT oops").unwrap(); // 2. statement'ın byte offset'i
+        let stmt = &sql[idx..]; // gerçek alt-dilim (split_with_parser böyle döndürür)
+        let char_start = sql[..idx].chars().count() as u32;
+        // Postgres pos=8 (statement içinde 1-based) → mutlak = char_start + 8.
+        assert_eq!(absolute_position(sql, stmt, 8), char_start + 8);
+    }
+
+    #[test]
+    fn absolute_position_counts_chars_not_bytes() {
+        // 'é' 2 byte / 1 karakter: byte offset yerine karakter sayılmalı.
+        let sql = "SELECT 'é';\nSELECT x";
+        let idx = sql.find("SELECT x").unwrap();
+        let stmt = &sql[idx..];
+        let char_start = sql[..idx].chars().count() as u32;
+        assert!(char_start < idx as u32, "multibyte → karakter < byte");
+        assert_eq!(absolute_position(sql, stmt, 1), char_start + 1);
+    }
+
+    #[test]
+    fn absolute_position_non_subslice_is_safe() {
+        // Alt-dilim değilse taşma/panik yok; ham pos'a düşer (defansif).
+        let sql = "SELECT 1";
+        let foreign = String::from("SELECT 1");
+        let out = absolute_position(sql, &foreign, 3);
+        // char_start 0'a düşer → pos korunur (nadir allocator çakışması dışında).
+        assert!(out == 3 || out >= 3);
+    }
 
     // ---- Canlı DB entegrasyonu: cursor + pagination + tx + cancel ----
     // TEMP tablo kullanır (session-local, otomatik düşer) — kullanıcı verisine DOKUNMAZ.

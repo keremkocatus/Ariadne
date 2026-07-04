@@ -1,4 +1,5 @@
 import { ResultGrid } from "@/components/grid/ResultGrid";
+import { errorTitle } from "@/lib/errors";
 import { useTabsStore } from "@/stores/tabsStore";
 
 /// Aktif tab'ın sonuç bölgesi: hata bandı / grid / affected özeti / boş durum.
@@ -12,12 +13,22 @@ export function ResultArea({ tabId, onFetchMore }: { tabId: string; onFetchMore:
     if (q.error.kind === "query_cancelled") {
       return <p className="p-3 font-mono text-xs text-fg-muted">Query cancelled.</p>;
     }
+    const err = q.error;
     return (
-      <pre className="whitespace-pre-wrap p-3 font-mono text-xs text-danger">
-        [{q.error.kind}
-        {q.error.sqlstate ? ` ${q.error.sqlstate}` : ""}] {q.error.message}
-        {q.error.hint ? `\nHINT: ${q.error.hint}` : ""}
-      </pre>
+      <div className="overflow-auto p-3 font-mono text-xs">
+        <div className="text-danger">
+          <span className="font-semibold">{errorTitle(err)}</span>
+          {err.sqlstate && <span className="text-fg-muted"> · {err.sqlstate}</span>}
+        </div>
+        <p className="mt-1 whitespace-pre-wrap text-danger">{err.message}</p>
+        {err.hint && <p className="mt-1 whitespace-pre-wrap text-warn">HINT: {err.hint}</p>}
+        {err.detail && (
+          <details className="mt-1 text-fg-muted">
+            <summary className="cursor-pointer select-none">Detail</summary>
+            <pre className="mt-1 whitespace-pre-wrap">{err.detail}</pre>
+          </details>
+        )}
+      </div>
     );
   }
   if (q.columns.length > 0) {
