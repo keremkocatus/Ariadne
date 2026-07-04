@@ -29,6 +29,24 @@ export interface QueryState {
   capped: boolean;
   /// Idle cursor sunucu tarafında kapatıldı (design 11 §H7) → sonuç donduruldu.
   frozen: boolean;
+  /// Son run bir seçim mi koştu (design 15 §P1-U2) — ResultArea "ran selection" rozeti.
+  ranSelection: boolean;
+  /// Son run'ın seçim başlangıç offset'i; hata marker'ını tam metne konumlarken
+  /// `error.position`'a eklenir (tam metin run'ında 0).
+  selectionOffset: number;
+  /// SQL düzenlenince hata marker'ı bayatladı → editör marker'ı gizlenir, hata
+  /// bandı yeni run'a kadar kalır (design 15 §P1-U2 madde 2).
+  markerStale: boolean;
+  /// Onay bekleyen run'ın opts'u (design 15 §P1-U2 riski): confirm sonrası AYNI
+  /// seçim/SQL ile koşulmalı — aksi halde onaylanan seçimken tüm metin koşar.
+  pendingRun: RunOpts | null;
+}
+
+/// run() opsiyonları (design 15 §P1-U2). `sql` verilirse seçim koşulur.
+export interface RunOpts {
+  confirmed?: boolean;
+  sql?: string;
+  selectionOffset?: number;
 }
 
 export interface Tab {
@@ -55,6 +73,10 @@ function emptyQuery(): QueryState {
     txStatus: "idle",
     capped: false,
     frozen: false,
+    ranSelection: false,
+    selectionOffset: 0,
+    markerStale: false,
+    pendingRun: null,
   };
 }
 
@@ -84,12 +106,17 @@ interface TabsState {
   activeTabId: string | null;
   /// Açık tx'li olduğu için kapatılması onay bekleyen tab (design 05 §7 / 11 §H4).
   closeRequest: string | null;
+  /// Bir sonraki tab için sıra numarası (design 15 §P1-U2): "Query 1/2/3…". Tab
+  /// kapatınca geri sarmaz (isim çakışması olmasın). Persist edilir.
+  nextTabNumber: number;
 
   addTab: (sql?: string, connectionId?: string | null) => string;
   closeTab: (id: string) => void;
   resolveClose: (action: "commit" | "rollback" | "cancel") => Promise<void>;
   setActive: (id: string) => void;
   setSql: (id: string, sql: string) => void;
+  /// Tab başlığını elle değiştirir (çift-tık ile yeniden adlandırma, design 15 §P1-U2).
+  renameTab: (id: string, title: string) => void;
   /// Tab'ın bağlantısını değiştirir (Ctrl+K "switch connection" veya kapalı
   /// bağlantı bandındaki seçim). Çalışan sorgu ya da açık tx varken reddedilir
   /// (o kaynak eski bağlantıya ait — design 12 §P1-M1 riski).
@@ -98,7 +125,7 @@ interface TabsState {
   /// temizler (design 12 §P1-M1 item 5) — bkz. setConnection'daki not.
   releaseTabsForConnection: (connectionId: string) => void;
 
-  run: (id: string, confirmed?: boolean) => Promise<void>;
+  run: (id: string, opts?: RunOpts) => Promise<void>;
   fetchMore: (id: string) => Promise<void>;
   cancel: (id: string) => Promise<void>;
   txControl: (id: string, sql: "COMMIT" | "ROLLBACK") => Promise<void>;
@@ -119,13 +146,17 @@ function rawCloseTab(
   if (connId) void api.closeResult(connId, id).catch(() => {});
   set((s) => {
     let tabs = s.tabs.filter((t) => t.id !== id);
+    let nextTabNumber = s.nextTabNumber;
     // En az bir tab garantisi (design 12 §P1-M1): boş tab listesi Explorer/
     // StatusBar/CommandPalette'i "no connection" gösterir, canlı bir bağlantı
     // olsa bile — kapanan tab'ın bağlantısıyla devam eden taze bir tab açılır.
-    if (tabs.length === 0) tabs = [newTab(undefined, connId ?? null)];
+    if (tabs.length === 0) {
+      tabs = [{ ...newTab(undefined, connId ?? null), title: `Query ${nextTabNumber}` }];
+      nextTabNumber += 1;
+    }
     const activeTabId =
       s.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : s.activeTabId;
-    return { tabs, activeTabId };
+    return { tabs, activeTabId, nextTabNumber };
   });
 }
 
@@ -145,11 +176,12 @@ export const useTabsStore = create<TabsState>()(
   tabs: [],
   activeTabId: null,
   closeRequest: null,
+  nextTabNumber: 1,
 
   addTab(sql, connectionId) {
     const connId = connectionId ?? useConnectionStore.getState().activeConnectionId;
-    const t = newTab(sql, connId);
-    set((s) => ({ tabs: [...s.tabs, t], activeTabId: t.id }));
+    const t = { ...newTab(sql, connId), title: `Query ${get().nextTabNumber}` };
+    set((s) => ({ tabs: [...s.tabs, t], activeTabId: t.id, nextTabNumber: s.nextTabNumber + 1 }));
     return t.id;
   },
 
@@ -186,7 +218,21 @@ export const useTabsStore = create<TabsState>()(
   },
 
   setSql(id, sql) {
-    set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, sql } : t)) }));
+    set((s) => ({
+      tabs: s.tabs.map((t) => {
+        if (t.id !== id) return t;
+        // Hata marker'ı düzenlemeyle bayatlar (offset artık yanlış yeri gösterir):
+        // marker gizlenir, hata bandı yeni run'a kadar kalır (design 15 §P1-U2).
+        const needStale = t.query.error?.position != null && !t.query.markerStale;
+        return { ...t, sql, query: needStale ? { ...t.query, markerStale: true } : t.query };
+      }),
+    }));
+  },
+
+  renameTab(id, title) {
+    const trimmed = title.trim();
+    if (!trimmed) return; // boş ada izin verme
+    set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, title: trimmed } : t)) }));
   },
 
   setConnection(id, connectionId) {
@@ -215,7 +261,7 @@ export const useTabsStore = create<TabsState>()(
     }));
   },
 
-  async run(id, confirmed) {
+  async run(id, opts) {
     const tab = get().tabs.find((t) => t.id === id);
     if (!tab || tab.query.running) return;
     const connId = tab.connectionId;
@@ -229,18 +275,29 @@ export const useTabsStore = create<TabsState>()(
       });
       return;
     }
+    // Seçim varsa yalnız onu koştur (design 15 §P1-U2); offset marker'ı tam metne
+    // doğru konumlamak için saklanır. Statement-split/destructive-guard/tx davranışı
+    // değişmez — backend'e giden yalnızca daha kısa bir SQL.
+    const ranSelection = opts?.sql != null;
+    const sql = opts?.sql ?? tab.sql;
+    const selectionOffset = opts?.selectionOffset ?? 0;
     const queryId = crypto.randomUUID();
     patchQuery(set, id, {
       running: true,
       error: null,
       needsConfirmation: null,
       frozen: false,
+      markerStale: false,
+      ranSelection,
+      selectionOffset,
+      pendingRun: null,
       queryId,
     });
     try {
-      const res = await api.runQuery(connId, tab.sql, id, queryId, confirmed);
+      const res = await api.runQuery(connId, sql, id, queryId, opts?.confirmed);
       if (res.needs_confirmation) {
-        patchQuery(set, id, { running: false, needsConfirmation: res.needs_confirmation });
+        // Onay sonrası AYNI opts ile koşulmalı (seçim korunur) — pendingRun'da tut.
+        patchQuery(set, id, { running: false, needsConfirmation: res.needs_confirmation, pendingRun: opts ?? null });
         return;
       }
       const rowsStmt = res.statements.find((s) => s.kind === "rows");
@@ -320,7 +377,7 @@ export const useTabsStore = create<TabsState>()(
   },
 
   dismissConfirmation(id) {
-    patchQuery(set, id, { needsConfirmation: null });
+    patchQuery(set, id, { needsConfirmation: null, pendingRun: null });
   },
 
   markFrozen(tabId) {
@@ -343,12 +400,14 @@ export const useTabsStore = create<TabsState>()(
       partialize: (s) => ({
         tabs: s.tabs.map((t) => ({ id: t.id, title: t.title, sql: t.sql, connectionId: t.connectionId })),
         activeTabId: s.activeTabId,
+        nextTabNumber: s.nextTabNumber,
       }),
       // Diskten dönen tab'lara taze boş query iliştir (çalıştırma durumu kalıcı değil).
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as {
           tabs?: { id: string; title: string; sql: string; connectionId?: string | null }[];
           activeTabId?: string | null;
+          nextTabNumber?: number;
         };
         const tabs: Tab[] = (p.tabs ?? []).map((t) => ({
           ...t,
@@ -359,6 +418,8 @@ export const useTabsStore = create<TabsState>()(
           ...current,
           tabs,
           activeTabId: tabs.some((t) => t.id === p.activeTabId) ? p.activeTabId! : (tabs[0]?.id ?? null),
+          // Sayaç geri sarmasın: en az (mevcut tab sayısı + 1)'den başla.
+          nextTabNumber: p.nextTabNumber ?? tabs.length + 1,
         };
       },
     },

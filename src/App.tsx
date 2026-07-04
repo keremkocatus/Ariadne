@@ -12,6 +12,7 @@ import { StatusBar } from "@/components/layout/StatusBar";
 import { ResizeHandle } from "@/components/layout/ResizeHandle";
 import { CommandPalette } from "@/components/layout/CommandPalette";
 import { registerEventBridge } from "@/lib/events";
+import { getRunSelection } from "@/lib/editorRun";
 import { useGlobalShortcuts } from "@/lib/shortcuts";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -46,7 +47,8 @@ export default function App() {
   useGlobalShortcuts();
 
   const runActive = useCallback(() => {
-    if (active) void run(active.id);
+    // Seçim varsa yalnız onu koştur (design 15 §P1-U2); yoksa tam metin.
+    if (active) void run(active.id, getRunSelection() ?? undefined);
   }, [active, run]);
 
   const openRelation = useCallback(
@@ -60,9 +62,11 @@ export default function App() {
   );
 
   const q = active?.query;
+  // Marker: seçim koşulduysa offset tam metne kaydırılır; SQL düzenlenince
+  // (markerStale) marker gizlenir ama hata bandı kalır (design 15 §P1-U2).
   const errorMarker =
-    q?.error && q.error.position != null
-      ? { offset: q.error.position - 1, message: q.error.message }
+    q?.error && q.error.position != null && !q.markerStale
+      ? { offset: q.error.position - 1 + q.selectionOffset, message: q.error.message }
       : null;
 
   return (
@@ -121,8 +125,10 @@ export default function App() {
         <ConfirmDialog
           conf={q.needsConfirmation}
           onConfirm={() => {
+            // Onaylanan run AYNI opts ile koşulmalı (seçimse seçim) — pendingRun.
+            const opts = { ...(q.pendingRun ?? {}), confirmed: true };
             dismissConfirmation(active.id);
-            void run(active.id, true);
+            void run(active.id, opts);
           }}
           onCancel={() => dismissConfirmation(active.id)}
         />

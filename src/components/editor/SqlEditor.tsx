@@ -2,6 +2,7 @@ import Editor, { type OnMount, type Monaco } from "@monaco-editor/react";
 import { useEffect, useRef } from "react";
 import type { editor } from "monaco-editor";
 import { registerSqlProviders, setActiveConnection } from "@/lib/monaco/providers";
+import { setRunSelectionGetter } from "@/lib/editorRun";
 import { getObjectInfo, type ObjectInfo } from "@/lib/api";
 
 interface SqlEditorProps {
@@ -58,10 +59,28 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
     ]);
   }, [marker]);
 
+  // Bu editör görünürken çalıştırma yolunun seçimi okuyabilmesi için getter kaydı
+  // (design 15 §P1-U2). Editör unmount olunca (tab değişince, bir sonraki mount
+  // hemen yeniden kaydeder) temizlenir.
+  useEffect(() => {
+    return () => setRunSelectionGetter(null);
+  }, []);
+
   const handleMount: OnMount = (ed, monaco) => {
     edRef.current = ed;
     monacoRef.current = monaco;
     registerSqlProviders();
+
+    // SSMS semantiği: boş olmayan bir seçim varsa yalnız onu koştur (offset'iyle);
+    // yoksa null → çalıştırma tam metni kullanır.
+    setRunSelectionGetter(() => {
+      const model = ed.getModel();
+      const sel = ed.getSelection();
+      if (!model || !sel || sel.isEmpty()) return null;
+      const sql = model.getValueInRange(sel);
+      if (!sql.trim()) return null;
+      return { sql, selectionOffset: model.getOffsetAt(sel.getStartPosition()) };
+    });
 
     // Çalıştırma: Ctrl+Enter (M0 kabul) + Ctrl+E + F5 (SSMS).
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runRef.current());

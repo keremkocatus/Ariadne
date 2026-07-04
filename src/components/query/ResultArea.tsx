@@ -17,6 +17,11 @@ export function ResultArea({ tabId, onFetchMore }: { tabId: string; onFetchMore:
 
   return (
     <div className="flex h-full flex-col">
+      {q.ranSelection && (hasRows || hasExtra || showError) && (
+        <div className="shrink-0 border-b border-border bg-bg-elev/40 px-3 py-0.5 text-[10px] uppercase tracking-wide text-fg-muted">
+          ran selection
+        </div>
+      )}
       {cancelled && <p className="p-3 font-mono text-xs text-fg-muted">Query cancelled.</p>}
       {showError && <ErrorBanner err={q.error!} />}
       {q.frozen && (

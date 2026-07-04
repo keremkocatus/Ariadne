@@ -3,6 +3,7 @@ import { ConnectionMenu } from "@/components/connection/ConnectionMenu";
 import { useUiStore } from "@/stores/uiStore";
 import { useTabsStore } from "@/stores/tabsStore";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { getRunSelection } from "@/lib/editorRun";
 
 /// Üst araç çubuğu: sidebar toggle, bağlantı seçici, Run/Cancel, tx kontrol
 /// butonları (design 07 §2). Durumu store'lardan okur — App'e prop bağı yoktur.
@@ -18,7 +19,7 @@ export function Toolbar() {
   const canRun = !!active?.connectionId && !!connections[active.connectionId];
 
   const runActive = () => {
-    if (active) void run(active.id);
+    if (active) void run(active.id, getRunSelection() ?? undefined);
   };
 
   return (
