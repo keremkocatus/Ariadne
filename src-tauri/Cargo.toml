@@ -6,7 +6,14 @@ authors = ["Kerem"]
 edition = "2021"
 rust-version = "1.77"
 
-# Tauri v2 masaüstü uygulaması: tek binary (src/main.rs).
+# Kütüphane hedefi (design 11 §R1): iş mantığı burada, integration testler
+# `use ariadne::...` ile buradan import eder. Farklı ad (`ariadne_lib`) Windows'ta
+# bin ile çıktı dosyası çakışmasını önler; integration testler bu adı kullanır.
+[lib]
+name = "ariadne_lib"
+path = "src/lib.rs"
+
+# Tauri v2 masaüstü uygulaması: ince binary (src/main.rs → ariadne_lib::run).
 [[bin]]
 name = "ariadne"
 path = "src/main.rs"
