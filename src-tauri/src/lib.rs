@@ -71,6 +71,7 @@ pub fn run() {
             commands::query::close_result,
             commands::activity::list_activity,
             commands::activity::signal_backend,
+            commands::activity::db_stats,
             commands::complete::get_completions,
             commands::complete::get_object_info,
             commands::complete::get_signature_help,

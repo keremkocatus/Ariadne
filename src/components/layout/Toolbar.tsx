@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { PanelLeft, Play, Square, Zap, Check, Undo2, Settings, FolderOpen, Save } from "lucide-react";
+import { PanelLeft, Play, Square, Zap, Check, Undo2, Settings, FolderOpen, Save, Activity } from "lucide-react";
 import { ConnectionMenu } from "@/components/connection/ConnectionMenu";
 import { useUiStore } from "@/stores/uiStore";
 import { useTabsStore } from "@/stores/tabsStore";
@@ -70,6 +70,18 @@ export function Toolbar() {
         title="Save (Ctrl+S)"
       >
         <Save size={15} />
+      </button>
+      <button
+        className="rounded p-1 text-fg-muted hover:bg-bg-elev hover:text-fg"
+        onClick={() => {
+          // Sidebar'ı Activity sekmesine getir; gizliyse aç (design 20 §P1-Y3 M4).
+          const ui = useUiStore.getState();
+          if (!ui.sidebarVisible) ui.toggleSidebar();
+          ui.setSidebarTab("activity");
+        }}
+        title="Server activity — who's running what"
+      >
+        <Activity size={15} />
       </button>
       {q?.running ? (
         <div className="flex items-center gap-1.5">

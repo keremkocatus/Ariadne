@@ -201,6 +201,17 @@ export function signalBackend(
   return invoke("signal_backend", { connectionId, pid, mode });
 }
 
+// ---- DB istatistik şeridi (design 20 §P1-Y3 M5) ----
+export interface DbStats {
+  active_connections: number;
+  max_connections?: number | null;
+  cache_hit_ratio?: number | null; // 0..1
+  db_size_bytes?: number | null;
+}
+export function dbStats(connectionId: string): Promise<DbStats> {
+  return invoke("db_stats", { connectionId });
+}
+
 // ---- Roller (design 15 §P1-U4, salt-okunur) ----
 export interface RoleInfo {
   name: string;
