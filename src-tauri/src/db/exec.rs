@@ -632,7 +632,16 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
         cancel_query(&reg, &pool, "qc").await.unwrap();
 
-        let res = handle.await.unwrap();
-        assert!(res.is_err(), "iptal edilen sorgu hata dönmeli");
+        // design 11 §H2 (partial results on statement error): iptal, run_query'nin
+        // dış Result'ını Err yapmaz — RunResult.error'a QueryCancelled olarak gömülür.
+        let res = handle.await.unwrap().unwrap();
+        let err = res
+            .error
+            .expect("iptal edilen sorgu RunResult.error taşımalı");
+        assert!(
+            matches!(err.kind, ErrorKind::QueryCancelled),
+            "kind={:?}",
+            err.kind
+        );
     }
 }
