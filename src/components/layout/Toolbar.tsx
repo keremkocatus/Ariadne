@@ -1,19 +1,21 @@
 import { PanelLeft, Play, Square, Check, Undo2 } from "lucide-react";
 import { ConnectionMenu } from "@/components/connection/ConnectionMenu";
-import { useConnectionStore } from "@/stores/connectionStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useTabsStore } from "@/stores/tabsStore";
+import { useConnectionStore } from "@/stores/connectionStore";
 
 /// Üst araç çubuğu: sidebar toggle, bağlantı seçici, Run/Cancel, tx kontrol
 /// butonları (design 07 §2). Durumu store'lardan okur — App'e prop bağı yoktur.
 export function Toolbar() {
-  const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
-  const tabs = useTabsStore((s) => s.tabs);
-  const activeTabId = useTabsStore((s) => s.activeTabId);
+  const active = useTabsStore((s) => s.active());
   const { run, cancel, txControl } = useTabsStore();
-  const active = tabs.find((t) => t.id === activeTabId) ?? null;
+  const connections = useConnectionStore((s) => s.connections);
   const q = active?.query;
+  // connectionId olması yetmez — o bağlantı kapanmış olabilir (design 12 §P1-M1),
+  // Run'ı kapalı bağlantıyla tıklanabilir bırakmak kafa karıştırıcı bir gecikmeli
+  // hataya yol açar; banner zaten nedeni açıklıyor.
+  const canRun = !!active?.connectionId && !!connections[active.connectionId];
 
   const runActive = () => {
     if (active) void run(active.id);
@@ -40,7 +42,7 @@ export function Toolbar() {
       ) : (
         <button
           onClick={runActive}
-          disabled={!activeConnectionId}
+          disabled={!canRun}
           className="inline-flex items-center gap-1.5 rounded border border-fg bg-fg px-2.5 py-1 text-xs font-medium text-bg hover:opacity-90 disabled:opacity-40"
           title="Ctrl+Enter / Ctrl+E / F5"
         >

@@ -5,14 +5,29 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSchemaStore } from "@/stores/schemaStore";
+import { useTabsStore } from "@/stores/tabsStore";
 import { isAriadneError, type ConnectionProfile } from "@/lib/api";
 import { ProfileDialog } from "./ProfileDialog";
 
 export function ConnectionMenu() {
-  const { profiles, connections, activeConnectionId, loadProfiles, connect, disconnect, setActive } =
-    useConnectionStore();
-  const activeInfo = useConnectionStore((s) => s.activeInfo());
+  const { profiles, connections, loadProfiles, connect, disconnect, setActive } = useConnectionStore();
   const loadSnapshot = useSchemaStore((s) => s.loadSnapshot);
+  // Buton/etiket/vurgulama aktif TAB'ın GERÇEKTEN bağlı olduğu bağlantıyı gösterir,
+  // global activeConnectionId'yi değil (design 12 §P1-M1) — StatusBar'la aynı kaynak,
+  // aksi halde menü "seçili" gösterirken tab hâlâ eskisine bağlı kalabilir (bind
+  // reddedilirse, bkz. setConnection guard'ı).
+  const tabConnectionId = useTabsStore((s) => s.active()?.connectionId ?? null);
+  const tabInfo = tabConnectionId ? (connections[tabConnectionId] ?? null) : null;
+  // Menüden bağlantı seçmek/açmak aktif TAB'ı da o bağlantıya bağlar (design 12
+  // §P1-M1 "hızlı geçiş") — activeConnectionId yalnız "yeni tab" varsayılanı kalır.
+  const bindActiveTab = (connectionId: string) => {
+    const tabId = useTabsStore.getState().activeTabId;
+    if (tabId && !useTabsStore.getState().setConnection(tabId, connectionId)) {
+      toast.error("Can't switch this tab's connection", {
+        description: "Finish the running query, open transaction, or pending results first.",
+      });
+    }
+  };
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ConnectionProfile | null>(null);
@@ -25,13 +40,14 @@ export function ConnectionMenu() {
     try {
       const id = await connect(profileId);
       await loadSnapshot(id); // ilk snapshot (arka plan refresh sonrası event tazeler)
+      bindActiveTab(id);
     } catch (e) {
       toast.error("Could not connect", { description: isAriadneError(e) ? e.message : String(e) });
     }
   }
 
-  const activeProfile = profiles.find((p) => p.id === activeInfo?.profile_id);
-  const label = activeInfo ? activeProfile?.name ?? activeInfo.database : "No connection";
+  const activeProfile = profiles.find((p) => p.id === tabInfo?.profile_id);
+  const label = tabInfo ? activeProfile?.name ?? tabInfo.database : "No connection";
 
   return (
     <>
@@ -40,7 +56,7 @@ export function ConnectionMenu() {
           <button className="inline-flex items-center gap-2 rounded border border-border bg-bg-elev px-2.5 py-1 text-xs hover:border-fg-muted">
             <span
               className="h-2 w-2 rounded-full"
-              style={{ background: activeInfo?.color || (activeInfo ? "#4ade80" : "#3a3a3a") }}
+              style={{ background: tabInfo?.color || (tabInfo ? "#4ade80" : "#3a3a3a") }}
             />
             <span className="max-w-[160px] truncate">{label}</span>
             <ChevronDown size={12} className="text-fg-muted" />
@@ -61,12 +77,15 @@ export function ConnectionMenu() {
                     key={c.connection_id}
                     className={cn(
                       "flex items-center justify-between rounded px-2 py-1 hover:bg-bg",
-                      c.connection_id === activeConnectionId && "bg-bg",
+                      c.connection_id === tabConnectionId && "bg-bg",
                     )}
                   >
                     <button
                       className="flex flex-1 items-center gap-2 text-left"
-                      onClick={() => setActive(c.connection_id)}
+                      onClick={() => {
+                        setActive(c.connection_id);
+                        bindActiveTab(c.connection_id);
+                      }}
                     >
                       <span className="h-2 w-2 rounded-full" style={{ background: c.color || "#4ade80" }} />
                       <span className="truncate">
@@ -76,7 +95,12 @@ export function ConnectionMenu() {
                     <button
                       title="Disconnect"
                       className="text-fg-muted hover:text-danger"
-                      onClick={() => void disconnect(c.connection_id)}
+                      onClick={() => {
+                        void disconnect(c.connection_id);
+                        // Bağlı tab'ların tx/running durumunu serbest bırak (aksi
+                        // halde açık tx'li bir tab sonsuza dek kilitli kalır).
+                        useTabsStore.getState().releaseTabsForConnection(c.connection_id);
+                      }}
                     >
                       <Unplug size={13} />
                     </button>

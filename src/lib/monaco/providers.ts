@@ -1,11 +1,18 @@
 // Monaco SQL provider'ları (design 04 §6, 07 §5). React ağacının DIŞINDA yaşar;
-// aktif bağlantıyı store'dan getState() ile okur.
+// dil-seviyesinde tek sefer kayıt olur, hangi bağlantıyı kullanacağını global
+// store'dan DEĞİL `setActiveConnection`'la bildirilen değerden okur — App bir
+// seferde yalnız aktif tab'ın SqlEditor'ünü render ettiği için bu, o tab'ın
+// bağlantısına karşılık gelir (design 12 §P1-M1: completion/peek tab'a bağlı).
 import * as monaco from "monaco-editor";
 import { getCompletions, getSignatureHelp, type CompletionKind } from "@/lib/api";
-import { useConnectionStore } from "@/stores/connectionStore";
 
 const LANG = "pgsql";
 let registered = false;
+let activeConnectionId: string | null = null;
+
+export function setActiveConnection(connectionId: string | null) {
+  activeConnectionId = connectionId;
+}
 
 export function registerSqlProviders() {
   if (registered) return;
@@ -14,7 +21,7 @@ export function registerSqlProviders() {
   monaco.languages.registerCompletionItemProvider(LANG, {
     triggerCharacters: [".", " ", "(", ","],
     async provideCompletionItems(model, position) {
-      const connId = useConnectionStore.getState().activeConnectionId;
+      const connId = activeConnectionId;
       if (!connId) return { suggestions: [] };
 
       const offset = model.getOffsetAt(position);
@@ -55,7 +62,7 @@ export function registerSqlProviders() {
     signatureHelpTriggerCharacters: ["(", ","],
     signatureHelpRetriggerCharacters: [","],
     async provideSignatureHelp(model, position) {
-      const connId = useConnectionStore.getState().activeConnectionId;
+      const connId = activeConnectionId;
       if (!connId) return null;
       const offset = model.getOffsetAt(position);
       let sig;

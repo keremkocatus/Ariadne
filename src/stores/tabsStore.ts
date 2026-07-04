@@ -15,7 +15,6 @@ const MAX_ROWS = 100_000;
 
 export interface QueryState {
   queryId?: string;
-  connectionId?: string;
   columns: ColumnMeta[];
   rows: (string | null)[][];
   hasMore: boolean;
@@ -36,6 +35,10 @@ export interface Tab {
   id: string;
   title: string;
   sql: string;
+  /// Tab'ın kalıcı olarak bağlı olduğu bağlantı (design 12 §P1-M1). Tab açılırken
+  /// o anki aktif bağlantıdan devralınır; sonrasında yalnız `setConnection` ile
+  /// (kullanıcı eylemiyle) değişir — çalıştırma anında yeniden okunmaz.
+  connectionId: string | null;
   query: QueryState;
 }
 
@@ -55,8 +58,8 @@ function emptyQuery(): QueryState {
   };
 }
 
-function newTab(sql = "SELECT version();"): Tab {
-  return { id: crypto.randomUUID(), title: "Query", sql, query: emptyQuery() };
+function newTab(sql = "SELECT version();", connectionId: string | null = null): Tab {
+  return { id: crypto.randomUUID(), title: "Query", sql, connectionId, query: emptyQuery() };
 }
 
 interface TabsState {
@@ -65,11 +68,18 @@ interface TabsState {
   /// Açık tx'li olduğu için kapatılması onay bekleyen tab (design 05 §7 / 11 §H4).
   closeRequest: string | null;
 
-  addTab: (sql?: string) => string;
+  addTab: (sql?: string, connectionId?: string | null) => string;
   closeTab: (id: string) => void;
   resolveClose: (action: "commit" | "rollback" | "cancel") => Promise<void>;
   setActive: (id: string) => void;
   setSql: (id: string, sql: string) => void;
+  /// Tab'ın bağlantısını değiştirir (Ctrl+K "switch connection" veya kapalı
+  /// bağlantı bandındaki seçim). Çalışan sorgu ya da açık tx varken reddedilir
+  /// (o kaynak eski bağlantıya ait — design 12 §P1-M1 riski).
+  setConnection: (id: string, connectionId: string | null) => boolean;
+  /// Bağlantı kapandığında o bağlantıya bağlı tab'ların çalışan/tx durumunu
+  /// temizler (design 12 §P1-M1 item 5) — bkz. setConnection'daki not.
+  releaseTabsForConnection: (connectionId: string) => void;
 
   run: (id: string, confirmed?: boolean) => Promise<void>;
   fetchMore: (id: string) => Promise<void>;
@@ -88,10 +98,14 @@ function rawCloseTab(
   id: string,
 ) {
   const tab = get().tabs.find((t) => t.id === id);
-  const connId = tab?.query.connectionId;
+  const connId = tab?.connectionId;
   if (connId) void api.closeResult(connId, id).catch(() => {});
   set((s) => {
-    const tabs = s.tabs.filter((t) => t.id !== id);
+    let tabs = s.tabs.filter((t) => t.id !== id);
+    // En az bir tab garantisi (design 12 §P1-M1): boş tab listesi Explorer/
+    // StatusBar/CommandPalette'i "no connection" gösterir, canlı bir bağlantı
+    // olsa bile — kapanan tab'ın bağlantısıyla devam eden taze bir tab açılır.
+    if (tabs.length === 0) tabs = [newTab(undefined, connId ?? null)];
     const activeTabId =
       s.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : s.activeTabId;
     return { tabs, activeTabId };
@@ -115,8 +129,9 @@ export const useTabsStore = create<TabsState>()(
   activeTabId: null,
   closeRequest: null,
 
-  addTab(sql) {
-    const t = newTab(sql);
+  addTab(sql, connectionId) {
+    const connId = connectionId ?? useConnectionStore.getState().activeConnectionId;
+    const t = newTab(sql, connId);
     set((s) => ({ tabs: [...s.tabs, t], activeTabId: t.id }));
     return t.id;
   },
@@ -157,12 +172,44 @@ export const useTabsStore = create<TabsState>()(
     set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, sql } : t)) }));
   },
 
+  setConnection(id, connectionId) {
+    const tab = get().tabs.find((t) => t.id === id);
+    if (!tab) return false;
+    // hasMore de reddedilir: açık bir sunucu-taraflı cursor (pagination) varsa o
+    // cursor ESKİ bağlantıda yaşıyor — rebind sonrası fetchMore/closeResult yanlış
+    // bağlantıya gider (yüksek-efor code review bulgusu). Kullanıcı ya tüm sayfaları
+    // çekmeli ya da sorguyu bitirmeli önce.
+    if (tab.query.running || tab.query.txStatus !== "idle" || tab.query.hasMore) return false;
+    set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, connectionId } : t)) }));
+    return true;
+  },
+
+  releaseTabsForConnection(connectionId) {
+    // Bağlantı kapandığında (disconnect ya da connection:lost) o bağlantıya bağlı
+    // tab'ların sunucu-taraflı durumu (tx/cursor) da öldü — aksi halde txStatus
+    // hiç "idle"a dönmediği için setConnection/closeTab sonsuza dek reddeder
+    // (yüksek-efor code review: "stuck tab" bulgusu). Sonuçlar salt-okunur kalır.
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.connectionId === connectionId
+          ? { ...t, query: { ...t.query, running: false, txStatus: "idle", hasMore: false, fetchingMore: false } }
+          : t,
+      ),
+    }));
+  },
+
   async run(id, confirmed) {
     const tab = get().tabs.find((t) => t.id === id);
     if (!tab || tab.query.running) return;
-    const connId = useConnectionStore.getState().activeConnectionId;
+    const connId = tab.connectionId;
     if (!connId) {
       patchQuery(set, id, { error: { kind: "connection_failed", message: "Connect to a database first" } });
+      return;
+    }
+    if (!useConnectionStore.getState().connections[connId]) {
+      patchQuery(set, id, {
+        error: { kind: "connection_lost", message: "Connection closed — switch or reconnect this tab" },
+      });
       return;
     }
     const queryId = crypto.randomUUID();
@@ -171,7 +218,6 @@ export const useTabsStore = create<TabsState>()(
       error: null,
       needsConfirmation: null,
       frozen: false,
-      connectionId: connId,
       queryId,
     });
     try {
@@ -214,11 +260,11 @@ export const useTabsStore = create<TabsState>()(
   async fetchMore(id) {
     const tab = get().tabs.find((t) => t.id === id);
     const q = tab?.query;
-    if (!tab || !q || !q.hasMore || q.fetchingMore || q.capped || !q.connectionId || !q.queryId)
+    if (!tab || !q || !q.hasMore || q.fetchingMore || q.capped || !tab.connectionId || !q.queryId)
       return;
     patchQuery(set, id, { fetchingMore: true });
     try {
-      const page = await api.fetchPage(q.connectionId, q.queryId);
+      const page = await api.fetchPage(tab.connectionId, q.queryId);
       let rows = [...get().tabs.find((t) => t.id === id)!.query.rows, ...page.rows];
       let capped = false;
       let hasMore = page.has_more;
@@ -237,13 +283,15 @@ export const useTabsStore = create<TabsState>()(
   },
 
   async cancel(id) {
-    const q = get().tabs.find((t) => t.id === id)?.query;
-    if (q?.connectionId && q.queryId) await api.cancelQuery(q.connectionId, q.queryId).catch(() => {});
+    const tab = get().tabs.find((t) => t.id === id);
+    if (tab?.connectionId && tab.query.queryId) {
+      await api.cancelQuery(tab.connectionId, tab.query.queryId).catch(() => {});
+    }
   },
 
   async txControl(id, sql) {
     const tab = get().tabs.find((t) => t.id === id);
-    const connId = tab?.query.connectionId ?? useConnectionStore.getState().activeConnectionId;
+    const connId = tab?.connectionId;
     if (!connId) return;
     const queryId = crypto.randomUUID();
     try {
@@ -270,19 +318,26 @@ export const useTabsStore = create<TabsState>()(
     }),
     {
       // Son açık tab'ların SQL'i persist edilir; sonuçlar ASLA (design 07 §1 / 11 §H8).
+      // connectionId de persist edilir — uygulama yeniden açıldığında bağlantılar
+      // boş başlar, bu yüzden restore edilen tab'lar "connection closed" bandına
+      // düşer (aynı mekanizma, ekstra kod yok — design 12 §P1-M1).
       name: "ariadne-tabs",
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
-        tabs: s.tabs.map((t) => ({ id: t.id, title: t.title, sql: t.sql })),
+        tabs: s.tabs.map((t) => ({ id: t.id, title: t.title, sql: t.sql, connectionId: t.connectionId })),
         activeTabId: s.activeTabId,
       }),
       // Diskten dönen tab'lara taze boş query iliştir (çalıştırma durumu kalıcı değil).
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as {
-          tabs?: { id: string; title: string; sql: string }[];
+          tabs?: { id: string; title: string; sql: string; connectionId?: string | null }[];
           activeTabId?: string | null;
         };
-        const tabs: Tab[] = (p.tabs ?? []).map((t) => ({ ...t, query: emptyQuery() }));
+        const tabs: Tab[] = (p.tabs ?? []).map((t) => ({
+          ...t,
+          connectionId: t.connectionId ?? null,
+          query: emptyQuery(),
+        }));
         return {
           ...current,
           tabs,

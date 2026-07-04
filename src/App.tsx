@@ -6,6 +6,7 @@ import { TabBar } from "@/components/query/TabBar";
 import { ResultArea } from "@/components/query/ResultArea";
 import { ConfirmDialog } from "@/components/query/ConfirmDialog";
 import { CloseTabDialog } from "@/components/query/CloseTabDialog";
+import { ConnectionClosedBanner } from "@/components/query/ConnectionClosedBanner";
 import { Toolbar } from "@/components/layout/Toolbar";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { ResizeHandle } from "@/components/layout/ResizeHandle";
@@ -18,15 +19,17 @@ import { useTabsStore } from "@/stores/tabsStore";
 import type { ObjectInfo } from "@/lib/api";
 
 export default function App() {
-  const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
-  const activeInfo = useConnectionStore((s) => s.activeInfo());
+  const connections = useConnectionStore((s) => s.connections);
   const { sidebarVisible, sidebarWidth, setSidebarWidth, resultsVisible } = useUiStore();
 
-  const tabs = useTabsStore((s) => s.tabs);
-  const activeTabId = useTabsStore((s) => s.activeTabId);
+  const active = useTabsStore((s) => s.active());
   const closeRequest = useTabsStore((s) => s.closeRequest);
   const { addTab, setSql, run, fetchMore, dismissConfirmation, resolveClose } = useTabsStore();
-  const active = tabs.find((t) => t.id === activeTabId) ?? null;
+  // Explorer aktif *tab'ın* bağlantısını gösterir, global aktif bağlantıyı değil
+  // (design 12 §P1-M1) — tab değişince şema de değişir.
+  const tabConnectionId = active?.connectionId ?? null;
+  const tabConnectionInfo = tabConnectionId ? (connections[tabConnectionId] ?? null) : null;
+  const tabConnectionClosed = !!tabConnectionId && !tabConnectionInfo;
 
   const [peek, setPeek] = useState<ObjectInfo | null>(null);
 
@@ -48,10 +51,12 @@ export default function App() {
 
   const openRelation = useCallback(
     (schema: string, name: string) => {
-      const id = addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`);
+      // Yeni tab, Explorer'ın gösterdiği (aktif tab'ın) bağlantısına bağlanır —
+      // global aktif bağlantı farklı olabilir (design 12 §P1-M1).
+      const id = addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`, tabConnectionId);
       void run(id);
     },
-    [addTab, run],
+    [addTab, run, tabConnectionId],
   );
 
   const q = active?.query;
@@ -70,8 +75,8 @@ export default function App() {
           <>
             <aside style={{ width: sidebarWidth }} className="shrink-0 border-r border-border">
               <Explorer
-                connectionId={activeConnectionId}
-                profileId={activeInfo?.profile_id ?? null}
+                connectionId={tabConnectionId}
+                profileId={tabConnectionInfo?.profile_id ?? null}
                 onOpenRelation={openRelation}
               />
             </aside>
@@ -83,16 +88,20 @@ export default function App() {
           <TabBar />
           {active ? (
             <>
-              <div className="relative min-h-0 flex-[3] border-b border-border">
-                <SqlEditor
-                  key={active.id}
-                  value={active.sql}
-                  onChange={(v) => setSql(active.id, v)}
-                  onRun={runActive}
-                  onPeek={setPeek}
-                  marker={errorMarker}
-                />
-                {peek && <ObjectInfoPanel info={peek} onClose={() => setPeek(null)} />}
+              <div className="relative flex min-h-0 flex-[3] flex-col border-b border-border">
+                {tabConnectionClosed && <ConnectionClosedBanner tabId={active.id} />}
+                <div className="relative min-h-0 flex-1">
+                  <SqlEditor
+                    key={active.id}
+                    value={active.sql}
+                    connectionId={tabConnectionId}
+                    onChange={(v) => setSql(active.id, v)}
+                    onRun={runActive}
+                    onPeek={setPeek}
+                    marker={errorMarker}
+                  />
+                  {peek && <ObjectInfoPanel info={peek} onClose={() => setPeek(null)} />}
+                </div>
               </div>
               {resultsVisible && (
                 <div className="min-h-0 flex-[2] overflow-hidden bg-bg">

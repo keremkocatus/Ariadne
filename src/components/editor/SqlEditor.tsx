@@ -1,13 +1,15 @@
 import Editor, { type OnMount, type Monaco } from "@monaco-editor/react";
 import { useEffect, useRef } from "react";
 import type { editor } from "monaco-editor";
-import { registerSqlProviders } from "@/lib/monaco/providers";
+import { registerSqlProviders, setActiveConnection } from "@/lib/monaco/providers";
 import { getObjectInfo, type ObjectInfo } from "@/lib/api";
-import { useConnectionStore } from "@/stores/connectionStore";
 
 interface SqlEditorProps {
   value: string;
   onChange: (value: string) => void;
+  /** Bu editör örneğinin bağlı olduğu bağlantı (design 12 §P1-M1) — tab'dan gelir,
+   * global aktif bağlantıdan DEĞİL (completion/peek/signature-help hep bunu kullanır). */
+  connectionId: string | null;
   /** Ctrl+Enter / Ctrl+E / F5 ile tetiklenir (design 07 §3, SSMS tarzı). */
   onRun: () => void;
   /** Alt+F1 nesne bilgisi (null = imleçteki identifier çözülemedi). */
@@ -16,13 +18,22 @@ interface SqlEditorProps {
   marker?: { offset: number; message: string } | null;
 }
 
-export function SqlEditor({ value, onChange, onRun, onPeek, marker }: SqlEditorProps) {
+export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker }: SqlEditorProps) {
   const runRef = useRef(onRun);
   runRef.current = onRun;
   const peekRef = useRef(onPeek);
   peekRef.current = onPeek;
+  const connIdRef = useRef(connectionId);
+  connIdRef.current = connectionId;
   const edRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
+
+  // Bu editör örneği görünürken Monaco provider'larının hangi bağlantıyı
+  // kullanacağını bildirir (provider'lar dil-seviyesinde global; App bir seferde
+  // yalnız aktif tab'ın editörünü render eder — bkz. lib/monaco/providers.ts).
+  useEffect(() => {
+    setActiveConnection(connectionId);
+  }, [connectionId]);
 
   // Hata marker'ını modele işle (kırmızı alt çizgi + hover mesajı).
   useEffect(() => {
@@ -60,7 +71,7 @@ export function SqlEditor({ value, onChange, onRun, onPeek, marker }: SqlEditorP
     // Alt+F1: nesne bilgisi (design 07 §3). Cache'ten, DB round-trip yok.
     ed.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.F1, () => {
       void (async () => {
-        const connId = useConnectionStore.getState().activeConnectionId;
+        const connId = connIdRef.current;
         const model = ed.getModel();
         const pos = ed.getPosition();
         if (!connId || !model || !pos) return;

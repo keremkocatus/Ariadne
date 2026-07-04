@@ -31,6 +31,10 @@ export async function registerEventBridge(): Promise<() => void> {
     listen<LostPayload>("connection:lost", (e) => {
       toast.error("Connection lost", { description: e.payload.error?.message });
       void useConnectionStore.getState().disconnect(e.payload.connection_id);
+      // Bağlı tab'ların tx/running durumunu serbest bırak — aksi halde sunucuda
+      // zaten ölmüş bir tx yüzünden o tab'lar sonsuza dek kilitli kalır (design 12
+      // §P1-M1: kapalı bağlantı bandındaki "switch" hiçbir zaman izin vermez).
+      useTabsStore.getState().releaseTabsForConnection(e.payload.connection_id);
     }),
     listen<FrozenPayload>("result:frozen", (e) => {
       useTabsStore.getState().markFrozen(e.payload.tab_id);

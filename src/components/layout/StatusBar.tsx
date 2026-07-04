@@ -1,27 +1,35 @@
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSchemaStore } from "@/stores/schemaStore";
+import { useTabsStore } from "@/stores/tabsStore";
 
-/// Alt durum çubuğu: profil renk şeridi + sunucu + cache tazeliği (design 07 §2).
+/// Alt durum çubuğu: aktif TAB'ın bağlantısı (profil renk şeridi + sunucu +
+/// cache tazeliği), global aktif bağlantı değil (design 12 §P1-M1).
 export function StatusBar() {
-  const activeInfo = useConnectionStore((s) => s.activeInfo());
-  const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
+  const tabConnectionId = useTabsStore((s) => s.active()?.connectionId ?? null);
+  const info = useConnectionStore((s) => (tabConnectionId ? (s.connections[tabConnectionId] ?? null) : null));
   const cacheEntry = useSchemaStore((s) =>
-    activeConnectionId ? s.byConnection[activeConnectionId] : undefined,
+    tabConnectionId ? s.byConnection[tabConnectionId] : undefined,
   );
+  const closed = !!tabConnectionId && !info;
 
   return (
     <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-border px-2 text-[11px] text-fg-muted">
-      {activeInfo ? (
+      {info ? (
         <>
           <span className="flex items-center gap-1.5">
             <span
               className="h-2 w-2 rounded-full"
-              style={{ background: activeInfo.color || "#4ade80" }}
+              style={{ background: info.color || "#4ade80" }}
             />
-            {activeInfo.database} · PostgreSQL {activeInfo.server_version.split(" ")[0]}
+            {info.database} · PostgreSQL {info.server_version.split(" ")[0]}
           </span>
           <span>cache: {cacheEntry?.snapshot ? relTime(cacheEntry.snapshot.fetched_at) : "—"}</span>
         </>
+      ) : closed ? (
+        <span className="flex items-center gap-1.5 text-warn">
+          <span className="h-2 w-2 rounded-full bg-warn" />
+          connection closed
+        </span>
       ) : (
         <span>no connection</span>
       )}

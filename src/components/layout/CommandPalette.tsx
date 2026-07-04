@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { Command } from "cmdk";
+import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useUiStore } from "@/stores/uiStore";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -7,17 +8,31 @@ import { useSchemaStore } from "@/stores/schemaStore";
 import { useTabsStore } from "@/stores/tabsStore";
 import { refreshSchema } from "@/lib/api";
 
+// Aktif tab'ı verilen bağlantıya bağlar — getState() ile TIKLAMA ANINDA okur
+// (destructure edilmiş activeTabId değil), çünkü "Connect: profile" async connect()
+// sonrası .then() içinde çağrılır; o sırada kullanıcı başka bir tab'a geçmiş olabilir.
+function bindTab(connectionId: string) {
+  const tabId = useTabsStore.getState().activeTabId;
+  if (tabId && !useTabsStore.getState().setConnection(tabId, connectionId)) {
+    toast.error("Can't switch this tab's connection", {
+      description: "Finish the running query, open transaction, or pending results first.",
+    });
+  }
+}
+
 // Ctrl+K command palette (design 07 §3): komutlar + bağlantı geçişi + tablo açma.
 // cmdk kendi fuzzy filtresini uygular; item'lar `value`'ları üzerinden aranır.
 export function CommandPalette() {
   const open = useUiStore((s) => s.paletteOpen);
   const setOpen = useUiStore((s) => s.setPaletteOpen);
 
-  const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
+  // "Switch connection" aktif TAB'ı bağlar, global aktif bağlantıyı değil
+  // (design 12 §P1-M1) — Explorer/completion/Tables grubu hep tab'ı takip eder.
+  const tabConnectionId = useTabsStore((s) => s.active()?.connectionId ?? null);
   const connections = useConnectionStore((s) => s.connections);
   const profiles = useConnectionStore((s) => s.profiles);
   const snapshotEntry = useSchemaStore((s) =>
-    activeConnectionId ? s.byConnection[activeConnectionId] : undefined,
+    tabConnectionId ? s.byConnection[tabConnectionId] : undefined,
   );
 
   // Aktif bağlantının tabloları (schema.name) — palette'ten hızlı açmak için.
@@ -38,7 +53,9 @@ export function CommandPalette() {
   };
 
   const openTable = (schema: string, name: string) => {
-    const id = useTabsStore.getState().addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`);
+    const id = useTabsStore
+      .getState()
+      .addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`, tabConnectionId);
     void useTabsStore.getState().run(id);
   };
 
@@ -62,10 +79,8 @@ export function CommandPalette() {
               <Item onSelect={() => run(() => useUiStore.getState().toggleResults())}>
                 Toggle results panel
               </Item>
-              {activeConnectionId && (
-                <Item
-                  onSelect={() => run(() => void refreshSchema(activeConnectionId))}
-                >
+              {tabConnectionId && (
+                <Item onSelect={() => run(() => void refreshSchema(tabConnectionId))}>
                   Refresh schema
                 </Item>
               )}
@@ -77,12 +92,10 @@ export function CommandPalette() {
                   <Item
                     key={`conn-${c.connection_id}`}
                     value={`switch ${c.database} ${c.user}`}
-                    onSelect={() =>
-                      run(() => useConnectionStore.getState().setActive(c.connection_id))
-                    }
+                    onSelect={() => run(() => bindTab(c.connection_id))}
                   >
                     Switch to {c.database}
-                    {c.connection_id === activeConnectionId ? " (active)" : ""}
+                    {c.connection_id === tabConnectionId ? " (active)" : ""}
                   </Item>
                 ))}
                 {profiles
@@ -91,7 +104,14 @@ export function CommandPalette() {
                     <Item
                       key={`profile-${p.id}`}
                       value={`connect ${p.name} ${p.database}`}
-                      onSelect={() => run(() => void useConnectionStore.getState().connect(p.id))}
+                      onSelect={() =>
+                        run(() => {
+                          void useConnectionStore
+                            .getState()
+                            .connect(p.id)
+                            .then((id) => bindTab(id));
+                        })
+                      }
                     >
                       Connect: {p.name}
                     </Item>
