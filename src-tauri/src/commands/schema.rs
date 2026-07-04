@@ -47,14 +47,23 @@ pub fn spawn_cache_refresh(app: AppHandle, conn: Arc<ActiveConnection>) {
         },
     );
     tauri::async_runtime::spawn(async move {
+        let started = std::time::Instant::now();
         match catalog::fetch_schema_cache(&conn.pool).await {
             Ok(new_cache) => {
+                let (tables, functions) = (new_cache.tables.len(), new_cache.functions.len());
                 conn.schema_cache.store(Arc::new(new_cache));
+                tracing::info!(
+                    connection_id = %connection_id,
+                    tables,
+                    functions,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "schema cache refreshed"
+                );
                 let _ = app.emit("schema:refreshed", ConnPayload { connection_id });
             }
             Err(e) => {
                 // Eski snapshot immutable olarak kalır; kullanıcı yine çalışabilir.
-                eprintln!("[schema refresh] {connection_id}: {}", e.message);
+                tracing::warn!(connection_id = %connection_id, error = %e.message, "schema refresh failed");
                 let _ = app.emit("schema:refreshed", ConnPayload { connection_id });
             }
         }

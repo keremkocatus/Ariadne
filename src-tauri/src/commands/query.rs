@@ -30,6 +30,9 @@ pub async fn run_query(
     state: State<'_, AppState>,
 ) -> Result<RunResult, AriadneError> {
     let conn = state.connection(&connection_id)?;
+    // SQL metni yalnız debug seviyesinde (design 06 §2); info'da süre/sonuç.
+    tracing::debug!(query_id = %query_id, sql = %sql, "run_query");
+    let started = std::time::Instant::now();
     let result = exec::run_query(
         &conn.exec,
         &conn.pool,
@@ -42,6 +45,14 @@ pub async fn run_query(
         },
     )
     .await?;
+    tracing::info!(
+        query_id = %query_id,
+        statements = result.statements.len(),
+        tx_status = ?result.tx_status,
+        errored = result.error.is_some(),
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "run_query done"
+    );
 
     // Ariadne içinden çalıştırılan DDL kendi cache'imizi bayatlatır → sessiz refresh.
     if touches_schema(&sql) {

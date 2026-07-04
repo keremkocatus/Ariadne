@@ -10,6 +10,7 @@ mod commands;
 mod complete;
 mod db;
 mod error;
+mod logging;
 mod profiles;
 mod state;
 
@@ -21,8 +22,14 @@ use state::AppState;
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            // Logging: konsol + dönen dosya (design 01 §6). Dosya yolu alınamazsa
+            // yalnız konsola düşer.
+            if let Ok(log_dir) = app.path().app_log_dir() {
+                logging::init(log_dir);
+            }
             // Profiller {app_config_dir}/profiles.json'da tutulur (design 06 §1).
             let config_dir = app.path().app_config_dir()?;
+            tracing::info!("Ariadne started");
             app.manage(AppState::new(config_dir));
             Ok(())
         })

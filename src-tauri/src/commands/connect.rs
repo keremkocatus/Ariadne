@@ -58,6 +58,14 @@ pub async fn connect(
         .unwrap()
         .insert(connection_id, conn.clone());
 
+    // Şifre/host loglanmaz (design 06 §2); yalnız kimliklendirici alanlar.
+    tracing::info!(
+        connection_id = %info.connection_id,
+        database = %info.database,
+        server = %info.server_version,
+        "connected"
+    );
+
     // Cache'i arka planda doldur.
     spawn_cache_refresh(app, conn);
 
