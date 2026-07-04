@@ -19,6 +19,22 @@
     monospace;
 }
 
+/*
+ * Light theme: overrides the @theme tokens under a higher-specificity selector so the
+ * generated utilities (bg-bg, text-fg, border-border, …) resolve to light values. The
+ * document root gets data-theme="light" from the theme setting. Signal colors are kept.
+ */
+:root[data-theme="light"] {
+  --color-bg: #ffffff;
+  --color-bg-elev: #f4f4f5;
+  --color-border: #d9d9de;
+  --color-fg: #18181b;
+  --color-fg-muted: #6b6b73;
+  --color-accent: #18181b;
+  --color-danger: #d21c22;
+  --color-warn: #b5760a;
+}
+
 html,
 body,
 #root {
@@ -35,7 +51,7 @@ body {
   overflow: hidden;
 }
 
-/* Ortak scrollbar — ince, monokrom */
+/* Shared scrollbar — thin, monochrome */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;

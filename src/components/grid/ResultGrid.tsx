@@ -24,7 +24,9 @@ interface Props {
   onCellActivate?: (rowIndex: number, colIndex: number) => void;
 }
 
-/// Row-granular selection: the selected rows + the focused cell (column).
+/// Column-scoped selection: a vertical range of rows within a single column. `col` is
+/// fixed to the column the selection started in; shift/ctrl extend within it. Only the
+/// cells in `col` are highlighted (not whole rows), and Ctrl+C copies those cells.
 interface Sel {
   rows: Set<number>;
   anchor: number;
@@ -119,21 +121,35 @@ export function ResultGrid({
 
   const clickCell = (e: React.MouseEvent, r: number, c: number) => {
     setSel((prev) => {
+      // Shift/Ctrl keep the selection scoped to the column it started in (prev.col) so
+      // the highlight stays a single vertical strip; a plain click (re)sets the column.
       if (e.shiftKey && prev) {
         const lo = Math.min(prev.anchor, r);
         const hi = Math.max(prev.anchor, r);
         const set = new Set<number>();
         for (let i = lo; i <= hi; i++) set.add(i);
-        return { rows: set, anchor: prev.anchor, col: c };
+        return { rows: set, anchor: prev.anchor, col: prev.col };
       }
       if ((e.ctrlKey || e.metaKey) && prev) {
         const set = new Set(prev.rows);
         if (set.has(r)) set.delete(r);
         else set.add(r);
-        return { rows: set, anchor: r, col: c };
+        return { rows: set, anchor: r, col: prev.col };
       }
       return { rows: new Set([r]), anchor: r, col: c };
     });
+  };
+
+  // Ctrl/Cmd+C copies the selected column's cells (newline-joined), matching the
+  // single-column selection. The grid container is focusable so it receives the key.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+      if (!sel || sel.rows.size === 0) return;
+      e.preventDefault();
+      const sorted = [...sel.rows].sort((a, b) => a - b);
+      const text = sorted.map((i) => rows[i]?.[sel.col] ?? "").join("\n");
+      void copyText(text, `${sorted.length} cell${sorted.length > 1 ? "s" : ""} copied`);
+    }
   };
 
   const openContextMenu = (e: React.MouseEvent) => {
@@ -156,7 +172,9 @@ export function ResultGrid({
       )}
       <div
         ref={parentRef}
-        className="relative min-h-0 flex-1 overflow-auto"
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        className="relative min-h-0 flex-1 select-none overflow-auto outline-none"
         onContextMenu={openContextMenu}
       >
         <div
@@ -193,18 +211,16 @@ export function ResultGrid({
           {/* Body */}
           {virtualRows.map((vr) => {
             const row = rows[vr.index];
-            const rowSelected = sel?.rows.has(vr.index) ?? false;
             return (
               <div
                 key={vr.index}
-                className={cn(
-                  "absolute",
-                  rowSelected ? "bg-fg/10" : vr.index % 2 === 1 && "bg-bg-elev/40",
-                )}
+                className={cn("absolute", vr.index % 2 === 1 && "bg-bg-elev/40")}
                 style={{ top: vr.start + ROW_H, height: vr.size, width: colV.getTotalSize() }}
               >
                 {cols.map((c) => {
                   const v = row[c.index];
+                  // Only cells in the selected column light up (column-scoped selection).
+                  const selected = sel?.col === c.index && (sel?.rows.has(vr.index) ?? false);
                   const focused = sel?.anchor === vr.index && sel?.col === c.index;
                   return (
                     <div
@@ -216,6 +232,7 @@ export function ResultGrid({
                       onDoubleClick={() => onCellActivate?.(vr.index, c.index)}
                       className={cn(
                         "absolute flex h-full cursor-default items-center truncate border-r border-b border-border/50 px-2 font-mono text-[11px]",
+                        selected && "bg-fg/20",
                         focused && "ring-1 ring-inset ring-fg-muted",
                       )}
                       style={{ left: c.start, width: c.size }}

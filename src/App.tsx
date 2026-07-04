@@ -29,6 +29,13 @@ export default function App() {
   const { sidebarVisible, sidebarWidth, setSidebarWidth, resultsVisible, setResultsVisible, resultsHeight, setResultsHeight } =
     useUiStore();
   const editorFontSize = useUiStore((s) => s.settings.editorFontSize);
+  const theme = useUiStore((s) => s.settings.theme);
+
+  // Apply the color theme to the document root; the light overrides in index.css key off
+  // data-theme. Runs on mount and whenever the setting changes.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
 
   const active = useTabsStore((s) => s.active());
   const closeRequest = useTabsStore((s) => s.closeRequest);
@@ -150,6 +157,7 @@ export default function App() {
                     onPeek={showObjectInfo}
                     marker={errorMarker}
                     fontSize={editorFontSize}
+                    theme={theme}
                   />
                   <EmptyStateCard />
                 </div>

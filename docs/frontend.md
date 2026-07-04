@@ -24,7 +24,8 @@ bar, palette) follows the *active tab's* connection rather than a single global 
   to the run path. SQL completion/signature-help come from Monaco *providers* registered
   once at the language level (`lib/monaco/providers.ts`); they read the active connection
   from a setter, since only the active tab's editor is mounted at a time.
-- **`grid/ResultGrid`** — a virtualized grid (TanStack Virtual) with row selection,
+- **`grid/ResultGrid`** — a virtualized grid (TanStack Virtual) with column-scoped cell
+  selection (shift/ctrl extend a vertical range in one column; Ctrl+C copies it),
   resizable columns, rich copy (CSV/TSV/JSON/Markdown), and infinite scroll that calls
   `fetch_page`. Double-clicking a cell opens **`grid/CellDialog`**.
 - **`grid/CellDialog`** — always shows a cell's full value (JSON pretty-printed when

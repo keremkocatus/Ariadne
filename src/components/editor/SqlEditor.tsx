@@ -43,9 +43,11 @@ interface SqlEditorProps {
   marker?: { offset: number; message: string } | null;
   /** Editor font size (from settings). */
   fontSize?: number;
+  /** UI theme; maps to Monaco's built-in "vs" (light) / "vs-dark". */
+  theme?: "light" | "dark";
 }
 
-export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker, fontSize = 13 }: SqlEditorProps) {
+export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker, fontSize = 13, theme = "dark" }: SqlEditorProps) {
   const runRef = useRef(onRun);
   runRef.current = onRun;
   const peekRef = useRef(onPeek);
@@ -91,8 +93,7 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
   }, [fontSize]);
 
   // Register a getter so the run path can read the selection while this editor is
-  // visible. On unmount (tab change), it's cleared (the next mount re-registers it
-  // hemen yeniden kaydeder) temizlenir.
+  // visible. On unmount (tab change) it's cleared; the next mount re-registers it.
   useEffect(() => {
     return () => {
       setRunSelectionGetter(null);
@@ -121,17 +122,20 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyE, () => runRef.current());
     ed.addCommand(monaco.KeyCode.F5, () => runRef.current());
 
-    // Alt+F1: object info for the table/view at the cursor. The identifier is resolved
-    // from the schema cache; the panel then fetches index details lazily.
-    ed.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.F1, () => {
+    // Object info for the table/view at the cursor (SSMS Alt+F1). The identifier is
+    // resolved from the schema cache; the panel then fetches index details lazily.
+    const runObjectInfo = () => {
       void (async () => {
         const connId = connIdRef.current;
         const model = ed.getModel();
-        if (!connId || !model) return;
+        if (!connId) {
+          toast.message("Connect a database first");
+          return;
+        }
+        if (!model) return;
         // With a selection, probe its END offset — it lands on the last identifier
         // (so a qualified "schema.table" still resolves the table, with the schema as
-        // qualifier) and works regardless of the selection's direction, which is the
-        // original bug: getPosition() returns the anchor end, empty for a backwards drag.
+        // qualifier) and works regardless of the selection's direction.
         const sel = ed.getSelection();
         const pos = ed.getPosition();
         let offset: number | null = null;
@@ -149,7 +153,31 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
           toast.error("Couldn't load object info");
         }
       })();
+    };
+
+    // Expose it in the right-click menu and the F1 command palette (reliable triggers).
+    ed.addAction({
+      id: "ariadne.objectInfo",
+      label: "Object Info (Alt+F1)",
+      contextMenuGroupId: "navigation",
+      contextMenuOrder: 1.5,
+      run: () => runObjectInfo(),
     });
+    // Bind Alt+F1 at the DOM level (capture phase). Monaco ships a built-in Alt+F1
+    // ("Show Accessibility Help") that shadows a plain addCommand keybinding, so the key
+    // otherwise appears dead — intercept it before Monaco's keybinding service sees it.
+    const domNode = ed.getDomNode();
+    domNode?.addEventListener(
+      "keydown",
+      (e: KeyboardEvent) => {
+        if (e.altKey && e.key === "F1") {
+          e.preventDefault();
+          e.stopPropagation();
+          runObjectInfo();
+        }
+      },
+      true,
+    );
 
     // Ctrl+D copies the line down (SSMS/VS); Monaco's "select next occurrence" moves
     // to Ctrl+Shift+D (multi-cursor isn't lost).
@@ -192,7 +220,7 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
     <Editor
       height="100%"
       defaultLanguage="pgsql"
-      theme="vs-dark"
+      theme={theme === "light" ? "vs" : "vs-dark"}
       value={value}
       onChange={(v) => onChange(v ?? "")}
       onMount={handleMount}

@@ -3,6 +3,8 @@ import { persist, createJSONStorage } from "zustand/middleware";
 
 /// User settings. Deliberately minimal for now; could move to a local store later.
 /// Persisted in localStorage.
+export type Theme = "dark" | "light";
+
 export interface Settings {
   /** Editor font size (px). */
   editorFontSize: number;
@@ -12,11 +14,14 @@ export interface Settings {
   /** If a background tab's query exceeds this many seconds, show a finish toast.
    *  0 = off. */
   longQueryNoticeSeconds: number;
+  /** UI color theme. Applied via a `data-theme` attribute on the document root. */
+  theme: Theme;
 }
 export const DEFAULT_SETTINGS: Settings = {
   editorFontSize: 13,
   schemaStaleMinutes: 5,
   longQueryNoticeSeconds: 10,
+  theme: "dark",
 };
 
 /// The left panel's active tab. Kept in uiStore so the palette can switch it

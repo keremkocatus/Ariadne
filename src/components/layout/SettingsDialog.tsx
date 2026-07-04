@@ -16,6 +16,24 @@ export function SettingsDialog() {
         <DialogDescription>Local preferences, stored on this machine.</DialogDescription>
 
         <div className="mt-4 space-y-4 text-xs">
+          <Field label="Theme" hint="Switches the whole UI and the SQL editor.">
+            <div className="flex overflow-hidden rounded border border-border">
+              {(["dark", "light"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => update({ theme: t })}
+                  className={
+                    settings.theme === t
+                      ? "bg-fg px-2.5 py-0.5 capitalize text-bg"
+                      : "px-2.5 py-0.5 capitalize text-fg-muted hover:text-fg"
+                  }
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </Field>
+
           <Field label="Editor font size" hint="Applies live to the SQL editor.">
             <input
               type="number"
