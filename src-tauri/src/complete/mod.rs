@@ -3,6 +3,7 @@
 
 pub mod candidates;
 pub mod context;
+mod lexer;
 
 use serde::Serialize;
 

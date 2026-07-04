@@ -64,93 +64,9 @@ pub struct CompletionContext {
     pub suppress: bool,
 }
 
-// ---- Token modeli (pg_query::scan çıktısı, offset'lerle metne çevrilmiş) ----
-
-#[derive(Debug, Clone)]
-struct Tok {
-    text: String,
-    upper: String,
-    start: usize,
-    end: usize,
-    is_keyword: bool,
-    kind: TokKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TokKind {
-    Ident,
-    Keyword,
-    String,
-    Comment,
-    Dot,
-    Comma,
-    LParen,
-    RParen,
-    Semicolon,
-    Other,
-}
-
-fn tokenize(sql: &str) -> Vec<Tok> {
-    let scan = match pg_query::scan(sql) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
-    let bytes = sql.as_bytes();
-    let mut out = Vec::with_capacity(scan.tokens.len());
-    for t in scan.tokens {
-        let (start, end) = (t.start.max(0) as usize, t.end.max(0) as usize);
-        if start > end || end > bytes.len() {
-            continue;
-        }
-        let text = sql[start..end].to_string();
-        let is_keyword = t.keyword_kind != 0; // 0 = NO_KEYWORD
-        let kind = classify(&text, is_keyword);
-        out.push(Tok {
-            upper: text.to_uppercase(),
-            text,
-            start,
-            end,
-            is_keyword,
-            kind,
-        });
-    }
-    out
-}
-
-fn classify(text: &str, is_keyword: bool) -> TokKind {
-    let b = text.as_bytes();
-    match b.first() {
-        Some(b'\'') => TokKind::String,
-        Some(b'"') => TokKind::Ident, // quoted identifier
-        Some(b'-') if text.starts_with("--") => TokKind::Comment,
-        Some(b'/') if text.starts_with("/*") => TokKind::Comment,
-        Some(b'.') if text == "." => TokKind::Dot,
-        Some(b',') if text == "," => TokKind::Comma,
-        Some(b'(') if text == "(" => TokKind::LParen,
-        Some(b')') if text == ")" => TokKind::RParen,
-        Some(b';') if text == ";" => TokKind::Semicolon,
-        _ if is_keyword => TokKind::Keyword,
-        Some(c) if c.is_ascii_alphabetic() || *c == b'_' => TokKind::Ident,
-        _ => TokKind::Other,
-    }
-}
-
-/// İmlecin bulunduğu statement'ın token aralığını (`;` sınırları) bulur.
-fn statement_bounds(tokens: &[Tok], offset: usize) -> (usize, usize) {
-    let mut start = 0;
-    let mut end = tokens.len();
-    for (i, t) in tokens.iter().enumerate() {
-        if t.kind == TokKind::Semicolon {
-            if t.end <= offset {
-                start = i + 1;
-            } else {
-                end = i;
-                break;
-            }
-        }
-    }
-    (start, end)
-}
+// Token modeli ve lexer yardımcıları (Tok, tokenize, statement_bounds, match_paren,
+// split_items) [`super::lexer`]'de; burada yalnızca semantik analiz yaşar (design 11 §R3).
+use super::lexer::{match_paren, split_items, statement_bounds, tokenize, Tok, TokKind};
 
 /// Ana giriş: SQL + imleç ofseti → CompletionContext.
 pub fn analyze(sql: &str, offset: usize) -> CompletionContext {
@@ -506,25 +422,6 @@ fn read_alias(toks: &[Tok], i: &mut usize) -> Option<String> {
     None
 }
 
-/// LParen indeksinden başlar; (içerik_başı, içerik_sonu, kapanıştan_sonraki) döndürür.
-fn match_paren(toks: &[Tok], lparen: usize) -> (usize, usize, usize) {
-    let mut depth = 0;
-    let mut i = lparen;
-    while i < toks.len() {
-        match toks[i].kind {
-            TokKind::LParen => depth += 1,
-            TokKind::RParen => {
-                depth -= 1;
-                if depth == 0 {
-                    return (lparen + 1, i, i + 1);
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    (lparen + 1, toks.len(), toks.len())
-}
 
 /// Bir SELECT gövdesinin çıktı kolon adlarını best-effort çıkarır (CTE için).
 /// Target list'i top-level virgülle böler; her item'ın çıktı adı: sondaki alias
@@ -551,26 +448,6 @@ fn extract_select_output_columns(_sql: &str, body: &[Tok]) -> Vec<String> {
     cols
 }
 
-fn split_items<'a>(toks: &'a [Tok]) -> Vec<&'a [Tok]> {
-    let mut out = Vec::new();
-    let mut depth = 0;
-    let mut start = 0;
-    for (i, t) in toks.iter().enumerate() {
-        match t.kind {
-            TokKind::LParen => depth += 1,
-            TokKind::RParen => depth -= 1,
-            TokKind::Comma if depth == 0 => {
-                out.push(&toks[start..i]);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    if start < toks.len() {
-        out.push(&toks[start..]);
-    }
-    out
-}
 
 fn output_name(item: &[Tok]) -> Option<String> {
     let item: Vec<&Tok> = item.iter().filter(|t| !matches!(t.kind, TokKind::Comment)).collect();
