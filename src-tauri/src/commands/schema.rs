@@ -55,6 +55,9 @@ pub fn spawn_cache_refresh(app: AppHandle, conn: Arc<ActiveConnection>) {
         },
     );
     tauri::async_runtime::spawn(async move {
+        // RAII: task panik'le unwind etse bile bayrak sıfırlanır (aksi halde bu
+        // bağlantı için tüm gelecekteki refresh'ler kalıcı bloklanırdı).
+        let _guard = RefreshGuard(conn.clone());
         let started = std::time::Instant::now();
         match catalog::fetch_schema_cache(&conn.pool).await {
             Ok(new_cache) => {
@@ -73,9 +76,18 @@ pub fn spawn_cache_refresh(app: AppHandle, conn: Arc<ActiveConnection>) {
                 tracing::warn!(connection_id = %connection_id, error = %e.message, "schema refresh failed");
             }
         }
-        conn.refreshing.store(false, Ordering::Release);
         let _ = app.emit("schema:refreshed", ConnPayload { connection_id });
     });
+}
+
+/// `refreshing` bayrağını drop anında (normal bitiş VEYA panik unwind) sıfırlar.
+struct RefreshGuard(Arc<ActiveConnection>);
+impl Drop for RefreshGuard {
+    fn drop(&mut self) {
+        self.0
+            .refreshing
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
 }
 
 /// Boş cache ile ActiveConnection kur (connect anında; fetch arka planda dolar).

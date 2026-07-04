@@ -314,14 +314,29 @@ async fn open_cursor_and_fetch(
         sqlx::query("BEGIN READ ONLY").execute(&mut *conn).await?;
         st.internal_tx = true;
     }
+    // Semantik hata (tablo/kolon yok vb.) DECLARE anında düşer; Postgres position'ı
+    // `decl`'e göre verir → önek uzunluğunu çıkarıp stmt-içi konuma çeviririz, yoksa
+    // marker ~58 karakter kayar (design 11 §H1 cursor-yolu düzeltmesi). Önek saf ASCII
+    // olduğu için byte uzunluğu == karakter sayısı.
     let decl = format!("DECLARE {name} NO SCROLL CURSOR FOR {stmt}");
-    sqlx::query(&decl).execute(&mut *conn).await?;
+    let prefix_len = (decl.len() - stmt.len()) as u32;
+    sqlx::query(&decl).execute(&mut *conn).await.map_err(|e| {
+        let mut ae = AriadneError::from(e);
+        ae.position = ae.position.map(|p| p.saturating_sub(prefix_len).max(1));
+        ae
+    })?;
 
     let fetch_sql = format!("FETCH FORWARD {page_size} FROM {name}");
     let rows = conn
         .fetch_all(sqlx::raw_sql(&fetch_sql))
         .await
-        .map_err(AriadneError::from)?;
+        .map_err(|e| {
+            // FETCH sırasındaki hata (nadir runtime hatası) FETCH komutuna göre konum
+            // verir; editöre eşlenemez → position düşürülür (yanlış marker göstermemek için).
+            let mut ae = AriadneError::from(e);
+            ae.position = None;
+            ae
+        })?;
     let (columns, page_rows, truncated) = read_rows(&rows);
     let has_more = page_rows.len() as i64 == page_size;
 

@@ -140,7 +140,13 @@ export const useTabsStore = create<TabsState>()(
     }
     await get().txControl(id, action === "commit" ? "COMMIT" : "ROLLBACK");
     set({ closeRequest: null });
-    rawCloseTab(set, get, id);
+    // Yalnız tx GERÇEKTEN kapandıysa tab'ı kapat. COMMIT/ROLLBACK başarısızsa
+    // (ör. bağlantı koptu) tx hâlâ açık; tab'ı kapatmak "kaydedildi" yanılgısı
+    // yaratır → tab açık kalır, hatası bandda görünür (design 11 §H4).
+    const tab = get().tabs.find((t) => t.id === id);
+    if (tab && tab.query.txStatus === "idle") {
+      rawCloseTab(set, get, id);
+    }
   },
 
   setActive(id) {
@@ -189,8 +195,17 @@ export const useTabsStore = create<TabsState>()(
         capped: false,
       });
     } catch (e) {
+      // Transport-seviyesi hata (invoke reddi, ör. connection_lost): geçerli sonuç
+      // yok → eski grid'i temizle ki hata bandı bayat satırların üstünde durmasın.
+      // (SQL hataları buraya DÜŞMEZ; onlar Ok(RunResult{error}) ile success dalından
+      //  geçer ve kısmi sonuçları korur — design 11 §H2.)
       patchQuery(set, id, {
         running: false,
+        columns: [],
+        rows: [],
+        extra: [],
+        hasMore: false,
+        fetchedTotal: 0,
         error: api.isAriadneError(e) ? e : { kind: "internal", message: String(e) },
       });
     }
