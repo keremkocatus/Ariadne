@@ -2,8 +2,32 @@ import Editor, { type OnMount, type Monaco } from "@monaco-editor/react";
 import { useEffect, useRef } from "react";
 import type { editor } from "monaco-editor";
 import { registerSqlProviders, setActiveConnection } from "@/lib/monaco/providers";
-import { setRunSelectionGetter } from "@/lib/editorRun";
+import { setRunSelectionGetter, setFormatAction } from "@/lib/editorRun";
+import { formatSql } from "@/lib/format";
+import { toast } from "sonner";
 import { getObjectInfo, type ObjectInfo } from "@/lib/api";
+
+/// Editörde SQL formatla (design 20 §P1-Y2 M3): seçim varsa yalnız onu, yoksa tüm
+/// metni. `executeEdits` ile uygulanır → tek Ctrl+Z geri alır. Değişiklik yoksa
+/// (zaten formatlı) dokunulmaz; bozuk SQL'de metin korunur + toast.
+function formatInEditor(ed: editor.IStandaloneCodeEditor) {
+  const model = ed.getModel();
+  if (!model) return;
+  const sel = ed.getSelection();
+  const range = sel && !sel.isEmpty() ? sel : model.getFullModelRange();
+  const src = model.getValueInRange(range);
+  if (!src.trim()) return;
+  let formatted: string;
+  try {
+    formatted = formatSql(src);
+  } catch {
+    toast.error("Couldn't format — invalid SQL");
+    return;
+  }
+  if (formatted.trimEnd() === src.trimEnd()) return; // zaten formatlı
+  ed.executeEdits("ariadne-format", [{ range, text: formatted, forceMoveMarkers: true }]);
+  ed.pushUndoStop();
+}
 
 interface SqlEditorProps {
   value: string;
@@ -70,7 +94,10 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
   // (design 15 §P1-U2). Editör unmount olunca (tab değişince, bir sonraki mount
   // hemen yeniden kaydeder) temizlenir.
   useEffect(() => {
-    return () => setRunSelectionGetter(null);
+    return () => {
+      setRunSelectionGetter(null);
+      setFormatAction(null);
+    };
   }, []);
 
   const handleMount: OnMount = (ed, monaco) => {
@@ -118,6 +145,15 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyD, () =>
       ed.trigger("ariadne", "editor.action.addSelectionToNextFindMatch", null),
     );
+
+    // Ctrl+K: SQL formatla (design 20 §P1-Y2 M3). Editör odaklıyken Monaco'ya bırakılan
+    // Ctrl+K burada formatlamaya bağlanır; editör DIŞINDA global Ctrl+K palette olarak
+    // kalır (shortcuts.ts inEditor() → return). Seçim varsa yalnız onu, yoksa tüm metni
+    // biçimlendirir; executeEdits ile tek Ctrl+Z'de geri alınır. Bozuk SQL'de metne
+    // dokunmadan uyarır.
+    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => formatInEditor(ed));
+    // Palette "Format SQL" erişimi için (editör-içi Ctrl+K zaten doğrudan çalışır).
+    setFormatAction(() => formatInEditor(ed));
 
     ed.focus();
   };

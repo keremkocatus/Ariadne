@@ -22,3 +22,17 @@ export function setRunSelectionGetter(fn: (() => RunSelection | null) | null) {
 export function getRunSelection(): RunSelection | null {
   return getter ? getter() : null;
 }
+
+// Aktif editörde SQL formatlama (design 20 §P1-Y2 M3). SqlEditor mount olunca
+// eylemini kaydeder; palette "Format SQL" buradan tetikler. Editör-içi Ctrl+K
+// doğrudan Monaco komutuyla çalışır; bu köprü yalnız palette erişimi içindir.
+let formatAction: (() => void) | null = null;
+
+export function setFormatAction(fn: (() => void) | null) {
+  formatAction = fn;
+}
+
+/** Aktif editörde formatlamayı çalıştırır (kayıtlıysa). */
+export function runFormatActive(): void {
+  formatAction?.();
+}

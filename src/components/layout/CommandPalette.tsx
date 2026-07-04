@@ -8,6 +8,7 @@ import { useSchemaStore } from "@/stores/schemaStore";
 import { useTabsStore } from "@/stores/tabsStore";
 import { connectProfile, focusConnection } from "@/lib/connectionActions";
 import { openSqlFile, saveSqlFile } from "@/lib/fileActions";
+import { runFormatActive } from "@/lib/editorRun";
 import { refreshSchema } from "@/lib/api";
 
 // "Bind this tab to …" AÇIK/bilinçli eski davranış (design 15 §P1-U1): aktif tab'ı
@@ -94,6 +95,9 @@ export function CommandPalette() {
                 }
               >
                 Save file as…
+              </Item>
+              <Item value="format sql beautify" onSelect={() => run(() => runFormatActive())}>
+                Format SQL (Ctrl+K in editor)
               </Item>
               <Item onSelect={() => run(() => useUiStore.getState().toggleSidebar())}>
                 Toggle sidebar
