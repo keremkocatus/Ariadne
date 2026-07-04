@@ -45,7 +45,10 @@ impl RelRef {
     /// qualifier bu ilişkiye mi işaret ediyor? (alias önce, sonra tablo adı)
     pub fn matches(&self, q: &str) -> bool {
         let q = q.to_lowercase();
-        self.alias.as_deref().map(|a| a.to_lowercase() == q).unwrap_or(false)
+        self.alias
+            .as_deref()
+            .map(|a| a.to_lowercase() == q)
+            .unwrap_or(false)
             || self.name.to_lowercase() == q
     }
 }
@@ -75,7 +78,10 @@ pub fn analyze(sql: &str, offset: usize) -> CompletionContext {
 
     // İmleç string/comment içinde mi?
     for t in &all {
-        if matches!(t.kind, TokKind::String | TokKind::Comment) && t.start < offset && offset < t.end {
+        if matches!(t.kind, TokKind::String | TokKind::Comment)
+            && t.start < offset
+            && offset < t.end
+        {
             return CompletionContext {
                 clause: Clause::Unknown,
                 relations: Vec::new(),
@@ -111,7 +117,9 @@ pub fn identifier_at(sql: &str, offset: usize) -> Option<(Option<String>, String
     let all = tokenize(sql);
     let (lo, hi) = statement_bounds(&all, offset);
     let toks = &all[lo..hi];
-    let i = toks.iter().position(|t| t.start < offset && offset <= t.end)?;
+    let i = toks
+        .iter()
+        .position(|t| t.start < offset && offset <= t.end)?;
     if !matches!(toks[i].kind, TokKind::Ident) {
         return None;
     }
@@ -160,7 +168,9 @@ pub fn call_context(sql: &str, offset: usize) -> Option<(String, u32)> {
 
 fn extract_prefix_qualifier(sql: &str, toks: &[Tok], offset: usize) -> (String, Option<String>) {
     // İmlecin bittiği/içinde olduğu token.
-    let cur = toks.iter().position(|t| t.start < offset && offset <= t.end);
+    let cur = toks
+        .iter()
+        .position(|t| t.start < offset && offset <= t.end);
 
     if let Some(i) = cur {
         let t = &toks[i];
@@ -186,7 +196,10 @@ fn extract_prefix_qualifier(sql: &str, toks: &[Tok], offset: usize) -> (String, 
         let prev = toks.iter().rposition(|t| t.end <= offset);
         if let Some(i) = prev {
             if toks[i].kind == TokKind::Dot && i >= 1 && toks[i - 1].kind == TokKind::Ident {
-                return (String::new(), Some(toks[i - 1].text.trim_matches('"').to_string()));
+                return (
+                    String::new(),
+                    Some(toks[i - 1].text.trim_matches('"').to_string()),
+                );
             }
         }
         (String::new(), None)
@@ -223,7 +236,9 @@ fn detect_stmt_kind(toks: &[Tok]) -> StmtKind {
 /// İmlece kadar token akışını gezerek clause state machine'i yürütür.
 fn detect_clause(toks: &[Tok], offset: usize, stmt_kind: StmtKind) -> Clause {
     let mut clause = match stmt_kind {
-        StmtKind::Select | StmtKind::Insert | StmtKind::Update | StmtKind::Delete => Clause::Unknown,
+        StmtKind::Select | StmtKind::Insert | StmtKind::Update | StmtKind::Delete => {
+            Clause::Unknown
+        }
         StmtKind::Other => Clause::Unknown,
     };
     let mut insert_seen_paren = false;
@@ -375,13 +390,15 @@ fn parse_table_ref(toks: &[Tok], start: usize, ctes: &[RelRef]) -> (Option<RelRe
     i += 1;
 
     // schema.name?
-    let (schema, name) = if i + 1 < toks.len() && toks[i].kind == TokKind::Dot && toks[i + 1].kind == TokKind::Ident {
-        let n = toks[i + 1].text.trim_matches('"').to_string();
-        i += 2;
-        (Some(first), n)
-    } else {
-        (None, first)
-    };
+    let (schema, name) =
+        if i + 1 < toks.len() && toks[i].kind == TokKind::Dot && toks[i + 1].kind == TokKind::Ident
+        {
+            let n = toks[i + 1].text.trim_matches('"').to_string();
+            i += 2;
+            (Some(first), n)
+        } else {
+            (None, first)
+        };
 
     let alias = read_alias(toks, &mut i);
 
@@ -422,13 +439,14 @@ fn read_alias(toks: &[Tok], i: &mut usize) -> Option<String> {
     None
 }
 
-
 /// Bir SELECT gövdesinin çıktı kolon adlarını best-effort çıkarır (CTE için).
 /// Target list'i top-level virgülle böler; her item'ın çıktı adı: sondaki alias
 /// (`expr [AS] name`) ya da tek kolon referansıysa kolon adı.
 fn extract_select_output_columns(_sql: &str, body: &[Tok]) -> Vec<String> {
     // SELECT ... FROM arasını al.
-    let sel = body.iter().position(|t| t.is_keyword && t.upper == "SELECT");
+    let sel = body
+        .iter()
+        .position(|t| t.is_keyword && t.upper == "SELECT");
     let Some(sel) = sel else {
         return Vec::new();
     };
@@ -448,9 +466,11 @@ fn extract_select_output_columns(_sql: &str, body: &[Tok]) -> Vec<String> {
     cols
 }
 
-
 fn output_name(item: &[Tok]) -> Option<String> {
-    let item: Vec<&Tok> = item.iter().filter(|t| !matches!(t.kind, TokKind::Comment)).collect();
+    let item: Vec<&Tok> = item
+        .iter()
+        .filter(|t| !matches!(t.kind, TokKind::Comment))
+        .collect();
     if item.is_empty() {
         return None;
     }
@@ -506,7 +526,10 @@ mod tests {
         assert_eq!(c.qualifier.as_deref(), Some("u"));
         assert_eq!(c.clause, Clause::SelectList);
         // relations: users u
-        assert!(c.relations.iter().any(|r| r.name == "users" && r.alias.as_deref() == Some("u")));
+        assert!(c
+            .relations
+            .iter()
+            .any(|r| r.name == "users" && r.alias.as_deref() == Some("u")));
     }
 
     #[test]

@@ -129,18 +129,30 @@ mod tests {
 
     #[test]
     fn safe_with_where_not_flagged() {
-        assert!(classify("DELETE FROM orders WHERE id = 1").destructive.is_none());
-        assert!(classify("UPDATE orders SET total = 0 WHERE id = 1").destructive.is_none());
-        // CTE'li ama WHERE'li DELETE false-positive vermemeli.
-        assert!(classify("WITH x AS (SELECT 1) DELETE FROM orders WHERE id IN (SELECT * FROM x)")
+        assert!(classify("DELETE FROM orders WHERE id = 1")
             .destructive
             .is_none());
+        assert!(classify("UPDATE orders SET total = 0 WHERE id = 1")
+            .destructive
+            .is_none());
+        // CTE'li ama WHERE'li DELETE false-positive vermemeli.
+        assert!(
+            classify("WITH x AS (SELECT 1) DELETE FROM orders WHERE id IN (SELECT * FROM x)")
+                .destructive
+                .is_none()
+        );
     }
 
     #[test]
     fn tx_transitions() {
-        assert_eq!(classify("BEGIN").tx_transition, Some(TxStatus::InTransaction));
-        assert_eq!(classify("START TRANSACTION").tx_transition, Some(TxStatus::InTransaction));
+        assert_eq!(
+            classify("BEGIN").tx_transition,
+            Some(TxStatus::InTransaction)
+        );
+        assert_eq!(
+            classify("START TRANSACTION").tx_transition,
+            Some(TxStatus::InTransaction)
+        );
         assert_eq!(classify("COMMIT").tx_transition, Some(TxStatus::Idle));
         assert_eq!(classify("ROLLBACK").tx_transition, Some(TxStatus::Idle));
     }

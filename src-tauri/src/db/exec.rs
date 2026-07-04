@@ -191,7 +191,9 @@ async fn finalize_conn(st: &mut TabState) {
 async fn close_cursor(st: &mut TabState) {
     if let Some(cur) = st.cursor.take() {
         if let Some(c) = st.conn.as_mut() {
-            let _ = sqlx::query(&format!("CLOSE {}", cur.name)).execute(&mut **c).await;
+            let _ = sqlx::query(&format!("CLOSE {}", cur.name))
+                .execute(&mut **c)
+                .await;
         }
         // İç tx ile açıldıysa ve kullanıcı tx'i yoksa commit.
         if st.internal_tx && st.tx == TxStatus::Idle {
@@ -428,7 +430,9 @@ mod tests {
         let pool = pool().await;
         let reg = ExecRegistry::default();
 
-        run_query(&reg, &pool, args("BEGIN", "t1", "q0")).await.unwrap();
+        run_query(&reg, &pool, args("BEGIN", "t1", "q0"))
+            .await
+            .unwrap();
         run_query(
             &reg,
             &pool,
@@ -441,9 +445,13 @@ mod tests {
         .await
         .unwrap();
 
-        let r = run_query(&reg, &pool, args("SELECT * FROM t_ari ORDER BY id", "t1", "q2"))
-            .await
-            .unwrap();
+        let r = run_query(
+            &reg,
+            &pool,
+            args("SELECT * FROM t_ari ORDER BY id", "t1", "q2"),
+        )
+        .await
+        .unwrap();
         assert_eq!(r.tx_status, TxStatus::InTransaction);
         match &r.statements[0] {
             StatementResult::Rows { first_page, .. } => {
@@ -461,7 +469,9 @@ mod tests {
         assert!(!p3.has_more);
 
         // ROLLBACK → tx kapanır, temp tablo düşer, cursor kapanır.
-        let r = run_query(&reg, &pool, args("ROLLBACK", "t1", "q3")).await.unwrap();
+        let r = run_query(&reg, &pool, args("ROLLBACK", "t1", "q3"))
+            .await
+            .unwrap();
         assert_eq!(r.tx_status, TxStatus::Idle);
     }
 

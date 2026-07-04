@@ -84,16 +84,13 @@ impl From<sqlx::Error> for AriadneError {
                     hint: None,
                 }
             }
-            E::PoolTimedOut => AriadneError::new(
-                ErrorKind::ConnectionFailed,
-                "Connection pool timed out",
-            ),
+            E::PoolTimedOut => {
+                AriadneError::new(ErrorKind::ConnectionFailed, "Connection pool timed out")
+            }
             E::Io(_) | E::Tls(_) | E::Configuration(_) => {
                 AriadneError::new(ErrorKind::ConnectionFailed, err.to_string())
             }
-            E::PoolClosed => {
-                AriadneError::new(ErrorKind::ConnectionLost, err.to_string())
-            }
+            E::PoolClosed => AriadneError::new(ErrorKind::ConnectionLost, err.to_string()),
             _ => AriadneError::internal(err.to_string()),
         }
     }
