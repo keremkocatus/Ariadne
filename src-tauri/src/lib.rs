@@ -35,6 +35,7 @@ struct FrozenPayload {
 /// Uygulamayı kurar ve çalıştırır. `main.rs`'in tek işi budur.
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Logging: konsol + dönen dosya (design 01 §6). Dosya yolu alınamazsa
             // yalnız konsola düşer.
@@ -61,6 +62,8 @@ pub fn run() {
             commands::details::get_relation_details,
             commands::details::get_function_source,
             commands::roles::list_roles,
+            commands::files::read_text_file,
+            commands::files::write_text_file,
             commands::query::run_query,
             commands::query::fetch_page,
             commands::query::cancel_query,

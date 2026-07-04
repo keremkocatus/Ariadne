@@ -6,11 +6,13 @@ import { ResultArea } from "@/components/query/ResultArea";
 import { ConfirmDialog } from "@/components/query/ConfirmDialog";
 import { CloseTabDialog } from "@/components/query/CloseTabDialog";
 import { ConnectionClosedBanner } from "@/components/query/ConnectionClosedBanner";
+import { SaveTabDialog } from "@/components/query/SaveTabDialog";
 import { Toolbar } from "@/components/layout/Toolbar";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { ResizeHandle } from "@/components/layout/ResizeHandle";
 import { CommandPalette } from "@/components/layout/CommandPalette";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
+import { saveSqlFile } from "@/lib/fileActions";
 import { toast } from "sonner";
 import { registerEventBridge } from "@/lib/events";
 import { getRunSelection } from "@/lib/editorRun";
@@ -27,6 +29,8 @@ export default function App() {
 
   const active = useTabsStore((s) => s.active());
   const closeRequest = useTabsStore((s) => s.closeRequest);
+  const dirtyCloseRequest = useTabsStore((s) => s.dirtyCloseRequest);
+  const dirtyTab = useTabsStore((s) => s.tabs.find((t) => t.id === s.dirtyCloseRequest) ?? null);
   const { addTab, setSql, run, fetchMore, dismissConfirmation, resolveClose, renameTab, setInfoResult } =
     useTabsStore();
   // Explorer aktif *tab'ın* bağlantısını gösterir, global aktif bağlantıyı değil
@@ -168,6 +172,19 @@ export default function App() {
           onCommit={() => void resolveClose("commit")}
           onRollback={() => void resolveClose("rollback")}
           onCancel={() => void resolveClose("cancel")}
+        />
+      )}
+
+      {dirtyCloseRequest && dirtyTab && (
+        <SaveTabDialog
+          fileName={dirtyTab.title}
+          onSave={() =>
+            void saveSqlFile(dirtyCloseRequest).then((ok) => {
+              if (ok) useTabsStore.getState().forceCloseTab(dirtyCloseRequest);
+            })
+          }
+          onDiscard={() => useTabsStore.getState().forceCloseTab(dirtyCloseRequest)}
+          onCancel={() => useTabsStore.getState().cancelDirtyClose()}
         />
       )}
 

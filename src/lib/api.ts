@@ -188,6 +188,14 @@ export function listRoles(connectionId: string): Promise<RoleInfo[]> {
   return invoke("list_roles", { connectionId });
 }
 
+// ---- .sql dosya okuma/yazma (design 15 §P1-U4). Yol native diyalogdan gelir. ----
+export function readTextFile(path: string): Promise<string> {
+  return invoke("read_text_file", { path });
+}
+export function writeTextFile(path: string, content: string): Promise<void> {
+  return invoke("write_text_file", { path, content });
+}
+
 // ---- Query (design 02 §3, 05) ----
 export interface ColumnMeta {
   name: string;

@@ -1,9 +1,10 @@
-import { PanelLeft, Play, Square, Check, Undo2, Settings } from "lucide-react";
+import { PanelLeft, Play, Square, Check, Undo2, Settings, FolderOpen, Save } from "lucide-react";
 import { ConnectionMenu } from "@/components/connection/ConnectionMenu";
 import { useUiStore } from "@/stores/uiStore";
 import { useTabsStore } from "@/stores/tabsStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { getRunSelection } from "@/lib/editorRun";
+import { openSqlFile, saveSqlFile } from "@/lib/fileActions";
 
 /// Üst araç çubuğu: sidebar toggle, bağlantı seçici, Run/Cancel, tx kontrol
 /// butonları (design 07 §2). Durumu store'lardan okur — App'e prop bağı yoktur.
@@ -32,6 +33,21 @@ export function Toolbar() {
         <PanelLeft size={15} />
       </button>
       <ConnectionMenu />
+      <button
+        className="rounded p-1 text-fg-muted hover:bg-bg-elev hover:text-fg"
+        onClick={() => void openSqlFile()}
+        title="Open .sql (Ctrl+O)"
+      >
+        <FolderOpen size={15} />
+      </button>
+      <button
+        className="rounded p-1 text-fg-muted hover:bg-bg-elev hover:text-fg disabled:opacity-40"
+        onClick={() => active && void saveSqlFile(active.id)}
+        disabled={!active}
+        title="Save (Ctrl+S)"
+      >
+        <Save size={15} />
+      </button>
       {q?.running ? (
         <button
           onClick={() => active && cancel(active.id)}

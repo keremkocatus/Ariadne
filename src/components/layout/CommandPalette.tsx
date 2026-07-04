@@ -7,6 +7,7 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { useSchemaStore } from "@/stores/schemaStore";
 import { useTabsStore } from "@/stores/tabsStore";
 import { connectProfile, focusConnection } from "@/lib/connectionActions";
+import { openSqlFile, saveSqlFile } from "@/lib/fileActions";
 import { refreshSchema } from "@/lib/api";
 
 // "Bind this tab to …" AÇIK/bilinçli eski davranış (design 15 §P1-U1): aktif tab'ı
@@ -73,6 +74,27 @@ export function CommandPalette() {
 
             <Command.Group heading="Commands" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-fg-muted">
               <Item onSelect={() => run(() => useTabsStore.getState().addTab(""))}>New tab</Item>
+              <Item onSelect={() => run(() => void openSqlFile())}>Open .sql file…</Item>
+              <Item
+                onSelect={() =>
+                  run(() => {
+                    const id = useTabsStore.getState().activeTabId;
+                    if (id) void saveSqlFile(id);
+                  })
+                }
+              >
+                Save file
+              </Item>
+              <Item
+                onSelect={() =>
+                  run(() => {
+                    const id = useTabsStore.getState().activeTabId;
+                    if (id) void saveSqlFile(id, true);
+                  })
+                }
+              >
+                Save file as…
+              </Item>
               <Item onSelect={() => run(() => useUiStore.getState().toggleSidebar())}>
                 Toggle sidebar
               </Item>

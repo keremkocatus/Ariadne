@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Ariadne ana pencere yetkileri (M0: yalnızca core).",
+  "description": "Ariadne ana pencere yetkileri: core + dosya aç/kaydet diyaloğu (design 15 §P1-U4).",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:default"]
 }

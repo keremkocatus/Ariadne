@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useUiStore } from "@/stores/uiStore";
 import { useTabsStore } from "@/stores/tabsStore";
+import { openSqlFile, saveSqlFile } from "@/lib/fileActions";
 
 /// İmleç Monaco editörünün içinde mi? Ctrl+K gibi tuşlarda editör chord'una
 /// öncelik vermek için (design 07 §3). activeElement editör DOM'unun içindeyse true.
@@ -31,6 +32,14 @@ export function useGlobalShortcuts() {
       } else if (e.ctrlKey && k === "w") {
         e.preventDefault();
         if (tabs.activeTabId) tabs.closeTab(tabs.activeTabId);
+      } else if (e.ctrlKey && k === "o") {
+        // .sql aç (design 15 §P1-U4).
+        e.preventDefault();
+        void openSqlFile();
+      } else if (e.ctrlKey && k === "s") {
+        // Ctrl+S kaydet, Ctrl+Shift+S farklı kaydet.
+        e.preventDefault();
+        if (tabs.activeTabId) void saveSqlFile(tabs.activeTabId, e.shiftKey);
       } else if (e.ctrlKey && k === "k") {
         // Command palette — ama editör odaklıyken Monaco chord'u (Ctrl+K Ctrl+C) öncelikli.
         if (inEditor()) return;

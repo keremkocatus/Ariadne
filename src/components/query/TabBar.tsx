@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useTabsStore } from "@/stores/tabsStore";
+import { useTabsStore, isDirty } from "@/stores/tabsStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 import type { TxStatus } from "@/lib/api";
 
@@ -84,6 +84,7 @@ export function TabBar() {
                     startRename(t.id, t.title);
                   }}
                 >
+                  {isDirty(t) && <span className="mr-1 text-warn" title="Unsaved changes">●</span>}
                   {t.title}
                   {connLabel && <span className="ml-1 text-fg-muted">· {connLabel}</span>}
                 </span>

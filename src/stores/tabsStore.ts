@@ -61,7 +61,21 @@ export interface Tab {
   /// o anki aktif bağlantıdan devralınır; sonrasında yalnız `setConnection` ile
   /// (kullanıcı eylemiyle) değişir — çalıştırma anında yeniden okunmaz.
   connectionId: string | null;
+  /// Bir .sql dosyasına bağlıysa yolu (design 15 §P1-U4); yoksa null (bellek tab'ı).
+  filePath: string | null;
+  /// Dosyanın son kaydedilen/açılan içeriği — dirty = `sql !== savedSql`.
+  savedSql: string | null;
   query: QueryState;
+}
+
+/// Dosya-bağlı bir tab'da kaydedilmemiş değişiklik var mı (design 15 §P1-U4).
+export function isDirty(tab: Tab): boolean {
+  return tab.filePath != null && tab.sql !== tab.savedSql;
+}
+
+/// Dosya yolundan başlık (dosya adı) — Windows/POSIX ayraçları.
+function baseName(path: string): string {
+  return path.split(/[\\/]/).pop() || path;
 }
 
 function emptyQuery(): QueryState {
@@ -86,7 +100,15 @@ function emptyQuery(): QueryState {
 }
 
 function newTab(sql = "", connectionId: string | null = null): Tab {
-  return { id: crypto.randomUUID(), title: "Query", sql, connectionId, query: emptyQuery() };
+  return {
+    id: crypto.randomUUID(),
+    title: "Query",
+    sql,
+    connectionId,
+    filePath: null,
+    savedSql: null,
+    query: emptyQuery(),
+  };
 }
 
 /// Tab "pristine" mi: hiç dokunulmamış (boş SQL) + sonuç yok + idle tx + bekleyen
@@ -111,6 +133,9 @@ interface TabsState {
   activeTabId: string | null;
   /// Açık tx'li olduğu için kapatılması onay bekleyen tab (design 05 §7 / 11 §H4).
   closeRequest: string | null;
+  /// Kaydedilmemiş dosya değişikliği olduğu için kapatılması onay bekleyen tab
+  /// (design 15 §P1-U4). tx onayı önce gelir; bu ondan bağımsız bir sonraki adım.
+  dirtyCloseRequest: string | null;
   /// Bir sonraki tab için sıra numarası (design 15 §P1-U2): "Query 1/2/3…". Tab
   /// kapatınca geri sarmaz (isim çakışması olmasın). Persist edilir.
   nextTabNumber: number;
@@ -122,6 +147,14 @@ interface TabsState {
   setSql: (id: string, sql: string) => void;
   /// Tab başlığını elle değiştirir (çift-tık ile yeniden adlandırma, design 15 §P1-U2).
   renameTab: (id: string, title: string) => void;
+  /// Bir .sql dosyasını yeni tab'da açar (içerik + yol + başlık), döndürür id.
+  openFileTab: (sql: string, filePath: string, connectionId: string | null) => string;
+  /// Kaydetme sonrası dosya meta'sını işler (yol + savedSql + başlık).
+  markSaved: (id: string, filePath: string, savedSql: string) => void;
+  /// Kaydedilmemiş dosya tab'ını zorla kapatır (save/discard sonrası).
+  forceCloseTab: (id: string) => void;
+  /// Dirty-close onayını iptal eder.
+  cancelDirtyClose: () => void;
   /// Tab'ın bağlantısını değiştirir (Ctrl+K "switch connection" veya kapalı
   /// bağlantı bandındaki seçim). Çalışan sorgu ya da açık tx varken reddedilir
   /// (o kaynak eski bağlantıya ait — design 12 §P1-M1 riski).
@@ -183,6 +216,7 @@ export const useTabsStore = create<TabsState>()(
   tabs: [],
   activeTabId: null,
   closeRequest: null,
+  dirtyCloseRequest: null,
   nextTabNumber: 1,
 
   addTab(sql, connectionId) {
@@ -197,6 +231,11 @@ export const useTabsStore = create<TabsState>()(
     const tab = get().tabs.find((t) => t.id === id);
     if (tab && tab.query.txStatus !== "idle") {
       set({ closeRequest: id });
+      return;
+    }
+    // Kaydedilmemiş dosya değişikliği varsa Save/Don't save/Cancel onayı (design 15 §P1-U4).
+    if (tab && isDirty(tab)) {
+      set({ dirtyCloseRequest: id });
       return;
     }
     rawCloseTab(set, get, id);
@@ -240,6 +279,30 @@ export const useTabsStore = create<TabsState>()(
     const trimmed = title.trim();
     if (!trimmed) return; // boş ada izin verme
     set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, title: trimmed } : t)) }));
+  },
+
+  openFileTab(sql, filePath, connectionId) {
+    const connId = connectionId ?? useConnectionStore.getState().activeConnectionId;
+    const t: Tab = { ...newTab(sql, connId), title: baseName(filePath), filePath, savedSql: sql };
+    set((s) => ({ tabs: [...s.tabs, t], activeTabId: t.id }));
+    return t.id;
+  },
+
+  markSaved(id, filePath, savedSql) {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === id ? { ...t, filePath, savedSql, title: baseName(filePath) } : t,
+      ),
+    }));
+  },
+
+  forceCloseTab(id) {
+    set((s) => ({ dirtyCloseRequest: s.dirtyCloseRequest === id ? null : s.dirtyCloseRequest }));
+    rawCloseTab(set, get, id);
+  },
+
+  cancelDirtyClose() {
+    set({ dirtyCloseRequest: null });
   },
 
   setConnection(id, connectionId) {
@@ -410,20 +473,36 @@ export const useTabsStore = create<TabsState>()(
       name: "ariadne-tabs",
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
-        tabs: s.tabs.map((t) => ({ id: t.id, title: t.title, sql: t.sql, connectionId: t.connectionId })),
+        tabs: s.tabs.map((t) => ({
+          id: t.id,
+          title: t.title,
+          sql: t.sql,
+          connectionId: t.connectionId,
+          filePath: t.filePath,
+          savedSql: t.savedSql,
+        })),
         activeTabId: s.activeTabId,
         nextTabNumber: s.nextTabNumber,
       }),
       // Diskten dönen tab'lara taze boş query iliştir (çalıştırma durumu kalıcı değil).
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as {
-          tabs?: { id: string; title: string; sql: string; connectionId?: string | null }[];
+          tabs?: {
+            id: string;
+            title: string;
+            sql: string;
+            connectionId?: string | null;
+            filePath?: string | null;
+            savedSql?: string | null;
+          }[];
           activeTabId?: string | null;
           nextTabNumber?: number;
         };
         const tabs: Tab[] = (p.tabs ?? []).map((t) => ({
           ...t,
           connectionId: t.connectionId ?? null,
+          filePath: t.filePath ?? null,
+          savedSql: t.savedSql ?? null,
           query: emptyQuery(),
         }));
         return {
