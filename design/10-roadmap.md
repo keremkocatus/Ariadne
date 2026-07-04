@@ -25,6 +25,12 @@ Cursor'lu execution (05), fetch_page/sonsuz scroll, cancel, TanStack grid (satı
 
 ## Faz 1 — Günlük konforu (sıralama fayda/maliyete göre)
 
+> **Revizyon (2026-07-04):** Faz 0 kod incelemesi sonrası araya bir **refactor +
+> sertleştirme** adımı girdi (detay: 11) ve Faz 1 sıralaması kullanıcı önceliğiyle
+> güncellendi: #2 (multi-connection), #3 (cache persist) ve #4 (EXPLAIN) öne alındı;
+> #1 (history) sonraya, #5 (auto-update/release) belirsiz süreyle erteye kaydı.
+> Güncel milestone planı: **12**.
+
 1. Query history + saved snippets (yerel SQLite)
 2. Multi-connection eşzamanlı + hızlı geçiş (mimari zaten hazır — UI işi)
 3. Cache disk persist (rusqlite) → dev şemalarda anında cold start
