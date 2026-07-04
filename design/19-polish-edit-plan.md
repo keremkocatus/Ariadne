@@ -79,12 +79,18 @@ X4 en büyük ve **kullanıcının DB'sine YAZAR** — ayrı ele alınır (bkz. 
 
 ### Plan
 
-1. **N1:** `QueryState`'e sonuç üretildi bilgisi — en temizi: `run` başarı dalında
-   bir `rows` statement döndüyse `columns` boş olsa bile grid gösterilecek şekilde
-   bir `hasResultSet` bayrağı (ya da `resultKind: "rows"|"affected"|"none"`).
-   `ResultArea`: `hasRows || resultKind==="rows"` → `ResultGrid` (boş gövde =
-   "0 rows"). Placeholder yalnız `resultKind==="none" && !running && !error`.
-   ResultGrid zaten 0 satırla başlık + footer'ı doğru çizer.
+1. **N1 (UYGULANDI — kök neden backend'deymiş, frontend flag GEREKMEDİ):**
+   Gerçek kök: `db/rows.rs::read_rows` sütun metadata'sını `rows.first()`'ten
+   türetiyordu; 0 satırlı SELECT'te `None` → `columns = []` → `Rows { columns: [] }`
+   döndü → frontend `hasRows = columns.length > 0` false → placeholder. Çözüm
+   backend'de: `read_rows` boş sütun döndürürse `open_cursor_and_fetch` /
+   `run_inline_rows` extended-protocol `describe` (Parse+Describe, execute yok →
+   yan etkisiz) ile GERÇEK başlıkları çeker (`db/exec.rs::describe_columns`, yalnız
+   empty durumunda 1 round-trip). Böylece 0 satırlı SELECT `Rows { columns:[…], rows:[] }`
+   döner → `hasRows` true → grid başlıklar + "0 rows" ile açılır, placeholder çıkmaz.
+   Frontend'e HİÇ dokunulmadı. Placeholder yalnız gerçekten hiç statement koşmamışken
+   (boş/yorum-only SQL) görünür. Test: `zero_row_select_still_reports_columns` (ignored,
+   canlı-DB).
 2. **N3:** `Explorer` ağaç sarmalayıcı div'ine `onContextMenu` — hedef bir
    kategori/şema değilse (relation/function/more/boşluk) `e.preventDefault()`
    (kendi menümüz yoksa da webview menüsü çıkmasın). Ek güvenlik: `App` kökünde
@@ -332,3 +338,16 @@ sözleşmesi, design/13 ve bu belgeye durum işlenir.
 | Toplu/çok-hücre düzenleme, satır ekleme/silme | v1 tek-hücre yeter | Talep olursa |
 | İlk snapshot fetch gecikmesi (N4'ün ayrı bir yüzü değil; N4 render bug'ıdır) | — | — |
 | Dinamik pencere başlığı (aktif DB) | Sabit başlık yeter | İstenirse |
+
+## 7. Finalize kararları (2026-07-04 Q&A, kullanıcı onayladı)
+
+1. **Sıra:** X1 → X2 → X3 → **Y1 → Y2 → Y3 (design/20)** → **X4 en son** → v0.0.2.
+   Gerekçe: X4 tek data-write işi; diğer her şey stabilken yapılır ve sorun
+   çıkarsa v0.0.2'yi bloke etmeden daraltılabilir. **v0.0.2 iki belgeyi (19+20)
+   birden kapsar.**
+2. **X4 kapsamı onaylandı:** görüntüleyici her hücrede; düzenleme yalnız
+   tek-tablo + PK çözülebilen sonuçta; tam-1-satır guard'ı; read_only profilde
+   editör kapalı; ctid fallback yok (plandaki gibi).
+3. Kod doğrulamaları: Radix dialog/dropdown-menu zaten bağımlılıkta (X1/X4 ek
+   bağımlılık istemez); Monaco `automaticLayout: true` → X3 layout riski pratikte
+   yok.

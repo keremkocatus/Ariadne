@@ -136,7 +136,17 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
   }, [snapshot, pins]);
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="flex h-full flex-col"
+      // Explorer'da webview'in kendi sağ-tık menüsü (Geri/Yenile/Yazdır/İncele)
+      // hiçbir düğümde istenmiyor (design 19 N3). Kategori/şema kendi menülerini
+      // openFilterMenu içinde açar; buradaki bastırma yaprak/boşluk/pinned için
+      // varsayılan menüyü keser. Arama kutusunda paste menüsü korunur (dar kapsam).
+      onContextMenu={(e) => {
+        if ((e.target as HTMLElement).closest("input, textarea")) return;
+        e.preventDefault();
+      }}
+    >
       {/* Server ▸ database bağlam çubuğu (design 18 §P1-W3) */}
       <ContextBar connectionId={connectionId} />
 

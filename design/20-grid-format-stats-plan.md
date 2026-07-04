@@ -154,21 +154,19 @@ o ana binding, Shift+Alt+F ikincil olarak da eklenebilir.)
    ```rust
    pub struct DbStats {
      active_connections: i64,
-     max_connections: i64,
+     max_connections: Option<i64>,   // SHOW yetkisi yoksa None
      cache_hit_ratio: Option<f64>,   // 0..1
-     db_size_bytes: i64,
-     cpu_percent: Option<f64>,       // yalnız uzantı varsa; yoksa None
-     mem_used_bytes: Option<i64>,    // yalnız uzantı varsa; yoksa None
+     db_size_bytes: Option<i64>,
    }
    ```
-   Tek round-trip (birkaç subquery tek SELECT'te). CPU/RAM: `to_regproc('...')`
-   ile pgnodemx fonksiyonları var mı kontrol; yoksa None. On-demand, cache dışı.
+   Tek round-trip (birkaç subquery tek SELECT'te). On-demand, cache dışı.
+   **CPU/RAM alanları YOK** — 2026-07-04 Q&A kararı: tamamen kapsam dışı
+   (uzantı tespiti kodu da yazılmaz; bkz. §6).
 2. **StatusBar (M5):** versiyon (`v0.0.1`) etiketinin **soluna** kompakt bir şerit:
-   `⚡12/100 · 98% cache · 2.3 GB` (+ uzantı varsa `· CPU 34% · RAM 1.2G`). Aktif
+   `⚡12/100 · 98% cache · 2.3 GB`. Aktif
    *tab'ın* bağlantısına bağlı; `useEffect` ile **30 sn** poll (`db_stats`),
    bağlantı/tab değişince sıfırlanır. Bağlantı yoksa/koptuysa şerit gizli. Tooltip'te
-   tam açıklamalar (max_connections, cache hit tanımı; CPU/RAM yoksa "requires
-   pgnodemx/system_stats").
+   tam açıklamalar (max_connections, cache hit tanımı).
 3. **Toolbar (M4):** Run grubunun yanında bir `Activity` ikon-butonu (lucide
    `Activity`) → `uiStore` sidebar'ı görünür yap + `setSidebarTab("activity")`.
    Tooltip "Server activity — who's running what".
@@ -179,15 +177,11 @@ o ana binding, Shift+Alt+F ikincil olarak da eklenebilir.)
   (gizliyse sidebar açılır).
 - StatusBar'da versiyonun solunda aktif bağlantı sayısı + cache hit + DB boyutu
   30 sn'de bir güncellenerek görünür; bağlantı yoksa şerit yok.
-- CPU/RAM yalnız sunucuda uygun uzantı varsa görünür; yoksa şerit kalan metriklerle
-  çalışır (hata değil), tooltip nedenini açıklar.
+- Şeritte CPU/RAM YOK (kapsam dışı); düşük yetkili kullanıcıda alınamayan alanlar
+  "—" ile atlanır, hata basılmaz.
 
 ### Risk
 
-- **CPU/RAM çoğu ortamda alınamaz** (yönetilen Postgres) — plan bunu baştan kabul
-  eder; gösterilemiyorsa sessizce atlanır (yanıltıcı sahte değer ÜRETİLMEZ).
-  Kullanıcı gerçekten host CPU/RAM istiyorsa bu, DB dışı bir kaynak (sağlayıcı
-  API'si / OS ajanı) gerektirir — kapsam dışı, ayrı iş.
 - 30 sn poll her tab/bağlantıda ayrı sorgu — ucuz (tek SELECT); yalnız aktif tab'ın
   bağlantısı için koşar, arka plan bağlantıları için değil.
 - `SHOW max_connections` + `pg_stat_database` düşük yetkili kullanıcıda kısıtlı
@@ -213,7 +207,16 @@ o ana binding, Shift+Alt+F ikincil olarak da eklenebilir.)
 
 | Ne | Neden | Ne zaman |
 |---|---|---|
-| Host CPU/RAM (uzantısız ortamda) | Düz SQL ile alınamaz; sağlayıcı API/OS ajanı gerekir | Ayrı iş, talep olursa |
+| **Host CPU/RAM (tamamen — uzantı tespiti dahil)** | Kullanıcı kararı (2026-07-04 Q&A): düz SQL ile alınamaz; pgnodemx/system_stats tespit kodu da yazılmayacak | Ayrı iş, talep olursa |
 | Grid sütun genişliklerinin kalıcılığı | v1 oturumluk yeter | Talep olursa (sorgu-imzası bazlı) |
 | TPS/commit-rate grafiği | İlk şerit statik metriklerle yeter | Genişletme turunda |
 | Formatter ayarları (keyword case, indent) UI'ı | Makul varsayılan yeter | Ayarlar büyürse |
+
+## 7. Finalize kararları (2026-07-04 Q&A, kullanıcı onayladı)
+
+1. **Sıra (19+20 birleşik):** X1 → X2 → X3 → Y1 → Y2 → Y3 → X4 → **v0.0.2**
+   (sürüm iki belgeyi birden kapsar). Detay: design/19 §7.
+2. **CPU/RAM tamamen kapsam dışı** — `DbStats`'te alan yok, uzantı tespiti yok;
+   şerit = aktif/max bağlantı + cache hit + DB boyutu.
+3. **Ctrl+K:** editör odaklıyken format, dışarıda palette (plandaki ana öneri);
+   palette'e "Format SQL" eylemi eklenir. Shift+Alt+F eklenmez.

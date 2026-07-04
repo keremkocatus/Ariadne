@@ -14,8 +14,8 @@ use sqlx::{Executor, PgPool, Postgres, Row};
 use tokio::sync::Mutex;
 
 use super::classify::{classify, stmt_returns_rows, StmtInfo};
-use super::rows::read_rows;
-use super::types::{Confirmation, Page, RunResult, StatementResult, TxStatus};
+use super::rows::{columns_from, read_rows};
+use super::types::{ColumnMeta, Confirmation, Page, RunResult, StatementResult, TxStatus};
 use crate::error::{AriadneError, ErrorKind};
 
 pub const PAGE_SIZE: i64 = 500;
@@ -337,8 +337,14 @@ async fn open_cursor_and_fetch(
             ae.position = None;
             ae
         })?;
-    let (columns, page_rows, truncated) = read_rows(&rows);
+    let (mut columns, page_rows, truncated) = read_rows(&rows);
     let has_more = page_rows.len() as i64 == page_size;
+    // 0 satır dönen SELECT'te sütun adları satırdan alınamaz (design 19 N1): describe
+    // ile gerçek başlıkları çek → grid boş gövdeyle ama başlıklarla çizilir, placeholder
+    // gösterilmez. Yalnız empty durumunda; başarısızsa columns boş kalır (grid yine açılır).
+    if columns.is_empty() && page_rows.is_empty() {
+        columns = describe_columns(conn, stmt).await;
+    }
 
     st.cursor = Some(Cursor {
         query_id: query_id.to_string(),
@@ -370,7 +376,11 @@ async fn run_inline_rows(
         .fetch_all(sqlx::raw_sql(stmt))
         .await
         .map_err(AriadneError::from)?;
-    let (columns, page_rows, truncated) = read_rows(&rows);
+    let (mut columns, page_rows, truncated) = read_rows(&rows);
+    // Bkz. open_cursor_and_fetch: 0 satırda başlıkları describe ile doldur (design 19 N1).
+    if columns.is_empty() && page_rows.is_empty() {
+        columns = describe_columns(conn, stmt).await;
+    }
     let fetched_total = page_rows.len();
     Ok(StatementResult::Rows {
         columns,
@@ -402,6 +412,16 @@ async fn run_non_query(
         })
     } else {
         Ok(StatementResult::Empty { command })
+    }
+}
+
+/// 0 satırlık rows-sonucunda sütun başlıklarını extended-protocol describe ile çeker
+/// (Parse+Describe; execute YOK → yan etkisiz, SELECT için güvenli). Round-trip yalnız
+/// empty durumunda; başarısızlık boş Vec döner (grid gövdesiz ama açık kalır) — design 19 N1.
+async fn describe_columns(conn: &mut sqlx::postgres::PgConnection, stmt: &str) -> Vec<ColumnMeta> {
+    match conn.describe(stmt).await {
+        Ok(d) => columns_from(d.columns()),
+        Err(_) => Vec::new(),
     }
 }
 
@@ -700,5 +720,36 @@ mod tests {
         // Zaten bitmiş bir query_id için false (map'te yok).
         let again = force_kill_query(&reg, &pool, "qk").await.unwrap();
         assert!(!again, "bitmiş sorgu için false");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
+    async fn zero_row_select_still_reports_columns() {
+        // design 19 N1: 0 satır dönen SELECT'te sütun adları satırdan alınamaz;
+        // describe fallback gerçek başlıkları doldurmalı → grid boş gövdeyle ama
+        // başlıklarla çizilir (placeholder DEĞİL).
+        let pool = pool().await;
+        let reg = ExecRegistry::default();
+        let r = run_query(
+            &reg,
+            &pool,
+            args("SELECT 1 AS id, 'x'::text AS label WHERE false", "tz", "qz"),
+        )
+        .await
+        .unwrap();
+        match &r.statements[0] {
+            StatementResult::Rows {
+                columns,
+                first_page,
+                ..
+            } => {
+                assert_eq!(first_page.fetched_total, 0, "0 satır beklenir");
+                assert!(!first_page.has_more);
+                assert_eq!(columns.len(), 2, "describe ile 2 sütun dolmalı");
+                assert_eq!(columns[0].name, "id");
+                assert_eq!(columns[1].name, "label");
+            }
+            other => panic!("Rows bekleniyordu, geldi: {other:?}"),
+        }
     }
 }

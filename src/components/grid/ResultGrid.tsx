@@ -42,7 +42,9 @@ export function ResultGrid({
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [sel, setSel] = useState<Sel | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  // `up`: footer "Copy ▾" menüsü butona tutturulup YUKARI açılır (design 19 N6);
+  // sağ-tık menüsü imleç konumunda aşağı açılır (up yok).
+  const [menu, setMenu] = useState<{ x: number; y: number; up?: boolean } | null>(null);
 
   // Yeni sorgu (kolon referansı değişti) → seçim + menü sıfırlanır. Sayfa ekleme
   // (fetchMore) kolonları değiştirmez, bu yüzden seçim sayfalar arası korunur.
@@ -198,7 +200,11 @@ export function ResultGrid({
         {fetchingMore && <span>loading…</span>}
         <button
           className="ml-auto hover:text-fg"
-          onClick={(e) => setMenu({ x: e.clientX, y: e.clientY })}
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            // Menüyü butonun ÜST kenarına tuttur, yukarı doğru büyüsün (N6).
+            setMenu({ x: r.right, y: r.top, up: true });
+          }}
           title="Copy…"
         >
           Copy ▾
@@ -209,6 +215,7 @@ export function ResultGrid({
         <CopyMenu
           x={menu.x}
           y={menu.y}
+          up={menu.up}
           columns={columns}
           rows={rows}
           sel={sel}
@@ -225,6 +232,7 @@ export function ResultGrid({
 function CopyMenu({
   x,
   y,
+  up,
   columns,
   rows,
   sel,
@@ -232,6 +240,7 @@ function CopyMenu({
 }: {
   x: number;
   y: number;
+  up?: boolean;
   columns: ColumnMeta[];
   rows: (string | null)[][];
   sel: Sel | null;
@@ -261,7 +270,13 @@ function CopyMenu({
     >
       <div
         className="absolute w-56 rounded-md border border-border bg-bg-elev p-1 text-xs shadow-2xl"
-        style={{ left: Math.min(x, window.innerWidth - 236), top: Math.min(y, window.innerHeight - 320) }}
+        // Footer (up): sağ-alt köşeyi butonun sağ-üstüne sabitle → menü yukarı/sola
+        // doğru büyür, yükseklik bilmeye gerek yok. Sağ-tık: imleç konumundan aşağı.
+        style={
+          up
+            ? { right: window.innerWidth - x, bottom: window.innerHeight - y + 4 }
+            : { left: Math.min(x, window.innerWidth - 236), top: Math.min(y, window.innerHeight - 320) }
+        }
         onClick={(e) => e.stopPropagation()}
       >
         {sel && focusCol != null && (
