@@ -33,4 +33,4 @@ src-tauri/gen/
 
 # Local secrets (DB URLs, etc.) — never commit
 .env
-.claude/
+.claude/_github_secrets_TEMP.txt

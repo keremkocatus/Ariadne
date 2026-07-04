@@ -49,6 +49,7 @@ cancellable.
 - [docs/frontend.md](docs/frontend.md) — the React frontend: stores, components,
   Monaco integration.
 - [docs/ipc-api.md](docs/ipc-api.md) — the IPC contract (commands, shapes, events).
+- [docs/release.md](docs/release.md) — cutting a release, signing, and the in-app updater.
 
 ## Building from source
 

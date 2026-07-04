@@ -16,6 +16,7 @@ import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { saveSqlFile } from "@/lib/fileActions";
 import { toast } from "sonner";
 import { offerReconnect } from "@/lib/sessionResume";
+import { checkForUpdateOnStartup } from "@/lib/updater";
 import { registerEventBridge } from "@/lib/events";
 import { getRunSelection } from "@/lib/editorRun";
 import { useGlobalShortcuts } from "@/lib/shortcuts";
@@ -73,6 +74,7 @@ export default function App() {
   // internally; silent if there are no matching restored tabs.
   useEffect(() => {
     void useConnectionStore.getState().loadProfiles().then(offerReconnect);
+    checkForUpdateOnStartup();
   }, []);
 
   useGlobalShortcuts();

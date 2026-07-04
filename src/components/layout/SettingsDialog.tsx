@@ -1,5 +1,8 @@
+import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useUiStore } from "@/stores/uiStore";
+import { checkForUpdateManually } from "@/lib/updater";
 
 // The settings modal. Deliberately minimal — the point is the settings infrastructure
 // (modal + store + palette "Open settings"); it can move to a local store if the list grows.
@@ -8,6 +11,11 @@ export function SettingsDialog() {
   const setOpen = useUiStore((s) => s.setSettingsOpen);
   const settings = useUiStore((s) => s.settings);
   const update = useUiStore((s) => s.updateSettings);
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) void getVersion().then(setVersion);
+  }, [open]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -80,6 +88,15 @@ export function SettingsDialog() {
               later version.)
             </div>
           </div>
+
+          <Field label="Version" hint={version ? `Ariadne ${version}` : undefined}>
+            <button
+              onClick={checkForUpdateManually}
+              className="rounded border border-border px-2.5 py-0.5 text-fg hover:bg-fg/10"
+            >
+              Check for updates
+            </button>
+          </Field>
         </div>
       </DialogContent>
     </Dialog>

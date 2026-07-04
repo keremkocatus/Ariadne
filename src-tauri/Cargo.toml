@@ -1,6 +1,6 @@
 [package]
 name = "ariadne"
-version = "0.0.2"
+version = "0.1.0"
 description = "Local-first PostgreSQL IDE"
 authors = ["Kerem"]
 edition = "2021"
@@ -63,6 +63,11 @@ tracing-appender = "0.2"
 # kendi komutlarımızda (read_text_file/write_text_file) — full-fs plugin izni verilmez;
 # komutlar yalnız kullanıcının diyalogda seçtiği yolla çağrılır.
 tauri-plugin-dialog = "2"
+# Auto-update: checks tauri.conf.json's plugins.updater.endpoints for a signed
+# manifest, downloads + verifies + installs. tauri-plugin-process lets the
+# frontend relaunch the app once the update is installed.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [profile.dev]
 # Geliştirmede daha hızlı link.
