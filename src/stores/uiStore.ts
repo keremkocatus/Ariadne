@@ -62,7 +62,8 @@ export const useUiStore = create<UiState>()(
       connectMenuOpen: false,
       settings: DEFAULT_SETTINGS,
       toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
-      setSidebarWidth: (w) => set({ sidebarWidth: Math.max(180, Math.min(560, w)) }),
+      // Aralık 160–680 (design 20 M2): dar/geniş şema adlarına yer.
+      setSidebarWidth: (w) => set({ sidebarWidth: Math.max(160, Math.min(680, w)) }),
       setSidebarTab: (tab) => set({ sidebarTab: tab }),
       toggleResults: () => set((s) => ({ resultsVisible: !s.resultsVisible })),
       setResultsVisible: (v) => set({ resultsVisible: v }),

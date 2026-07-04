@@ -28,11 +28,15 @@ export function ResizeHandle({
     startW.current = width;
     withDragGuard((ev) => onResize(startW.current + (ev.clientX - startX.current)));
   };
+  // Hit alanı geniş (8px, kolay yakalanır) ama görsel çizgi ince (2px); hover'da
+  // belirginleşir (design 20 M2 — keşfedilebilirlik + kavranabilirlik).
   return (
     <div
       onMouseDown={onDown}
-      className="w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-border"
-    />
+      className="group flex w-2 shrink-0 cursor-col-resize justify-center bg-transparent"
+    >
+      <div className="h-full w-0.5 bg-border/60 transition-colors group-hover:bg-fg-muted" />
+    </div>
   );
 }
 

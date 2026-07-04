@@ -45,12 +45,17 @@ export function ResultGrid({
   // `up`: footer "Copy ▾" menüsü butona tutturulup YUKARI açılır (design 19 N6);
   // sağ-tık menüsü imleç konumunda aşağı açılır (up yok).
   const [menu, setMenu] = useState<{ x: number; y: number; up?: boolean } | null>(null);
+  // Sütun genişlikleri (design 20 M1): oturumluk, kalıcılık YOK. Boş = varsayılan
+  // COL_W. Yeni sorguda sıfırlanır (aşağıdaki [columns] effect). estimateSize buradan
+  // okur; değişince colV.measure() ile offsetler yenilenir.
+  const [colWidths, setColWidths] = useState<number[]>([]);
 
-  // Yeni sorgu (kolon referansı değişti) → seçim + menü sıfırlanır. Sayfa ekleme
-  // (fetchMore) kolonları değiştirmez, bu yüzden seçim sayfalar arası korunur.
+  // Yeni sorgu (kolon referansı değişti) → seçim + menü + sütun genişlikleri sıfırlanır.
+  // Sayfa ekleme (fetchMore) kolonları değiştirmez, bu yüzden bunlar sayfalar arası korunur.
   useEffect(() => {
     setSel(null);
     setMenu(null);
+    setColWidths([]);
   }, [columns]);
 
   const rowV = useVirtualizer({
@@ -63,9 +68,40 @@ export function ResultGrid({
     horizontal: true,
     count: columns.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => COL_W,
+    estimateSize: (i) => colWidths[i] ?? COL_W,
     overscan: 3,
   });
+  // Sütun genişliği değişince sanallaştırıcı offset/size cache'ini yenile (aksi
+  // halde başlık genişler ama gövde hizası bayat kalır).
+  useEffect(() => {
+    colV.measure();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colWidths]);
+
+  const startColResize = (e: React.MouseEvent, index: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = colWidths[index] ?? COL_W;
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.max(48, startW + (ev.clientX - startX));
+      setColWidths((prev) => {
+        const out = prev.slice();
+        for (let k = out.length; k < index; k++) out[k] = COL_W;
+        out[index] = next;
+        return out;
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = prevSelect;
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
 
   // Sonsuz scroll: sona yaklaşınca sonraki sayfayı çek (design 05 §2).
   const virtualRows = rowV.getVirtualItems();
@@ -134,12 +170,18 @@ export function ResultGrid({
               return (
                 <div
                   key={c.index}
-                  className="absolute flex h-full items-center gap-1 truncate border-r border-border px-2 font-mono text-[11px] font-medium"
+                  className="absolute flex h-full items-center gap-1 border-r border-border px-2 font-mono text-[11px] font-medium"
                   style={{ left: c.start, width: c.size }}
                   title={`${col.name} · ${col.type_name}`}
                 >
                   <span className="truncate">{col.name}</span>
                   <span className="truncate text-fg-muted">{col.type_name}</span>
+                  {/* Sağ kenar sürükleme tutamağı (design 20 M1) */}
+                  <div
+                    onMouseDown={(e) => startColResize(e, c.index)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute right-0 top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-fg-muted/60"
+                  />
                 </div>
               );
             })}
