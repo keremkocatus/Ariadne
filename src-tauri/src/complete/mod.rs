@@ -3,6 +3,7 @@
 
 pub mod candidates;
 pub mod context;
+mod lexer;
 
 use serde::Serialize;
 
@@ -165,9 +166,17 @@ fn build_object_info(cache: &SchemaCache, t: &Table) -> ObjectInfo {
                 .filter_map(|e| {
                     let other = cache.tables.get(&e.to_table)?;
                     Some(ObjFk {
-                        columns: e.from_cols.iter().filter_map(|&i| t.columns.get(i).map(|c| c.name.clone())).collect(),
+                        columns: e
+                            .from_cols
+                            .iter()
+                            .filter_map(|&i| t.columns.get(i).map(|c| c.name.clone()))
+                            .collect(),
                         ref_table: format!("{}.{}", other.schema, other.name),
-                        ref_columns: e.to_cols.iter().filter_map(|&i| other.columns.get(i).map(|c| c.name.clone())).collect(),
+                        ref_columns: e
+                            .to_cols
+                            .iter()
+                            .filter_map(|&i| other.columns.get(i).map(|c| c.name.clone()))
+                            .collect(),
                         constraint_name: e.constraint_name.clone(),
                     })
                 })
@@ -206,7 +215,10 @@ pub(super) fn resolve_named<'a>(
 ) -> Option<&'a Table> {
     if let Some(schema) = schema {
         let key = format!("{}.{}", schema, name).to_lowercase();
-        return cache.table_by_qualified.get(&key).and_then(|id| cache.tables.get(id));
+        return cache
+            .table_by_qualified
+            .get(&key)
+            .and_then(|id| cache.tables.get(id));
     }
     let ids = cache.table_by_name.get(&name.to_lowercase())?;
     let mut best: Option<&Table> = None;
@@ -241,10 +253,7 @@ mod golden {
             schema: "public".into(),
             name: "users".into(),
             kind: RelKind::Table,
-            columns: vec![
-                col("id", "int4", true, 1),
-                col("email", "text", false, 2),
-            ],
+            columns: vec![col("id", "int4", true, 1), col("email", "text", false, 2)],
             primary_key: vec![0],
             comment: None,
             estimated_rows: 1000,
@@ -274,7 +283,12 @@ mod golden {
             id: 10,
             schema: "public".into(),
             name: "get_orders".into(),
-            args: vec![FnArg { name: Some("uid".into()), type_name: "int4".into(), mode: ArgMode::In, has_default: false }],
+            args: vec![FnArg {
+                name: Some("uid".into()),
+                type_name: "int4".into(),
+                mode: ArgMode::In,
+                has_default: false,
+            }],
             return_type: "setof orders".into(),
             kind: FnKind::Function,
             comment: None,
@@ -283,7 +297,11 @@ mod golden {
             Utc::now(),
             "17".into(),
             vec!["public".into()],
-            vec![SchemaInfo { name: "public".into(), owner: "me".into(), is_system: false }],
+            vec![SchemaInfo {
+                name: "public".into(),
+                owner: "me".into(),
+                is_system: false,
+            }],
             vec![users, orders],
             vec![func],
             vec![fk],
@@ -291,7 +309,14 @@ mod golden {
     }
 
     fn col(name: &str, ty: &str, not_null: bool, attnum: i16) -> Column {
-        Column { name: name.into(), type_name: ty.into(), not_null, has_default: false, comment: None, attnum }
+        Column {
+            name: name.into(),
+            type_name: ty.into(),
+            not_null,
+            has_default: false,
+            comment: None,
+            attnum,
+        }
     }
 
     fn run(sql_with_cursor: &str) -> Vec<String> {
@@ -330,7 +355,11 @@ mod golden {
     #[test]
     fn join_fk_first() {
         let l = run("SELECT * FROM users u JOIN |");
-        assert_eq!(l.first().map(String::as_str), Some("orders o ON o.user_id = u.id"), "labels: {l:?}");
+        assert_eq!(
+            l.first().map(String::as_str),
+            Some("orders o ON o.user_id = u.id"),
+            "labels: {l:?}"
+        );
     }
 
     #[test]

@@ -24,7 +24,12 @@ pub fn generate(cache: &SchemaCache, ctx: &CompletionContext) -> Vec<CompletionI
 
     let mut cands: Vec<Cand> = Vec::new();
     match ctx.clause {
-        Clause::SelectList | Clause::Where | Clause::Having | Clause::GroupBy | Clause::OrderBy | Clause::Returning => {
+        Clause::SelectList
+        | Clause::Where
+        | Clause::Having
+        | Clause::GroupBy
+        | Clause::OrderBy
+        | Clause::Returning => {
             columns_candidates(cache, ctx, &mut cands);
             if ctx.qualifier.is_none() {
                 function_candidates(cache, &mut cands, false);
@@ -49,7 +54,10 @@ pub fn generate(cache: &SchemaCache, ctx: &CompletionContext) -> Vec<CompletionI
             columns_candidates(cache, ctx, &mut cands);
         }
         Clause::Unknown => {
-            push_kw(&mut cands, &["SELECT", "INSERT INTO", "UPDATE", "DELETE FROM", "WITH"]);
+            push_kw(
+                &mut cands,
+                &["SELECT", "INSERT INTO", "UPDATE", "DELETE FROM", "WITH"],
+            );
             relation_candidates(cache, ctx, &mut cands);
         }
     }
@@ -80,7 +88,11 @@ fn columns_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut Ve
         if let Some(t) = resolve_rel(cache, rel) {
             let prefix_alias = multi && ctx.qualifier.is_none();
             for c in &t.columns {
-                let detail = format!("{}{}", c.type_name, if c.not_null { ", not null" } else { "" });
+                let detail = format!(
+                    "{}{}",
+                    c.type_name,
+                    if c.not_null { ", not null" } else { "" }
+                );
                 out.push(col_cand(&c.name, &alias, prefix_alias, Some(detail)));
             }
         }
@@ -126,8 +138,15 @@ fn relation_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut V
         if t.kind == RelKind::Sequence {
             continue;
         }
-        let in_path = cache.search_path.iter().any(|s| s == &t.schema || s == "$user");
-        let label = if in_path { t.name.clone() } else { format!("{}.{}", t.schema, t.name) };
+        let in_path = cache
+            .search_path
+            .iter()
+            .any(|s| s == &t.schema || s == "$user");
+        let label = if in_path {
+            t.name.clone()
+        } else {
+            format!("{}.{}", t.schema, t.name)
+        };
         let kind = match t.kind {
             RelKind::View | RelKind::MatView => CompletionKind::View,
             _ => CompletionKind::Table,
@@ -160,9 +179,13 @@ fn join_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut Vec<C
         .collect();
 
     for rel in &ctx.relations {
-        let Some(t) = resolve_rel(cache, rel) else { continue };
+        let Some(t) = resolve_rel(cache, rel) else {
+            continue;
+        };
         let a_r = rel.alias.clone().unwrap_or_else(|| t.name.clone());
-        let Some(edges) = cache.fk_adjacency.get(&t.id) else { continue };
+        let Some(edges) = cache.fk_adjacency.get(&t.id) else {
+            continue;
+        };
 
         for e in edges {
             // Karşı tabloyu ve ON kolon çiftlerini yönüne göre belirle.
@@ -171,7 +194,9 @@ fn join_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut Vec<C
             } else {
                 (e.from_table, &e.to_cols, &e.from_cols)
             };
-            let Some(other) = cache.tables.get(&other_id) else { continue };
+            let Some(other) = cache.tables.get(&other_id) else {
+                continue;
+            };
             let a_o = gen_alias(&other.name, &taken);
 
             // Yeni (join edilen) tablonun kolonu önce: "orders o ON o.user_id = u.id".
@@ -227,7 +252,11 @@ fn join_on_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut Ve
                         .iter()
                         .zip(o_cols.iter())
                         .filter_map(|(&ic, &oc)| {
-                            Some(format!("{ai}.{} = {aj}.{}", ti.columns.get(ic)?.name, tj.columns.get(oc)?.name))
+                            Some(format!(
+                                "{ai}.{} = {aj}.{}",
+                                ti.columns.get(ic)?.name,
+                                tj.columns.get(oc)?.name
+                            ))
                         })
                         .collect();
                     if !cond.is_empty() {
@@ -257,8 +286,15 @@ fn function_candidates(cache: &SchemaCache, out: &mut Vec<Cand>, set_returning_o
         if set_returning_only && !f.return_type.to_lowercase().starts_with("setof") {
             continue;
         }
-        let in_path = cache.search_path.iter().any(|s| s == &f.schema || s == "$user");
-        let name = if in_path { f.name.clone() } else { format!("{}.{}", f.schema, f.name) };
+        let in_path = cache
+            .search_path
+            .iter()
+            .any(|s| s == &f.schema || s == "$user");
+        let name = if in_path {
+            f.name.clone()
+        } else {
+            format!("{}.{}", f.schema, f.name)
+        };
         out.push(Cand {
             label: f.signature(),
             insert: format!("{name}(${{0}})"),

@@ -11,7 +11,7 @@ use chrono::Utc;
 use sqlx::{PgPool, Row};
 
 use super::{
-    ArgMode, Column, FkEdge, FnArg, Function, FnKind, RelKind, SchemaCache, SchemaInfo, Table,
+    ArgMode, Column, FkEdge, FnArg, FnKind, Function, RelKind, SchemaCache, SchemaInfo, Table,
     TableId,
 };
 use crate::error::AriadneError;
@@ -40,10 +40,8 @@ pub async fn fetch_schema_cache(pool: &PgPool) -> Result<SchemaCache, AriadneErr
     let server_version = server_version?;
 
     // attnum → columns indeksi (her tablo için) — PK/FK çözümünde kullanılır.
-    let attnum_maps: HashMap<TableId, HashMap<i16, usize>> = tables
-        .iter()
-        .map(|t| (t.id, t.attnum_index()))
-        .collect();
+    let attnum_maps: HashMap<TableId, HashMap<i16, usize>> =
+        tables.iter().map(|t| (t.id, t.attnum_index())).collect();
 
     // PK'ları tablolara işle, FK'ları grafiğe çevir.
     let mut fks: Vec<FkEdge> = Vec::new();
@@ -56,8 +54,11 @@ pub async fn fetch_schema_cache(pool: &PgPool) -> Result<SchemaCache, AriadneErr
                 if let (Some(&ti), Some(amap)) =
                     (table_index.get(&c.table_oid), attnum_maps.get(&c.table_oid))
                 {
-                    tables[ti].primary_key =
-                        c.conkey.iter().filter_map(|a| amap.get(a).copied()).collect();
+                    tables[ti].primary_key = c
+                        .conkey
+                        .iter()
+                        .filter_map(|a| amap.get(a).copied())
+                        .collect();
                 }
             }
             b'f' => {
@@ -68,9 +69,17 @@ pub async fn fetch_schema_cache(pool: &PgPool) -> Result<SchemaCache, AriadneErr
                 if let (Some(from_map), Some(to_map)) = (from_map, to_map) {
                     fks.push(FkEdge {
                         from_table: c.table_oid,
-                        from_cols: c.conkey.iter().filter_map(|a| from_map.get(a).copied()).collect(),
+                        from_cols: c
+                            .conkey
+                            .iter()
+                            .filter_map(|a| from_map.get(a).copied())
+                            .collect(),
                         to_table: c.ref_table_oid,
-                        to_cols: c.confkey.iter().filter_map(|a| to_map.get(a).copied()).collect(),
+                        to_cols: c
+                            .confkey
+                            .iter()
+                            .filter_map(|a| to_map.get(a).copied())
+                            .collect(),
                         constraint_name: c.name,
                     });
                 }
@@ -169,9 +178,13 @@ async fn fetch_tables(pool: &PgPool) -> Result<Vec<Table>, AriadneError> {
         if let Some(attnum) = r.try_get::<Option<i16>, _>("attnum")? {
             tables[ti].columns.push(Column {
                 name: r.try_get("col_name")?,
-                type_name: r.try_get::<Option<String>, _>("type_name")?.unwrap_or_default(),
+                type_name: r
+                    .try_get::<Option<String>, _>("type_name")?
+                    .unwrap_or_default(),
                 not_null: r.try_get::<Option<bool>, _>("not_null")?.unwrap_or(false),
-                has_default: r.try_get::<Option<bool>, _>("has_default")?.unwrap_or(false),
+                has_default: r
+                    .try_get::<Option<bool>, _>("has_default")?
+                    .unwrap_or(false),
                 comment: r.try_get("col_comment")?,
                 attnum,
             });
@@ -390,14 +403,61 @@ fn is_ident(s: &str) -> bool {
 fn is_type_leadword(w: &str) -> bool {
     matches!(
         w.to_ascii_lowercase().as_str(),
-        "bigint" | "int8" | "integer" | "int" | "int4" | "smallint" | "int2" | "bigserial"
-            | "serial" | "smallserial" | "boolean" | "bool" | "real" | "float4" | "float8"
-            | "double" | "numeric" | "decimal" | "money" | "text" | "varchar" | "char"
-            | "character" | "bpchar" | "name" | "bytea" | "date" | "time" | "timestamp"
-            | "timestamptz" | "timetz" | "interval" | "uuid" | "json" | "jsonb" | "xml"
-            | "cidr" | "inet" | "macaddr" | "bit" | "point" | "line" | "box" | "path"
-            | "polygon" | "circle" | "tsvector" | "tsquery" | "oid" | "void" | "record"
-            | "anyelement" | "anyarray" | "trigger" | "setof"
+        "bigint"
+            | "int8"
+            | "integer"
+            | "int"
+            | "int4"
+            | "smallint"
+            | "int2"
+            | "bigserial"
+            | "serial"
+            | "smallserial"
+            | "boolean"
+            | "bool"
+            | "real"
+            | "float4"
+            | "float8"
+            | "double"
+            | "numeric"
+            | "decimal"
+            | "money"
+            | "text"
+            | "varchar"
+            | "char"
+            | "character"
+            | "bpchar"
+            | "name"
+            | "bytea"
+            | "date"
+            | "time"
+            | "timestamp"
+            | "timestamptz"
+            | "timetz"
+            | "interval"
+            | "uuid"
+            | "json"
+            | "jsonb"
+            | "xml"
+            | "cidr"
+            | "inet"
+            | "macaddr"
+            | "bit"
+            | "point"
+            | "line"
+            | "box"
+            | "path"
+            | "polygon"
+            | "circle"
+            | "tsvector"
+            | "tsquery"
+            | "oid"
+            | "void"
+            | "record"
+            | "anyelement"
+            | "anyarray"
+            | "trigger"
+            | "setof"
     )
 }
 
@@ -438,7 +498,10 @@ mod tests {
     fn unnamed_multiword_type() {
         let a = parse_function_args("double precision, timestamp with time zone");
         assert_eq!(names(&a), vec![None, None]);
-        assert_eq!(types(&a), vec!["double precision", "timestamp with time zone"]);
+        assert_eq!(
+            types(&a),
+            vec!["double precision", "timestamp with time zone"]
+        );
     }
 
     #[test]

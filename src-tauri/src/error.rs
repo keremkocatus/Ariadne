@@ -61,8 +61,12 @@ impl AriadneError {
     }
 }
 
-/// sqlx hatalarını IPC şekline çevir. M0'da sqlstate + mesaj çıkarılır;
-/// position/hint (Monaco marker'ı için) M2'de zenginleştirilecek.
+/// sqlx hatalarını IPC şekline çevir. Postgres hataları için sqlstate + mesaj +
+/// position/hint/detail çıkarılır (design 11 §H1 — Monaco marker'ı bunlarla çalışır).
+///
+/// Not: `position` burada **statement-içi** 1-based karakter konumudur (Postgres
+/// böyle verir). Çoklu-statement script'lerde `exec::run_query` bunu statement'ın
+/// editördeki başlangıç offset'iyle toplayıp mutlak konuma çevirir.
 impl From<sqlx::Error> for AriadneError {
     fn from(err: sqlx::Error) -> Self {
         use sqlx::Error as E;
@@ -75,25 +79,33 @@ impl From<sqlx::Error> for AriadneError {
                 } else {
                     ErrorKind::QueryError
                 };
+                // Postgres'e özgü alanlar (position/hint/detail) downcast ile alınır.
+                // Ariadne yalnız Postgres kullanır; yine de güvenli tarafta kalınır.
+                let pg = db.try_downcast_ref::<sqlx::postgres::PgDatabaseError>();
+                let position = pg.and_then(|p| match p.position() {
+                    // Original = kullanıcı SQL'indeki konum; Internal = sunucunun ürettiği
+                    // iç sorguya işaret eder, editörde gösterilemez → atlanır.
+                    Some(sqlx::postgres::PgErrorPosition::Original(n)) => Some(n as u32),
+                    _ => None,
+                });
+                let hint = pg.and_then(|p| p.hint().map(str::to_string));
+                let detail = pg.and_then(|p| p.detail().map(str::to_string));
                 AriadneError {
                     kind,
                     message: db.message().to_string(),
-                    detail: None,
+                    detail,
                     sqlstate,
-                    position: None,
-                    hint: None,
+                    position,
+                    hint,
                 }
             }
-            E::PoolTimedOut => AriadneError::new(
-                ErrorKind::ConnectionFailed,
-                "Connection pool timed out",
-            ),
+            E::PoolTimedOut => {
+                AriadneError::new(ErrorKind::ConnectionFailed, "Connection pool timed out")
+            }
             E::Io(_) | E::Tls(_) | E::Configuration(_) => {
                 AriadneError::new(ErrorKind::ConnectionFailed, err.to_string())
             }
-            E::PoolClosed => {
-                AriadneError::new(ErrorKind::ConnectionLost, err.to_string())
-            }
+            E::PoolClosed => AriadneError::new(ErrorKind::ConnectionLost, err.to_string()),
             _ => AriadneError::internal(err.to_string()),
         }
     }

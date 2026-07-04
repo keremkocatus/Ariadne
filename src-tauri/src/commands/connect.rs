@@ -6,9 +6,10 @@ use arc_swap::ArcSwap;
 use sqlx::Row;
 use tauri::{AppHandle, State};
 
+use crate::db::build_pool;
 use crate::error::{AriadneError, ErrorKind};
 use crate::profiles::{self};
-use crate::state::{build_pool, ActiveConnection, AppState, ConnectionInfo};
+use crate::state::{ActiveConnection, AppState, ConnectionInfo};
 
 use super::schema::{empty_cache, spawn_cache_refresh};
 
@@ -49,6 +50,7 @@ pub async fn connect(
         schema_cache: ArcSwap::from_pointee(empty_cache(server_version)),
         info: info.clone(),
         exec: Default::default(),
+        refreshing: std::sync::atomic::AtomicBool::new(false),
     });
 
     state
@@ -57,13 +59,22 @@ pub async fn connect(
         .unwrap()
         .insert(connection_id, conn.clone());
 
+    // Şifre/host loglanmaz (design 06 §2); yalnız kimliklendirici alanlar.
+    tracing::info!(
+        connection_id = %info.connection_id,
+        database = %info.database,
+        server = %info.server_version,
+        "connected"
+    );
+
     // Cache'i arka planda doldur.
     spawn_cache_refresh(app, conn);
 
     Ok(info)
 }
 
-/// Bağlantıyı kapat: pool kapatılır, map'ten silinir. (Çalışan sorgu iptali M3.)
+/// Bağlantıyı kapat: çalışan sorgular iptal edilir, açık cursor/tx'ler kapatılır,
+/// sonra pool kapatılır ve map'ten silinir (design 11 §H3).
 #[tauri::command]
 pub async fn disconnect(
     connection_id: String,
@@ -71,6 +82,8 @@ pub async fn disconnect(
 ) -> Result<(), AriadneError> {
     let conn = state.connections.write().unwrap().remove(&connection_id);
     if let Some(conn) = conn {
+        // Pool'u kapatmadan önce cursor/tx/çalışan sorguları temizle.
+        conn.exec.shutdown(&conn.pool).await;
         conn.pool.close().await;
     }
     Ok(())

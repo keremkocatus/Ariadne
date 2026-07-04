@@ -157,6 +157,10 @@ export interface RunResult {
   statements: StatementResult[];
   tx_status: TxStatus;
   needs_confirmation?: Confirmation | null;
+  // Kısmi sonuç: bir statement patladıysa önceki statements + hata birlikte döner
+  // (design 05 §1 / 11 §H2).
+  error?: AriadneError | null;
+  error_statement_index?: number | null;
 }
 
 export function runQuery(

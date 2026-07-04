@@ -1,0 +1,51 @@
+import { useEffect } from "react";
+import { useUiStore } from "@/stores/uiStore";
+import { useTabsStore } from "@/stores/tabsStore";
+
+/// İmleç Monaco editörünün içinde mi? Ctrl+K gibi tuşlarda editör chord'una
+/// öncelik vermek için (design 07 §3). activeElement editör DOM'unun içindeyse true.
+function inEditor(): boolean {
+  const el = document.activeElement;
+  return !!el && !!el.closest?.(".monaco-editor");
+}
+
+/// Global (editör dışı) kısayollar (design 07 §3). Editör-içi kısayollar
+/// (Ctrl+Enter/E, Alt+F1, Ctrl+D) SqlEditor'da Monaco komutu olarak kayıtlı.
+/// Store'lara `getState()` ile erişildiği için effect'in bağımlılığı yoktur.
+export function useGlobalShortcuts() {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      const tabs = useTabsStore.getState();
+
+      if (e.ctrlKey && k === "b") {
+        e.preventDefault();
+        useUiStore.getState().toggleSidebar();
+      } else if (e.ctrlKey && k === "r") {
+        // Sonuç panelini gizle/göster (SSMS).
+        e.preventDefault();
+        useUiStore.getState().toggleResults();
+      } else if (e.ctrlKey && k === "t") {
+        e.preventDefault();
+        tabs.addTab("");
+      } else if (e.ctrlKey && k === "w") {
+        e.preventDefault();
+        if (tabs.activeTabId) tabs.closeTab(tabs.activeTabId);
+      } else if (e.ctrlKey && k === "k") {
+        // Command palette — ama editör odaklıyken Monaco chord'u (Ctrl+K Ctrl+C) öncelikli.
+        if (inEditor()) return;
+        e.preventDefault();
+        useUiStore.getState().setPaletteOpen(true);
+      } else if (k === "escape") {
+        // Sorgu koşarken iptal; aksi halde Monaco/diğerlerine bırak.
+        const active = tabs.tabs.find((t) => t.id === tabs.activeTabId);
+        if (active?.query.running) {
+          e.preventDefault();
+          void tabs.cancel(active.id);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+}

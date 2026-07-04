@@ -5,6 +5,9 @@
 //! ile atomik değiştirir; okuyanlar (completion) lock beklemez (design 01 §3, 03 §5).
 
 pub mod catalog;
+pub mod snapshot;
+
+pub use snapshot::SchemaSnapshot;
 
 use std::collections::HashMap;
 
@@ -255,112 +258,84 @@ impl SchemaCache {
         )
     }
 
-    /// Frontend'e giden hafif görünüm (design 03 §3). FK grafiği ve fonksiyon arg
-    /// detayı GİTMEZ; completion zaten Rust'ta hesaplanır.
-    pub fn to_snapshot(&self) -> SchemaSnapshot {
-        let mut by_schema: HashMap<&str, SnapSchema> = HashMap::new();
-        for s in &self.schemas {
-            by_schema.insert(
-                s.name.as_str(),
-                SnapSchema {
-                    name: s.name.clone(),
-                    is_system: s.is_system,
-                    relations: Vec::new(),
-                    functions: Vec::new(),
-                },
-            );
-        }
-
-        for t in self.tables.values() {
-            if let Some(sch) = by_schema.get_mut(t.schema.as_str()) {
-                sch.relations.push(SnapRel {
-                    oid: t.id,
-                    name: t.name.clone(),
-                    kind: t.kind,
-                    estimated_rows: t.estimated_rows,
-                    comment: t.comment.clone(),
-                    columns: t
-                        .columns
-                        .iter()
-                        .map(|c| SnapCol {
-                            name: c.name.clone(),
-                            type_name: c.type_name.clone(),
-                            not_null: c.not_null,
+    /// Bir tablonun tahmini satır sayısı (pg_class.reltuples). Destructive guard'ın
+    /// "~2.1M satır etkilenecek" mesajı için (design 11 §H6). `name` yalın ("orders")
+    /// ya da şema-nitelikli ("public.orders") olabilir; yalın adlar search_path
+    /// önceliğiyle çözülür.
+    pub fn table_estimated_rows(&self, name: &str) -> Option<i64> {
+        let id = if let Some((schema, tbl)) = name.split_once('.') {
+            self.table_by_qualified
+                .get(&format!("{schema}.{tbl}").to_lowercase())
+                .copied()
+        } else {
+            self.table_by_name
+                .get(&name.to_lowercase())
+                .and_then(|ids| {
+                    ids.iter()
+                        .min_by_key(|id| {
+                            self.tables
+                                .get(id)
+                                .and_then(|t| self.search_path.iter().position(|s| s == &t.schema))
+                                .unwrap_or(usize::MAX)
                         })
-                        .collect(),
-                });
-            }
-        }
-
-        for f in self.functions.values() {
-            if let Some(sch) = by_schema.get_mut(f.schema.as_str()) {
-                sch.functions.push(SnapFn {
-                    oid: f.id,
-                    name: f.name.clone(),
-                    signature: f.signature(),
-                    kind: f.kind,
-                    comment: f.comment.clone(),
-                });
-            }
-        }
-
-        // Deterministik sıra: şema adına, sonra nesne adına göre.
-        let mut schemas: Vec<SnapSchema> = by_schema.into_values().collect();
-        schemas.sort_by(|a, b| a.name.cmp(&b.name));
-        for sch in &mut schemas {
-            sch.relations.sort_by(|a, b| a.name.cmp(&b.name));
-            sch.functions.sort_by(|a, b| a.name.cmp(&b.name));
-        }
-
-        SchemaSnapshot {
-            fetched_at: self.fetched_at.to_rfc3339(),
-            server_version: self.server_version.clone(),
-            search_path: self.search_path.clone(),
-            schemas,
-        }
+                        .copied()
+                })
+        };
+        // reltuples = -1 → hiç analiz edilmemiş (bilinmiyor); tahmin gösterme.
+        id.and_then(|id| self.tables.get(&id))
+            .map(|t| t.estimated_rows)
+            .filter(|&n| n >= 0)
     }
 }
 
-// ---- SchemaSnapshot: frontend sözleşmesi (design 02 §3 / 03 §3) ----
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[derive(Debug, Serialize)]
-pub struct SchemaSnapshot {
-    pub fetched_at: String, // RFC3339
-    pub server_version: String,
-    pub search_path: Vec<String>,
-    pub schemas: Vec<SnapSchema>,
-}
+    fn tbl(id: TableId, schema: &str, name: &str, rows: i64) -> Table {
+        Table {
+            id,
+            schema: schema.into(),
+            name: name.into(),
+            kind: RelKind::Table,
+            columns: Vec::new(),
+            primary_key: Vec::new(),
+            comment: None,
+            estimated_rows: rows,
+        }
+    }
 
-#[derive(Debug, Serialize)]
-pub struct SnapSchema {
-    pub name: String,
-    pub is_system: bool,
-    pub relations: Vec<SnapRel>,
-    pub functions: Vec<SnapFn>,
-}
+    fn cache(tables: Vec<Table>) -> SchemaCache {
+        SchemaCache::build(
+            Utc::now(),
+            "17".into(),
+            vec!["public".into()],
+            Vec::new(),
+            tables,
+            Vec::new(),
+            Vec::new(),
+        )
+    }
 
-#[derive(Debug, Serialize)]
-pub struct SnapRel {
-    pub oid: u32,
-    pub name: String,
-    pub kind: RelKind,
-    pub estimated_rows: i64,
-    pub comment: Option<String>,
-    pub columns: Vec<SnapCol>,
-}
+    #[test]
+    fn estimated_rows_by_bare_name_uses_search_path() {
+        // Aynı ad iki şemada; search_path'te public var → public'inki seçilir.
+        let c = cache(vec![
+            tbl(1, "public", "orders", 5000),
+            tbl(2, "archive", "orders", 9),
+        ]);
+        assert_eq!(c.table_estimated_rows("orders"), Some(5000));
+    }
 
-#[derive(Debug, Serialize)]
-pub struct SnapCol {
-    pub name: String,
-    pub type_name: String,
-    pub not_null: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SnapFn {
-    pub oid: u32,
-    pub name: String,
-    pub signature: String,
-    pub kind: FnKind,
-    pub comment: Option<String>,
+    #[test]
+    fn estimated_rows_qualified_and_unknown() {
+        let c = cache(vec![
+            tbl(1, "archive", "orders", 42),
+            tbl(2, "public", "t", -1),
+        ]);
+        assert_eq!(c.table_estimated_rows("archive.orders"), Some(42));
+        // -1 (analiz edilmemiş) → None; olmayan tablo → None.
+        assert_eq!(c.table_estimated_rows("t"), None);
+        assert_eq!(c.table_estimated_rows("nope"), None);
+    }
 }

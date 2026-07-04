@@ -38,7 +38,15 @@ pub async fn refresh_schema(
 
 /// Arka planda cache fetch + atomik swap + event. connect ve refresh_schema ortak
 /// kullanır. Hata olursa eski snapshot korunur (design 06 §4) — sessiz log.
+///
+/// Debounce (design 03 §5 / 11 §H7): zaten çalışan bir refresh varsa yenisi
+/// başlatılmaz (üst üste DDL'ler tek fetch'e birleşir).
 pub fn spawn_cache_refresh(app: AppHandle, conn: Arc<ActiveConnection>) {
+    use std::sync::atomic::Ordering;
+    // swap(true): önceki değer true ise başka refresh çalışıyor → atla.
+    if conn.refreshing.swap(true, Ordering::AcqRel) {
+        return;
+    }
     let connection_id = conn.id.clone();
     let _ = app.emit(
         "schema:refresh_started",
@@ -47,18 +55,39 @@ pub fn spawn_cache_refresh(app: AppHandle, conn: Arc<ActiveConnection>) {
         },
     );
     tauri::async_runtime::spawn(async move {
+        // RAII: task panik'le unwind etse bile bayrak sıfırlanır (aksi halde bu
+        // bağlantı için tüm gelecekteki refresh'ler kalıcı bloklanırdı).
+        let _guard = RefreshGuard(conn.clone());
+        let started = std::time::Instant::now();
         match catalog::fetch_schema_cache(&conn.pool).await {
             Ok(new_cache) => {
+                let (tables, functions) = (new_cache.tables.len(), new_cache.functions.len());
                 conn.schema_cache.store(Arc::new(new_cache));
-                let _ = app.emit("schema:refreshed", ConnPayload { connection_id });
+                tracing::info!(
+                    connection_id = %connection_id,
+                    tables,
+                    functions,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "schema cache refreshed"
+                );
             }
             Err(e) => {
                 // Eski snapshot immutable olarak kalır; kullanıcı yine çalışabilir.
-                eprintln!("[schema refresh] {connection_id}: {}", e.message);
-                let _ = app.emit("schema:refreshed", ConnPayload { connection_id });
+                tracing::warn!(connection_id = %connection_id, error = %e.message, "schema refresh failed");
             }
         }
+        let _ = app.emit("schema:refreshed", ConnPayload { connection_id });
     });
+}
+
+/// `refreshing` bayrağını drop anında (normal bitiş VEYA panik unwind) sıfırlar.
+struct RefreshGuard(Arc<ActiveConnection>);
+impl Drop for RefreshGuard {
+    fn drop(&mut self) {
+        self.0
+            .refreshing
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
 }
 
 /// Boş cache ile ActiveConnection kur (connect anında; fetch arka planda dolar).

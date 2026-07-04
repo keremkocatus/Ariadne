@@ -1,4 +1,5 @@
-import { create } from "zustand";
+import { create, type StoreApi } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import * as api from "@/lib/api";
 import type {
   AriadneError,
@@ -27,6 +28,8 @@ export interface QueryState {
   txStatus: TxStatus;
   needsConfirmation?: Confirmation | null;
   capped: boolean;
+  /// Idle cursor sunucu tarafında kapatıldı (design 11 §H7) → sonuç donduruldu.
+  frozen: boolean;
 }
 
 export interface Tab {
@@ -48,6 +51,7 @@ function emptyQuery(): QueryState {
     fetchingMore: false,
     txStatus: "idle",
     capped: false,
+    frozen: false,
   };
 }
 
@@ -58,9 +62,12 @@ function newTab(sql = "SELECT version();"): Tab {
 interface TabsState {
   tabs: Tab[];
   activeTabId: string | null;
+  /// Açık tx'li olduğu için kapatılması onay bekleyen tab (design 05 §7 / 11 §H4).
+  closeRequest: string | null;
 
   addTab: (sql?: string) => string;
   closeTab: (id: string) => void;
+  resolveClose: (action: "commit" | "rollback" | "cancel") => Promise<void>;
   setActive: (id: string) => void;
   setSql: (id: string, sql: string) => void;
 
@@ -69,21 +76,44 @@ interface TabsState {
   cancel: (id: string) => Promise<void>;
   txControl: (id: string, sql: "COMMIT" | "ROLLBACK") => Promise<void>;
   dismissConfirmation: (id: string) => void;
+  markFrozen: (tabId: string) => void;
 
   active: () => Tab | null;
 }
 
-function patchQuery(set: any, id: string, patch: Partial<QueryState>) {
-  set((s: TabsState) => ({
-    tabs: s.tabs.map((t) =>
-      t.id === id ? { ...t, query: { ...t.query, ...patch } } : t,
-    ),
+/// Tab'ı gerçekten kapatır: backend cursor/tx kaynağını bırakır, tab'ı listeden siler.
+function rawCloseTab(
+  set: StoreApi<TabsState>["setState"],
+  get: () => TabsState,
+  id: string,
+) {
+  const tab = get().tabs.find((t) => t.id === id);
+  const connId = tab?.query.connectionId;
+  if (connId) void api.closeResult(connId, id).catch(() => {});
+  set((s) => {
+    const tabs = s.tabs.filter((t) => t.id !== id);
+    const activeTabId =
+      s.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : s.activeTabId;
+    return { tabs, activeTabId };
+  });
+}
+
+function patchQuery(
+  set: StoreApi<TabsState>["setState"],
+  id: string,
+  patch: Partial<QueryState>,
+) {
+  set((s) => ({
+    tabs: s.tabs.map((t) => (t.id === id ? { ...t, query: { ...t.query, ...patch } } : t)),
   }));
 }
 
-export const useTabsStore = create<TabsState>((set, get) => ({
+export const useTabsStore = create<TabsState>()(
+  persist(
+    (set, get) => ({
   tabs: [],
   activeTabId: null,
+  closeRequest: null,
 
   addTab(sql) {
     const t = newTab(sql);
@@ -92,15 +122,31 @@ export const useTabsStore = create<TabsState>((set, get) => ({
   },
 
   closeTab(id) {
+    // Açık tx varsa doğrudan kapatma — Commit/Rollback/Cancel onayı iste (design 05 §7).
     const tab = get().tabs.find((t) => t.id === id);
-    const connId = tab?.query.connectionId;
-    if (connId) void api.closeResult(connId, id).catch(() => {});
-    set((s) => {
-      const tabs = s.tabs.filter((t) => t.id !== id);
-      const activeTabId =
-        s.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : s.activeTabId;
-      return { tabs, activeTabId };
-    });
+    if (tab && tab.query.txStatus !== "idle") {
+      set({ closeRequest: id });
+      return;
+    }
+    rawCloseTab(set, get, id);
+  },
+
+  async resolveClose(action) {
+    const id = get().closeRequest;
+    if (!id) return;
+    if (action === "cancel") {
+      set({ closeRequest: null });
+      return;
+    }
+    await get().txControl(id, action === "commit" ? "COMMIT" : "ROLLBACK");
+    set({ closeRequest: null });
+    // Yalnız tx GERÇEKTEN kapandıysa tab'ı kapat. COMMIT/ROLLBACK başarısızsa
+    // (ör. bağlantı koptu) tx hâlâ açık; tab'ı kapatmak "kaydedildi" yanılgısı
+    // yaratır → tab açık kalır, hatası bandda görünür (design 11 §H4).
+    const tab = get().tabs.find((t) => t.id === id);
+    if (tab && tab.query.txStatus === "idle") {
+      rawCloseTab(set, get, id);
+    }
   },
 
   setActive(id) {
@@ -124,6 +170,7 @@ export const useTabsStore = create<TabsState>((set, get) => ({
       running: true,
       error: null,
       needsConfirmation: null,
+      frozen: false,
       connectionId: connId,
       queryId,
     });
@@ -143,11 +190,22 @@ export const useTabsStore = create<TabsState>((set, get) => ({
         fetchedTotal: rowsStmt?.kind === "rows" ? rowsStmt.first_page.fetched_total : 0,
         elapsedMs: rowsStmt?.kind === "rows" ? rowsStmt.first_page.elapsed_ms : 0,
         extra: res.statements.filter((s) => s.kind !== "rows"),
+        // Kısmi sonuç: statements + (varsa) hata birlikte gösterilir (design 11 §H2).
+        error: res.error ?? null,
         capped: false,
       });
     } catch (e) {
+      // Transport-seviyesi hata (invoke reddi, ör. connection_lost): geçerli sonuç
+      // yok → eski grid'i temizle ki hata bandı bayat satırların üstünde durmasın.
+      // (SQL hataları buraya DÜŞMEZ; onlar Ok(RunResult{error}) ile success dalından
+      //  geçer ve kısmi sonuçları korur — design 11 §H2.)
       patchQuery(set, id, {
         running: false,
+        columns: [],
+        rows: [],
+        extra: [],
+        hasMore: false,
+        fetchedTotal: 0,
         error: api.isAriadneError(e) ? e : { kind: "internal", message: String(e) },
       });
     }
@@ -200,8 +258,37 @@ export const useTabsStore = create<TabsState>((set, get) => ({
     patchQuery(set, id, { needsConfirmation: null });
   },
 
+  markFrozen(tabId) {
+    // Cursor sunucuda kapandı: yeni sayfa çekilemez, "yeniden çalıştır" bandı gösterilir.
+    patchQuery(set, tabId, { frozen: true, hasMore: false });
+  },
+
   active() {
     const { tabs, activeTabId } = get();
     return tabs.find((t) => t.id === activeTabId) ?? null;
   },
-}));
+    }),
+    {
+      // Son açık tab'ların SQL'i persist edilir; sonuçlar ASLA (design 07 §1 / 11 §H8).
+      name: "ariadne-tabs",
+      storage: createJSONStorage(() => localStorage),
+      partialize: (s) => ({
+        tabs: s.tabs.map((t) => ({ id: t.id, title: t.title, sql: t.sql })),
+        activeTabId: s.activeTabId,
+      }),
+      // Diskten dönen tab'lara taze boş query iliştir (çalıştırma durumu kalıcı değil).
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as {
+          tabs?: { id: string; title: string; sql: string }[];
+          activeTabId?: string | null;
+        };
+        const tabs: Tab[] = (p.tabs ?? []).map((t) => ({ ...t, query: emptyQuery() }));
+        return {
+          ...current,
+          tabs,
+          activeTabId: tabs.some((t) => t.id === p.activeTabId) ? p.activeTabId! : (tabs[0]?.id ?? null),
+        };
+      },
+    },
+  ),
+);

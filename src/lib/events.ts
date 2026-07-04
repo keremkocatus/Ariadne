@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useSchemaStore } from "@/stores/schemaStore";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useTabsStore } from "@/stores/tabsStore";
 import type { AriadneError } from "@/lib/api";
 
 interface ConnPayload {
@@ -12,6 +13,10 @@ interface ConnPayload {
 interface LostPayload {
   connection_id: string;
   error: AriadneError;
+}
+interface FrozenPayload {
+  connection_id: string;
+  tab_id: string;
 }
 
 /** Uygulama açılışında bir kez çağrılır; unlisten fonksiyonlarını döndürür. */
@@ -26,6 +31,9 @@ export async function registerEventBridge(): Promise<() => void> {
     listen<LostPayload>("connection:lost", (e) => {
       toast.error("Connection lost", { description: e.payload.error?.message });
       void useConnectionStore.getState().disconnect(e.payload.connection_id);
+    }),
+    listen<FrozenPayload>("result:frozen", (e) => {
+      useTabsStore.getState().markFrozen(e.payload.tab_id);
     }),
   ]);
 

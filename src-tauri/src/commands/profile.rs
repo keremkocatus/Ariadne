@@ -6,12 +6,15 @@ use serde::Serialize;
 use sqlx::Row;
 use tauri::State;
 
+use crate::db::build_pool;
 use crate::error::AriadneError;
 use crate::profiles::{ConnectionProfile, ProfileInput};
-use crate::state::{build_pool, AppState};
+use crate::state::AppState;
 
 #[tauri::command]
-pub async fn list_profiles(state: State<'_, AppState>) -> Result<Vec<ConnectionProfile>, AriadneError> {
+pub async fn list_profiles(
+    state: State<'_, AppState>,
+) -> Result<Vec<ConnectionProfile>, AriadneError> {
     Ok(state.profiles.list())
 }
 

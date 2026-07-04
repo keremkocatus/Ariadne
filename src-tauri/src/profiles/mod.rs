@@ -137,7 +137,10 @@ impl ProfileStore {
         input: ProfileInput,
         password: Option<String>,
     ) -> Result<ConnectionProfile, AriadneError> {
-        let id = input.id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let id = input
+            .id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let profile = input.into_profile(id.clone());
 
         {
