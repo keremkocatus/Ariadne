@@ -79,7 +79,11 @@ export default function App() {
     (schema: string, name: string) => {
       // Yeni tab, Explorer'ın gösterdiği (aktif tab'ın) bağlantısına bağlanır —
       // global aktif bağlantı farklı olabilir (design 12 §P1-M1).
-      const id = addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`, tabConnectionId);
+      // sourceTable işaretlenir → hücre düzenleme (design 19 §P1-X4) etkinleşebilir.
+      const id = addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`, tabConnectionId, {
+        schema,
+        name,
+      });
       void run(id);
     },
     [addTab, run, tabConnectionId],

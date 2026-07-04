@@ -212,6 +212,29 @@ export function dbStats(connectionId: string): Promise<DbStats> {
   return invoke("db_stats", { connectionId });
 }
 
+// ---- Tek-hücre düzenleme (design 19 §P1-X4 N8, DATA-WRITE) ----
+export interface PkPredicate {
+  column: string;
+  value: string;
+}
+export function getPrimaryKey(
+  connectionId: string,
+  schema: string,
+  table: string,
+): Promise<string[]> {
+  return invoke("get_primary_key", { connectionId, schema, table });
+}
+export function updateCell(args: {
+  connectionId: string;
+  schema: string;
+  table: string;
+  pk: PkPredicate[];
+  column: string;
+  newValue: string | null;
+}): Promise<{ updated: number }> {
+  return invoke("update_cell", args);
+}
+
 // ---- Roller (design 15 §P1-U4, salt-okunur) ----
 export interface RoleInfo {
   name: string;

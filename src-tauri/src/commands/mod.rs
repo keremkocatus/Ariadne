@@ -5,6 +5,7 @@ pub mod activity;
 pub mod complete;
 pub mod connect;
 pub mod details;
+pub mod edit;
 pub mod files;
 pub mod profile;
 pub mod query;

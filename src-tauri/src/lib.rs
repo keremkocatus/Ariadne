@@ -72,6 +72,8 @@ pub fn run() {
             commands::activity::list_activity,
             commands::activity::signal_backend,
             commands::activity::db_stats,
+            commands::edit::get_primary_key,
+            commands::edit::update_cell,
             commands::complete::get_completions,
             commands::complete::get_object_info,
             commands::complete::get_signature_help,

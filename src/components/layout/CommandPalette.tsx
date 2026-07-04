@@ -55,9 +55,10 @@ export function CommandPalette() {
   };
 
   const openTable = (schema: string, name: string) => {
+    // sourceTable işaretlenir → hücre düzenleme (design 19 §P1-X4) etkinleşebilir.
     const id = useTabsStore
       .getState()
-      .addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`, tabConnectionId);
+      .addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`, tabConnectionId, { schema, name });
     void useTabsStore.getState().run(id);
   };
 

@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { ResultGrid } from "@/components/grid/ResultGrid";
+import { CellDialog, type CellEditContext } from "@/components/grid/CellDialog";
 import { ObjectInfoView } from "@/components/editor/ObjectInfoPanel";
 import { errorTitle, readOnlyProfileHint } from "@/lib/errors";
 import type { AriadneError, StatementResult } from "@/lib/api";
@@ -11,7 +13,13 @@ import { useConnectionStore } from "@/stores/connectionStore";
 export function ResultArea({ tabId, onFetchMore }: { tabId: string; onFetchMore: () => void }) {
   const tab = useTabsStore((s) => s.tabs.find((t) => t.id === tabId));
   const setInfoResult = useTabsStore((s) => s.setInfoResult);
+  const patchCell = useTabsStore((s) => s.patchCell);
   const isReadOnly = useConnectionStore((s) => s.isReadOnly(tab?.connectionId ?? null));
+  // Hücre görüntüle/düzenle popup'ı için seçili hücre (design 19 §P1-X4).
+  const [cell, setCell] = useState<{ rowIndex: number; colIndex: number } | null>(null);
+  // Yeni sorgu (kolon referansı değişti) ya da tab değişince açık dialog'u kapat —
+  // aksi halde eski satır/kolon indeksleri yeni sonuca uygulanabilir (bayat).
+  useEffect(() => setCell(null), [tab?.id, tab?.query.columns]);
   const q = tab?.query;
   if (!q) return null;
 
@@ -50,6 +58,7 @@ export function ResultArea({ tabId, onFetchMore }: { tabId: string; onFetchMore:
             fetchedTotal={q.fetchedTotal}
             elapsedMs={q.elapsedMs}
             onFetchMore={onFetchMore}
+            onCellActivate={(rowIndex, colIndex) => setCell({ rowIndex, colIndex })}
           />
         </div>
       ) : hasExtra ? (
@@ -59,6 +68,24 @@ export function ResultArea({ tabId, onFetchMore }: { tabId: string; onFetchMore:
           {q.running ? "Running…" : "Results will appear here. Run with Ctrl+Enter."}
         </p>
       ) : null}
+
+      {cell && tab?.connectionId && q.rows[cell.rowIndex] && q.columns[cell.colIndex] && (
+        <CellDialog
+          ctx={
+            {
+              connectionId: tab.connectionId,
+              sourceTable: tab.sourceTable,
+              readOnly: isReadOnly,
+              columns: q.columns,
+              row: q.rows[cell.rowIndex],
+              rowIndex: cell.rowIndex,
+              colIndex: cell.colIndex,
+            } satisfies CellEditContext
+          }
+          onClose={() => setCell(null)}
+          onSaved={(r, c, v) => patchCell(tabId, r, c, v)}
+        />
+      )}
     </div>
   );
 }

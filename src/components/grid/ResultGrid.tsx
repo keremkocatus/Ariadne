@@ -20,6 +20,8 @@ interface Props {
   estimatedTotal?: number | null;
   elapsedMs: number;
   onFetchMore: () => void;
+  /// Hücreye çift-tık → görüntüle/düzenle popup (design 19 §P1-X4). ResultArea yönetir.
+  onCellActivate?: (rowIndex: number, colIndex: number) => void;
 }
 
 /// Satır-granülü seçim (design 17 §P1-V2): seçili satırlar + odak hücre (kolon).
@@ -39,6 +41,7 @@ export function ResultGrid({
   estimatedTotal,
   elapsedMs,
   onFetchMore,
+  onCellActivate,
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [sel, setSel] = useState<Sel | null>(null);
@@ -210,6 +213,7 @@ export function ResultGrid({
                       data-row={vr.index}
                       data-col={c.index}
                       onClick={(e) => clickCell(e, vr.index, c.index)}
+                      onDoubleClick={() => onCellActivate?.(vr.index, c.index)}
                       className={cn(
                         "absolute flex h-full cursor-default items-center truncate border-r border-b border-border/50 px-2 font-mono text-[11px]",
                         focused && "ring-1 ring-inset ring-fg-muted",

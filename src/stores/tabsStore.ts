@@ -70,6 +70,10 @@ export interface Tab {
   filePath: string | null;
   /// Dosyanın son kaydedilen/açılan içeriği — dirty = `sql !== savedSql`.
   savedSql: string | null;
+  /// Tab bir tablodan mı açıldı (Explorer çift-tık / palette "open table" —
+  /// design 19 §P1-X4). Set ise hücre düzenleme koşullarından biri sağlanır (diğerleri:
+  /// PK çözülür + PK değerleri satırda). Rastgele/JOIN sorgularında null → salt-görüntüleme.
+  sourceTable: { schema: string; name: string } | null;
   query: QueryState;
 }
 
@@ -105,7 +109,11 @@ function emptyQuery(): QueryState {
   };
 }
 
-function newTab(sql = "", connectionId: string | null = null): Tab {
+function newTab(
+  sql = "",
+  connectionId: string | null = null,
+  sourceTable: { schema: string; name: string } | null = null,
+): Tab {
   return {
     id: crypto.randomUUID(),
     title: "Query",
@@ -113,6 +121,7 @@ function newTab(sql = "", connectionId: string | null = null): Tab {
     connectionId,
     filePath: null,
     savedSql: null,
+    sourceTable,
     query: emptyQuery(),
   };
 }
@@ -146,7 +155,14 @@ interface TabsState {
   /// kapatınca geri sarmaz (isim çakışması olmasın). Persist edilir.
   nextTabNumber: number;
 
-  addTab: (sql?: string, connectionId?: string | null) => string;
+  addTab: (
+    sql?: string,
+    connectionId?: string | null,
+    sourceTable?: { schema: string; name: string } | null,
+  ) => string;
+  /// Sonuç grid'inde tek bir hücreyi yerinde günceller (design 19 §P1-X4): başarılı
+  /// UPDATE sonrası yeniden sorgu KOŞMADAN grid'i tazeler.
+  patchCell: (id: string, rowIndex: number, colIndex: number, value: string | null) => void;
   closeTab: (id: string) => void;
   resolveClose: (action: "commit" | "rollback" | "cancel") => Promise<void>;
   setActive: (id: string) => void;
@@ -258,11 +274,23 @@ export const useTabsStore = create<TabsState>()(
   dirtyCloseRequest: null,
   nextTabNumber: 1,
 
-  addTab(sql, connectionId) {
+  addTab(sql, connectionId, sourceTable) {
     const connId = connectionId ?? useConnectionStore.getState().activeConnectionId;
-    const t = { ...newTab(sql, connId), title: `Query ${get().nextTabNumber}` };
+    const t = { ...newTab(sql, connId, sourceTable ?? null), title: `Query ${get().nextTabNumber}` };
     set((s) => ({ tabs: [...s.tabs, t], activeTabId: t.id, nextTabNumber: s.nextTabNumber + 1 }));
     return t.id;
+  },
+
+  patchCell(id, rowIndex, colIndex, value) {
+    set((s) => ({
+      tabs: s.tabs.map((t) => {
+        if (t.id !== id) return t;
+        const rows = t.query.rows.map((r, ri) =>
+          ri === rowIndex ? r.map((c, ci) => (ci === colIndex ? value : c)) : r,
+        );
+        return { ...t, query: { ...t.query, rows } };
+      }),
+    }));
   },
 
   closeTab(id) {
@@ -315,7 +343,17 @@ export const useTabsStore = create<TabsState>()(
         // Hata marker'ı düzenlemeyle bayatlar (offset artık yanlış yeri gösterir):
         // marker gizlenir, hata bandı yeni run'a kadar kalır (design 15 §P1-U2).
         const needStale = t.query.error?.position != null && !t.query.markerStale;
-        return { ...t, sql, query: needStale ? { ...t.query, markerStale: true } : t.query };
+        // Kullanıcı SQL'i düzenleyince tab artık "SELECT * FROM sourceTable" olmayabilir
+        // → hücre düzenleme YANLIŞ tabloyu güncellemesin diye sourceTable temizlenir
+        // (design 19 §P1-X4 güvenlik: bayat sourceTable). openRelation/openTable addTab
+        // ile sql'i doğrudan kurar (setSql'den geçmez) → onlarda işaret korunur.
+        const sourceTable = t.sourceTable != null ? null : t.sourceTable;
+        return {
+          ...t,
+          sql,
+          sourceTable,
+          query: needStale ? { ...t.query, markerStale: true } : t.query,
+        };
       }),
     }));
   },
@@ -558,6 +596,7 @@ export const useTabsStore = create<TabsState>()(
           connectionId: t.connectionId,
           filePath: t.filePath,
           savedSql: t.savedSql,
+          sourceTable: t.sourceTable,
         })),
         activeTabId: s.activeTabId,
         nextTabNumber: s.nextTabNumber,
@@ -572,6 +611,7 @@ export const useTabsStore = create<TabsState>()(
             connectionId?: string | null;
             filePath?: string | null;
             savedSql?: string | null;
+            sourceTable?: { schema: string; name: string } | null;
           }[];
           activeTabId?: string | null;
           nextTabNumber?: number;
@@ -581,6 +621,7 @@ export const useTabsStore = create<TabsState>()(
           connectionId: t.connectionId ?? null,
           filePath: t.filePath ?? null,
           savedSql: t.savedSql ?? null,
+          sourceTable: t.sourceTable ?? null,
           query: emptyQuery(),
         }));
         return {
