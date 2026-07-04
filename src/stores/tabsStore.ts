@@ -1,5 +1,6 @@
 import { create, type StoreApi } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import { toast } from "sonner";
 import * as api from "@/lib/api";
 import type {
   AriadneError,
@@ -10,6 +11,7 @@ import type {
   TxStatus,
 } from "@/lib/api";
 import { useConnectionStore } from "./connectionStore";
+import { useUiStore } from "./uiStore";
 
 // Tab başına UI'da tutulan maks satır (design 05 §2 — kazara SELECT * sigortası).
 const MAX_ROWS = 100_000;
@@ -44,6 +46,9 @@ export interface QueryState {
   /// Alt+F1 nesne bilgisi sonuç alanında overlay olarak gösterilir (design 15
   /// §P1-U3). Kapatılınca (null) altındaki sorgu sonucu geri gelir — sonuç EZİLMEZ.
   infoResult: ObjectInfo | null;
+  /// Arka plandaki (aktif olmayan) tab'da sorgu bittiğinde işaretlenir (design 17
+  /// §P1-V1 Ö7): TabBar başlığında nokta gösterilir; setActive görülünce temizler.
+  finishedUnseen: boolean;
 }
 
 /// run() opsiyonları (design 15 §P1-U2). `sql` verilirse seçim koşulur.
@@ -96,6 +101,7 @@ function emptyQuery(): QueryState {
     markerStale: false,
     pendingRun: null,
     infoResult: null,
+    finishedUnseen: false,
   };
 }
 
@@ -210,6 +216,33 @@ function patchQuery(
   }));
 }
 
+/// Bir run bittiğinde arka plan sinyali (design 17 §P1-V1 Ö7). Tab aktif değilse
+/// başlık noktası; ayrıca yeterince uzun sürdüyse (ayar eşiği) ve tab arka planda
+/// (ya da pencere gizli) ise bitiş toast'ı. `rowCount` null = yalnız süre.
+function signalFinish(
+  set: StoreApi<TabsState>["setState"],
+  get: () => TabsState,
+  id: string,
+  elapsedMs: number,
+  rowCount: number | null,
+  isError: boolean,
+) {
+  const notActive = get().activeTabId !== id;
+  if (notActive) patchQuery(set, id, { finishedUnseen: true });
+  const noticeSec = useUiStore.getState().settings.longQueryNoticeSeconds;
+  if (noticeSec <= 0 || elapsedMs < noticeSec * 1000) return;
+  if (!notActive && !document.hidden) return;
+  const title = get().tabs.find((t) => t.id === id)?.title ?? "Query";
+  const secs = (elapsedMs / 1000).toFixed(1);
+  const action = { label: "Go to tab", onClick: () => get().setActive(id) };
+  if (isError) {
+    toast.error(`${title} failed — ${secs}s`, { action });
+  } else {
+    const rows = rowCount != null ? `, ${rowCount.toLocaleString()} rows` : "";
+    toast.success(`${title} finished — ${secs}s${rows}`, { action });
+  }
+}
+
 export const useTabsStore = create<TabsState>()(
   persist(
     (set, get) => ({
@@ -260,7 +293,13 @@ export const useTabsStore = create<TabsState>()(
   },
 
   setActive(id) {
-    set({ activeTabId: id });
+    // Tab'a bakılınca arka plan bitiş noktası temizlenir (design 17 §P1-V1 Ö7).
+    set((s) => ({
+      activeTabId: id,
+      tabs: s.tabs.map((t) =>
+        t.id === id && t.query.finishedUnseen ? { ...t, query: { ...t.query, finishedUnseen: false } } : t,
+      ),
+    }));
   },
 
   setSql(id, sql) {
@@ -352,6 +391,9 @@ export const useTabsStore = create<TabsState>()(
     const sql = opts?.sql ?? tab.sql;
     const selectionOffset = opts?.selectionOffset ?? 0;
     const queryId = crypto.randomUUID();
+    // Wall-clock: bitiş sinyali eşiği için (design 17 §P1-V1 Ö7). first_page.elapsed_ms
+    // yalnız ilk sayfanın sunucu süresi; buradaki ölçüm round-trip'i kapsar.
+    const startedAt = performance.now();
     patchQuery(set, id, {
       running: true,
       error: null,
@@ -362,12 +404,14 @@ export const useTabsStore = create<TabsState>()(
       selectionOffset,
       pendingRun: null,
       infoResult: null,
+      finishedUnseen: false,
       queryId,
     });
     try {
       const res = await api.runQuery(connId, sql, id, queryId, opts?.confirmed);
       if (res.needs_confirmation) {
         // Onay sonrası AYNI opts ile koşulmalı (seçim korunur) — pendingRun'da tut.
+        // Onay bir duraklamadır, bitiş değil → sinyal yok.
         patchQuery(set, id, { running: false, needsConfirmation: res.needs_confirmation, pendingRun: opts ?? null });
         return;
       }
@@ -385,6 +429,17 @@ export const useTabsStore = create<TabsState>()(
         error: res.error ?? null,
         capped: false,
       });
+      // Satır sayısı: SELECT → çekilen ilk sayfa; DML → etkilenen toplam; yoksa null.
+      const rowCount =
+        rowsStmt?.kind === "rows"
+          ? rowsStmt.first_page.fetched_total
+          : res.statements.some((s) => s.kind === "affected")
+            ? res.statements.reduce((n, s) => n + (s.kind === "affected" ? s.row_count : 0), 0)
+            : null;
+      // Kullanıcı iptali (query_cancelled) kendi bilinçli eylemi — bitiş sinyali yok.
+      if (res.error?.kind !== "query_cancelled") {
+        signalFinish(set, get, id, performance.now() - startedAt, rowCount, res.error != null);
+      }
     } catch (e) {
       // Transport-seviyesi hata (invoke reddi, ör. connection_lost): geçerli sonuç
       // yok → eski grid'i temizle ki hata bandı bayat satırların üstünde durmasın.
@@ -399,6 +454,7 @@ export const useTabsStore = create<TabsState>()(
         fetchedTotal: 0,
         error: api.isAriadneError(e) ? e : { kind: "internal", message: String(e) },
       });
+      signalFinish(set, get, id, performance.now() - startedAt, null, true);
     }
   },
 

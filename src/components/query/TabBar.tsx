@@ -3,6 +3,7 @@ import { Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTabsStore, isDirty } from "@/stores/tabsStore";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { RoBadge } from "@/components/connection/RoBadge";
 import type { TxStatus } from "@/lib/api";
 
 export function TabBar() {
@@ -47,9 +48,9 @@ export function TabBar() {
           // (design 15 §P1-U2): "Query 3 · raildb" — hangi bağlantı olduğu tab'da görünür.
           const info = t.connectionId ? connections[t.connectionId] : null;
           const closed = !!t.connectionId && !info;
-          const connLabel = info
-            ? profiles.find((p) => p.id === info.profile_id)?.name ?? info.database
-            : null;
+          const connProfile = info ? profiles.find((p) => p.id === info.profile_id) : null;
+          const connLabel = info ? connProfile?.name ?? info.database : null;
+          const readOnly = connProfile?.read_only ?? false;
           const title = info ? `${info.database} (${info.user})` : closed ? "Connection closed" : "No connection";
           return (
             <div
@@ -63,6 +64,12 @@ export function TabBar() {
               style={{ borderLeftColor: info?.color || (closed ? "var(--color-warn)" : "transparent") }}
             >
               {t.query.txStatus !== "idle" && <TxBadge status={t.query.txStatus} />}
+              {t.query.finishedUnseen && (
+                <span
+                  className={cn("h-1.5 w-1.5 shrink-0 rounded-full", t.query.error ? "bg-danger" : "bg-fg")}
+                  title={t.query.error ? "Query finished with an error" : "Query finished"}
+                />
+              )}
               {editingId === t.id ? (
                 <input
                   ref={inputRef}
@@ -87,6 +94,7 @@ export function TabBar() {
                   {isDirty(t) && <span className="mr-1 text-warn" title="Unsaved changes">●</span>}
                   {t.title}
                   {connLabel && <span className="ml-1 text-fg-muted">· {connLabel}</span>}
+                  {readOnly && <RoBadge className="ml-1" />}
                 </span>
               )}
               <button

@@ -8,10 +8,14 @@ export interface Settings {
   editorFontSize: number;
   /** Zaten-bağlı bağlantıya geçerken şemanın "bayat" sayıldığı eşik (dakika). */
   schemaStaleMinutes: number;
+  /** Arka plandaki tab'ın sorgusu bu süreyi (sn) aşınca bitiş toast'ı (design 17
+   *  §P1-V1 Ö7). 0 = kapalı. */
+  longQueryNoticeSeconds: number;
 }
 export const DEFAULT_SETTINGS: Settings = {
   editorFontSize: 13,
   schemaStaleMinutes: 5,
+  longQueryNoticeSeconds: 10,
 };
 
 interface UiState {
@@ -20,6 +24,9 @@ interface UiState {
   resultsVisible: boolean;
   paletteOpen: boolean;
   settingsOpen: boolean;
+  /// Bağlantı menüsü kontrollü açık mı (design 17 §P1-V1): boş-durum kartındaki
+  /// "Connect…" butonu bunu programatik açar; ConnectionMenu bu state'e bağlanır.
+  connectMenuOpen: boolean;
   settings: Settings;
   toggleSidebar: () => void;
   setSidebarWidth: (w: number) => void;
@@ -27,6 +34,7 @@ interface UiState {
   setResultsVisible: (v: boolean) => void;
   setPaletteOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
+  setConnectMenuOpen: (open: boolean) => void;
   updateSettings: (patch: Partial<Settings>) => void;
 }
 
@@ -38,6 +46,7 @@ export const useUiStore = create<UiState>()(
       resultsVisible: true,
       paletteOpen: false,
       settingsOpen: false,
+      connectMenuOpen: false,
       settings: DEFAULT_SETTINGS,
       toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
       setSidebarWidth: (w) => set({ sidebarWidth: Math.max(180, Math.min(560, w)) }),
@@ -45,6 +54,7 @@ export const useUiStore = create<UiState>()(
       setResultsVisible: (v) => set({ resultsVisible: v }),
       setPaletteOpen: (open) => set({ paletteOpen: open }),
       setSettingsOpen: (open) => set({ settingsOpen: open }),
+      setConnectMenuOpen: (open) => set({ connectMenuOpen: open }),
       updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
     }),
     {

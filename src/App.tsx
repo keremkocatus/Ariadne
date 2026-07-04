@@ -6,6 +6,7 @@ import { ResultArea } from "@/components/query/ResultArea";
 import { ConfirmDialog } from "@/components/query/ConfirmDialog";
 import { CloseTabDialog } from "@/components/query/CloseTabDialog";
 import { ConnectionClosedBanner } from "@/components/query/ConnectionClosedBanner";
+import { EmptyStateCard } from "@/components/query/EmptyStateCard";
 import { SaveTabDialog } from "@/components/query/SaveTabDialog";
 import { Toolbar } from "@/components/layout/Toolbar";
 import { StatusBar } from "@/components/layout/StatusBar";
@@ -138,6 +139,7 @@ export default function App() {
                     marker={errorMarker}
                     fontSize={editorFontSize}
                   />
+                  <EmptyStateCard />
                 </div>
               </div>
               {resultsVisible && (

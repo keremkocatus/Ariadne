@@ -4,9 +4,11 @@ import { ChevronDown, ChevronRight, Database, Pencil, Plus, Plug, Unplug } from 
 import { cn } from "@/lib/utils";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useTabsStore } from "@/stores/tabsStore";
+import { useUiStore } from "@/stores/uiStore";
 import { listDatabases, type ConnectionInfo, type ConnectionProfile, type DatabaseInfo } from "@/lib/api";
 import { connectProfile, focusConnection } from "@/lib/connectionActions";
 import { ProfileDialog } from "./ProfileDialog";
+import { RoBadge } from "./RoBadge";
 
 export function ConnectionMenu() {
   const { profiles, connections, loadProfiles, disconnect } = useConnectionStore();
@@ -15,7 +17,10 @@ export function ConnectionMenu() {
   const tabConnectionId = useTabsStore((s) => s.active()?.connectionId ?? null);
   const tabInfo = tabConnectionId ? (connections[tabConnectionId] ?? null) : null;
 
-  const [menuOpen, setMenuOpen] = useState(false);
+  // Açık durumu uiStore'da (design 17 §P1-V1): boş-durum kartındaki "Connect…"
+  // butonu menüyü programatik açabilsin.
+  const menuOpen = useUiStore((s) => s.connectMenuOpen);
+  const setMenuOpen = useUiStore((s) => s.setConnectMenuOpen);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ConnectionProfile | null>(null);
 
@@ -73,6 +78,7 @@ export function ConnectionMenu() {
                         {profiles.find((p) => p.id === c.profile_id)?.name ?? c.database}
                       </span>
                       <span className="truncate text-fg-muted">{c.database}</span>
+                      {profiles.find((p) => p.id === c.profile_id)?.read_only && <RoBadge className="shrink-0" />}
                     </button>
                     <div className="flex shrink-0 items-center gap-0.5">
                       <DatabasesSubmenu conn={c} onPick={setMenuOpen} />

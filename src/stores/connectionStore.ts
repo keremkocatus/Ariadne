@@ -20,6 +20,9 @@ interface ConnectionState {
   /// (profil, DB) çiftine zaten bağlı bir bağlantı varsa id'sini döndürür (design
   /// 15 §P1-U1 — aynı DB'ye ikinci pool açmamak için).
   findConnection: (profileId: string, database: string) => string | null;
+  /// Bağlantının profili read-only mi (design 17 §P1-V1 Ö5). Profil silinmişse
+  /// false — rozet kaybolur, zarar yok.
+  isReadOnly: (connectionId: string | null) => boolean;
 }
 
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
@@ -78,5 +81,12 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       (c) => c.profile_id === profileId && c.database === database,
     );
     return found?.connection_id ?? null;
+  },
+
+  isReadOnly(connectionId) {
+    if (!connectionId) return false;
+    const info = get().connections[connectionId];
+    if (!info) return false;
+    return get().profiles.find((p) => p.id === info.profile_id)?.read_only ?? false;
   },
 }));

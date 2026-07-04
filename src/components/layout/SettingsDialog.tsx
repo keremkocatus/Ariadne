@@ -41,6 +41,20 @@ export function SettingsDialog() {
             />
           </Field>
 
+          <Field
+            label="Long-query notice (seconds)"
+            hint="Toast + tab dot when a background tab's query finishes and took at least this long. 0 disables the toast."
+          >
+            <input
+              type="number"
+              min={0}
+              max={600}
+              value={settings.longQueryNoticeSeconds}
+              onChange={(e) => update({ longQueryNoticeSeconds: clamp(0, 600, Math.round(+e.target.value) || 0) })}
+              className="w-20 rounded border border-border bg-bg px-1.5 py-0.5 outline-none focus:border-fg-muted"
+            />
+          </Field>
+
           <div className="border-t border-border pt-3 text-fg-muted">
             <div className="font-medium text-fg">Result paging</div>
             <div className="mt-0.5 text-[11px]">

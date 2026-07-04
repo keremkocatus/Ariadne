@@ -1,12 +1,14 @@
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSchemaStore } from "@/stores/schemaStore";
 import { useTabsStore } from "@/stores/tabsStore";
+import { RoBadge } from "@/components/connection/RoBadge";
 
 /// Alt durum çubuğu: aktif TAB'ın bağlantısı (profil renk şeridi + sunucu +
 /// cache tazeliği), global aktif bağlantı değil (design 12 §P1-M1).
 export function StatusBar() {
   const tabConnectionId = useTabsStore((s) => s.active()?.connectionId ?? null);
   const info = useConnectionStore((s) => (tabConnectionId ? (s.connections[tabConnectionId] ?? null) : null));
+  const readOnly = useConnectionStore((s) => s.isReadOnly(tabConnectionId));
   const cacheEntry = useSchemaStore((s) =>
     tabConnectionId ? s.byConnection[tabConnectionId] : undefined,
   );
@@ -23,6 +25,7 @@ export function StatusBar() {
             />
             {info.database} · PostgreSQL {info.server_version.split(" ")[0]}
           </span>
+          {readOnly && <RoBadge />}
           <span>cache: {cacheEntry?.snapshot ? relTime(cacheEntry.snapshot.fetched_at) : "—"}</span>
         </>
       ) : closed ? (

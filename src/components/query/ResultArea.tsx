@@ -1,8 +1,9 @@
 import { ResultGrid } from "@/components/grid/ResultGrid";
 import { ObjectInfoView } from "@/components/editor/ObjectInfoPanel";
-import { errorTitle } from "@/lib/errors";
+import { errorTitle, readOnlyProfileHint } from "@/lib/errors";
 import type { AriadneError, StatementResult } from "@/lib/api";
 import { useTabsStore } from "@/stores/tabsStore";
+import { useConnectionStore } from "@/stores/connectionStore";
 
 /// Aktif tab'ın sonuç bölgesi. Kısmi sonuçta (design 11 §H2) hata bandı ÜSTTE,
 /// o ana kadar biriken sonuçlar ALTTA birlikte gösterilir. Alt+F1 nesne bilgisi
@@ -10,6 +11,7 @@ import { useTabsStore } from "@/stores/tabsStore";
 export function ResultArea({ tabId, onFetchMore }: { tabId: string; onFetchMore: () => void }) {
   const tab = useTabsStore((s) => s.tabs.find((t) => t.id === tabId));
   const setInfoResult = useTabsStore((s) => s.setInfoResult);
+  const isReadOnly = useConnectionStore((s) => s.isReadOnly(tab?.connectionId ?? null));
   const q = tab?.query;
   if (!q) return null;
 
@@ -31,7 +33,7 @@ export function ResultArea({ tabId, onFetchMore }: { tabId: string; onFetchMore:
         </div>
       )}
       {cancelled && <p className="p-3 font-mono text-xs text-fg-muted">Query cancelled.</p>}
-      {showError && <ErrorBanner err={q.error!} />}
+      {showError && <ErrorBanner err={q.error!} readOnlyHint={readOnlyProfileHint(q.error!, isReadOnly)} />}
       {q.frozen && (
         <div className="shrink-0 border-b border-warn/40 bg-warn/5 px-3 py-1.5 text-[11px] text-warn">
           Result expired after being idle — re-run the query to continue paging.
@@ -61,7 +63,7 @@ export function ResultArea({ tabId, onFetchMore }: { tabId: string; onFetchMore:
   );
 }
 
-function ErrorBanner({ err }: { err: AriadneError }) {
+function ErrorBanner({ err, readOnlyHint }: { err: AriadneError; readOnlyHint?: string | null }) {
   return (
     <div className="shrink-0 overflow-auto border-b border-danger/30 p-3 font-mono text-xs">
       <div className="text-danger">
@@ -69,6 +71,7 @@ function ErrorBanner({ err }: { err: AriadneError }) {
         {err.sqlstate && <span className="text-fg-muted"> · {err.sqlstate}</span>}
       </div>
       <p className="mt-1 whitespace-pre-wrap text-danger">{err.message}</p>
+      {readOnlyHint && <p className="mt-1 whitespace-pre-wrap text-warn">{readOnlyHint}</p>}
       {err.hint && <p className="mt-1 whitespace-pre-wrap text-warn">HINT: {err.hint}</p>}
       {err.detail && (
         <details className="mt-1 text-fg-muted">

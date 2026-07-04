@@ -27,8 +27,18 @@ const SQLSTATE_TITLES: Record<string, string> = {
   "53300": "Too many connections",
   "57014": "Query cancelled",
   "25P02": "Transaction aborted — rollback first",
+  "25006": "Read-only transaction",
   "0A000": "Feature not supported",
 };
+
+/// Read-only ihlali (SQLSTATE 25006) profil ayarından mı geliyor (design 17
+/// §P1-V1 Ö5b). Öyleyse hata bandına yol gösteren ek ipucu basılır.
+export function readOnlyProfileHint(e: AriadneError, isReadOnlyProfile: boolean): string | null {
+  if (e.sqlstate === "25006" && isReadOnlyProfile) {
+    return "This profile is read-only (profile setting) — edit the profile or use BEGIN READ WRITE deliberately.";
+  }
+  return null;
+}
 
 const KIND_TITLES: Record<AriadneError["kind"], string> = {
   connection_failed: "Connection failed",
