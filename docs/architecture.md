@@ -9,19 +9,19 @@ for detail, and [ipc-api.md](ipc-api.md) for the exact contract.
 
 ```
 ┌─────────────────────────────────────────┐
-│  Frontend (React + TypeScript, Vite)     │
-│  Monaco editor · result grid · explorer  │
-│  Zustand stores · Tauri invoke()         │
+│  Frontend (React + TypeScript, Vite)    │
+│  Monaco editor · result grid · explorer │
+│  Zustand stores · Tauri invoke()        │
 └───────────────────┬─────────────────────┘
                     │  IPC (commands + events)
 ┌───────────────────┴─────────────────────┐
-│  Backend (Rust, Tauri)                   │
-│  commands → db / cache / complete        │
-│  sqlx (Postgres) · pg_query · keyring    │
+│  Backend (Rust, Tauri)                  │
+│  commands → db / cache / complete       │
+│  sqlx (Postgres) · pg_query · keyring   │
 └───────────────────┬─────────────────────┘
                     │  Postgres wire protocol
               ┌─────┴─────┐
-              │ PostgreSQL │
+              │ PostgreSQL│
               └───────────┘
 ```
 
