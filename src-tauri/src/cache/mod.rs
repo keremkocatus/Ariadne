@@ -268,16 +268,18 @@ impl SchemaCache {
                 .get(&format!("{schema}.{tbl}").to_lowercase())
                 .copied()
         } else {
-            self.table_by_name.get(&name.to_lowercase()).and_then(|ids| {
-                ids.iter()
-                    .min_by_key(|id| {
-                        self.tables
-                            .get(id)
-                            .and_then(|t| self.search_path.iter().position(|s| s == &t.schema))
-                            .unwrap_or(usize::MAX)
-                    })
-                    .copied()
-            })
+            self.table_by_name
+                .get(&name.to_lowercase())
+                .and_then(|ids| {
+                    ids.iter()
+                        .min_by_key(|id| {
+                            self.tables
+                                .get(id)
+                                .and_then(|t| self.search_path.iter().position(|s| s == &t.schema))
+                                .unwrap_or(usize::MAX)
+                        })
+                        .copied()
+                })
         };
         // reltuples = -1 → hiç analiz edilmemiş (bilinmiyor); tahmin gösterme.
         id.and_then(|id| self.tables.get(&id))
@@ -327,7 +329,10 @@ mod tests {
 
     #[test]
     fn estimated_rows_qualified_and_unknown() {
-        let c = cache(vec![tbl(1, "archive", "orders", 42), tbl(2, "public", "t", -1)]);
+        let c = cache(vec![
+            tbl(1, "archive", "orders", 42),
+            tbl(2, "public", "t", -1),
+        ]);
         assert_eq!(c.table_estimated_rows("archive.orders"), Some(42));
         // -1 (analiz edilmemiş) → None; olmayan tablo → None.
         assert_eq!(c.table_estimated_rows("t"), None);

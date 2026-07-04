@@ -16,8 +16,7 @@ use tracing_subscriber::{fmt, EnvFilter};
 /// Global subscriber'ı kurar. Bir kez (setup'ta) çağrılır. Dosya appender'ı
 /// kurulamazsa (izin/yol) sessizce yalnız konsola düşer — uygulama çalışır.
 pub fn init(log_dir: PathBuf) {
-    let filter =
-        EnvFilter::try_from_env("ARIADNE_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_env("ARIADNE_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
 
     let file_layer = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
