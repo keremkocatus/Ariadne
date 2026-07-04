@@ -1,5 +1,9 @@
 # 14 — GUI Test Bulguları / Backlog (ham notlar)
 
+> **PLANLANDI (2026-07-04):** bu listenin derin analizi + milestone planı
+> **design/15**'te (P1-U1…U4); kullanıcı senaryoları ve türev öneriler
+> **design/16**'da. Bu dosya ham kayıt olarak kalır, artık güncellenmez.
+
 > Tarih: 2026-07-04. P1-M1 (multi-connection) `npm run tauri dev` ile canlı DB'ye
 > karşı elle test edilirken toplanan bulgular. **Bunlar ham notlardır — henüz
 > tasarlanmadı, önceliklendirilmedi, kabul kriteri yazılmadı.** Yeni bir oturumda

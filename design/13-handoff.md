@@ -30,7 +30,7 @@
 Kullanıcı önceliğiyle sıralı (Q&A 2026-07-04). Her milestone "çalışan uygulama bırakır".
 
 1. ~~**P1-M1 — Multi-connection eşzamanlı + hızlı geçiş**~~ ✅ **tamamlandı**, elle test edildi (yukarı bakın).
-2. **P1-M1.5 (yeni) — design/14'teki GUI backlog'unun derin planlaması.** **Buradan başla** — kullanıcı bir sonraki oturumda önce bu listenin design/12-tarzı analiz+milestone planını istiyor, sonra uygulama. Öne çıkan: tab↔connection izolasyon düzeltmesi (§2), editör seçili-metin çalıştırma + stale marker bug'ı (§1), Explorer tık davranışı + peek zenginleştirme (§4), filtreleme (§5), fonksiyon "modify" akışı (§6), ayarlar/dosya-I/O/users&roles (§7).
+2. ~~**P1-M1.5 — design/14'teki GUI backlog'unun derin planlaması.**~~ ✅ **Plan yazıldı (2026-07-04): design/15** (P1-U1…U4 milestone'ları; U1 = tab↔connection semantik düzeltmesi — pristine-tab kuralı — öncelikli) ve **design/16** (kullanıcı senaryoları + Ö1–Ö8 önerileri; Ö5/Ö1/Ö7 ilgili U-milestone'lara iliştirilecek). **Buradan başla: P1-U1'i uygula** (design/15 §P1-U1), sonra U2→U3→U4, sonra P1-M2.
 3. **P1-M2 — Yerel SQLite depo + cache disk persist** (design 12 §P1-M2). `rusqlite` + `store/` modülü; cache build-girdilerini `postcard` ile diske yaz, `connect`'te load-then-refresh. Bu depo M4 history'nin de altyapısı.
 4. **P1-M3 — Okunaklı EXPLAIN (ANALYZE)** (design 12 §P1-M3). `classify` zaten `ExplainStmt` görüyor; `StatementResult::Explain{plan_json}` + ağaç UI; DML'de ANALYZE otomatik `BEGIN…ROLLBACK` sarmalı.
 5. **P1-M4 — Query history + snippets**, **P1-M5 — konfor paketi** (force kill, tam CSV export, hücre tam-değer, frequency ranking, açık tema).
@@ -46,9 +46,9 @@ Sözleşme değişiklikleri (02'ye işlenecek) özeti design/12 §4'te.
 
 ## 5. Yeni oturum "start here"
 
-> "design/13'ü ve design/14'ü oku; design/14'teki GUI backlog'u için design/12
-> tarzında derin bir analiz + milestone planı yap (önce PLANI ONAYLAT, sonra
-> uygula) — özellikle §2'deki tab↔connection izolasyon çelişkisini çöz. Sonra
-> sırayla uygula, sonra Faz 1 P1-M2'ye (yerel SQLite depo, design/12 §P1-M2) geç."
+> "design/13'ü, design/15'i ve design/16'yı oku; **P1-U1'i uygula** (design/15
+> §P1-U1 — tab↔connection semantiği: pristine-tab kuralı, focusConnection,
+> Databases ▸; + design/16 Ö5 read-only rozeti). Sonra U2 (+Ö1/Ö7) → U3 → U4,
+> sonra Faz 1 P1-M2'ye (yerel SQLite depo, design/12 §P1-M2) geç."
 
 Memory: `m0-status.md` güncel durumu tutuyor.
