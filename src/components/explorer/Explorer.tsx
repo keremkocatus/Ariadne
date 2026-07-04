@@ -10,7 +10,7 @@ import {
   type CategoryFilter,
 } from "@/stores/schemaStore";
 import { refreshSchema, type SnapFn, type SnapRel } from "@/lib/api";
-import { buildTree, filterSnapshot, flatten, type TreeNode } from "./tree";
+import { buildTree, defaultOpenState, filterSnapshot, flatten, type TreeNode } from "./tree";
 import { iconFor } from "./icons";
 import { NodeRow } from "./NodeRow";
 import { PeekPanel } from "./PeekPanel";
@@ -51,12 +51,19 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
     () => (snapshot ? buildTree(filterSnapshot(snapshot, filter)) : []),
     [snapshot, filter],
   );
+  // Açılışta aktif şema + Tables açık (design 18 §P1-W2 N3). key={connectionId}
+  // bağlantı değişince yeniden uygular.
+  const initialOpen = useMemo(() => (snapshot ? defaultOpenState(snapshot) : {}), [snapshot]);
 
   const which = (node: TreeNode): "rel" | "fn" => (node.name.startsWith("Functions") ? "fn" : "rel");
   const openFilterMenu = (node: TreeNode, e: React.MouseEvent) => {
     if (node.ntype !== "category") return;
     e.preventDefault();
     setFilterMenu({ which: which(node), x: e.clientX, y: e.clientY });
+  };
+  // "more" düğümüne tık → o kategorinin filtre popover'ını aç (design 18 §P1-W2 N4).
+  const openMoreFilter = (node: TreeNode, e: React.MouseEvent) => {
+    setFilterMenu({ which: node.moreWhich ?? "rel", x: e.clientX, y: e.clientY });
   };
   const isCatFiltered = (node: TreeNode) =>
     node.ntype === "category" && isCategoryActive(filter[which(node)]);
@@ -191,7 +198,9 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
             ) : (
               height > 0 && (
                 <Tree<TreeNode>
+                  key={connectionId}
                   data={treeData}
+                  initialOpenState={initialOpen}
                   openByDefault={false}
                   width="100%"
                   height={height}
@@ -206,6 +215,7 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
                       onPeek={peekNode}
                       onActivate={activateNode}
                       onContextMenu={openFilterMenu}
+                      onMore={openMoreFilter}
                       isFiltered={isCatFiltered}
                       onPin={(node) =>
                         node.rel &&

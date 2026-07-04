@@ -14,6 +14,7 @@ export function NodeRow({
   isPinned,
   onContextMenu,
   isFiltered,
+  onMore,
 }: NodeRendererProps<TreeNode> & {
   onPeek: (n: TreeNode) => void;
   onActivate: (n: TreeNode) => void;
@@ -21,8 +22,21 @@ export function NodeRow({
   isPinned: (n: TreeNode) => boolean;
   onContextMenu: (n: TreeNode, e: React.MouseEvent) => void;
   isFiltered: (n: TreeNode) => boolean;
+  onMore: (n: TreeNode, e: React.MouseEvent) => void;
 }) {
   const d = node.data;
+  // "more" düğümü: kategori tavanı aşıldı; tık = filtre popover'ı (design 18 §P1-W2).
+  if (d.ntype === "more") {
+    return (
+      <div
+        style={style}
+        className="flex h-6 cursor-pointer items-center gap-1 pl-4 pr-1 text-[11px] italic text-fg-muted hover:text-fg"
+        onClick={(e) => onMore(d, e)}
+      >
+        <span className="truncate">{d.name}</span>
+      </div>
+    );
+  }
   const isLeaf = d.ntype === "relation" || d.ntype === "function";
   return (
     <div
