@@ -1,5 +1,6 @@
-//! Statement sınıflandırma (pg_query AST): row döndürür mü, destructive mı, tx
-//! geçişi var mı (design 05 §7-8). Saf fonksiyon — DB'ye gitmez, UI'sız test edilir.
+//! Statement classification (via the pg_query AST): does it return rows, is it
+//! destructive, does it transition transaction state. Pure functions — no DB
+//! access, testable without a UI.
 
 use super::types::TxStatus;
 
@@ -28,7 +29,7 @@ pub fn classify(sql: &str) -> StmtInfo {
     };
 
     let Ok(parsed) = pg_query::parse(sql) else {
-        // Parse edilemezse: ilk kelimeye göre kaba tahmin.
+        // Unparseable: fall back to a rough guess from the first keyword.
         info.returns_rows = matches!(
             command.as_str(),
             "SELECT" | "WITH" | "VALUES" | "TABLE" | "SHOW" | "EXPLAIN"
@@ -80,7 +81,7 @@ pub fn classify(sql: &str) -> StmtInfo {
             info.destructive = Some(("truncate".into(), table));
         }
         N::TransactionStmt(s) => {
-            // Tip-güvenli enum (ham i32 değil): prost `kind()` yardımcısı.
+            // Type-safe enum (not the raw i32): prost's `kind()` helper.
             use pg_query::protobuf::TransactionStmtKind as TK;
             info.tx_transition = match s.kind() {
                 TK::TransStmtBegin | TK::TransStmtStart => Some(TxStatus::InTransaction),
@@ -104,8 +105,8 @@ fn rangevar_name(rv: Option<&pg_query::protobuf::RangeVar>) -> String {
     .unwrap_or_default()
 }
 
-/// SQL'in ilk anlamlı kelimesini büyük harfle döndürür ("SELECT", "INSERT"...).
-/// `touches_schema` ve `classify` ortak kullanır.
+/// The first significant word of the SQL, upper-cased ("SELECT", "INSERT", …).
+/// Shared by `touches_schema` and `classify`.
 pub(crate) fn first_keyword(sql: &str) -> String {
     sql.trim_start()
         .split(|c: char| c.is_whitespace() || c == '(')
@@ -142,7 +143,7 @@ mod tests {
         assert!(classify("UPDATE orders SET total = 0 WHERE id = 1")
             .destructive
             .is_none());
-        // CTE'li ama WHERE'li DELETE false-positive vermemeli.
+        // A DELETE with a CTE but a WHERE clause must not be a false positive.
         assert!(
             classify("WITH x AS (SELECT 1) DELETE FROM orders WHERE id IN (SELECT * FROM x)")
                 .destructive

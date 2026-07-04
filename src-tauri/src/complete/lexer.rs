@@ -1,7 +1,7 @@
-//! Gerçek Postgres lexer sarmalayıcısı (design 04 §2). `pg_query::scan` çıktısını
-//! offset'li token akışına çevirir; context analizi ([`super::context`]) bunun
-//! üstünde çalışır. Regex/heuristic lexer YOK (design prensip 3) — yarım/parse
-//! edilemez SQL bile sağlam tokenize olur.
+//! A wrapper around the real Postgres lexer. Turns `pg_query::scan` output into an
+//! offset-tagged token stream that context analysis ([`super::context`]) runs on top
+//! of. There is no regex/heuristic lexer — even half-written or unparseable SQL
+//! tokenizes robustly.
 
 #[derive(Debug, Clone)]
 pub(super) struct Tok {
@@ -72,7 +72,7 @@ fn classify(text: &str, is_keyword: bool) -> TokKind {
     }
 }
 
-/// İmlecin bulunduğu statement'ın token aralığını (`;` sınırları) bulur.
+/// Finds the token range of the statement the cursor is in (bounded by `;`).
 pub(super) fn statement_bounds(tokens: &[Tok], offset: usize) -> (usize, usize) {
     let mut start = 0;
     let mut end = tokens.len();
@@ -89,7 +89,7 @@ pub(super) fn statement_bounds(tokens: &[Tok], offset: usize) -> (usize, usize) 
     (start, end)
 }
 
-/// LParen indeksinden başlar; (içerik_başı, içerik_sonu, kapanıştan_sonraki) döndürür.
+/// Starts at the LParen index; returns (content_start, content_end, after_close).
 pub(super) fn match_paren(toks: &[Tok], lparen: usize) -> (usize, usize, usize) {
     let mut depth = 0;
     let mut i = lparen;
@@ -109,7 +109,7 @@ pub(super) fn match_paren(toks: &[Tok], lparen: usize) -> (usize, usize, usize) 
     (lparen + 1, toks.len(), toks.len())
 }
 
-/// Top-level virgülle (paren derinliği 0) böler; her dilim bir target/arg item'ı.
+/// Splits on top-level commas (paren depth 0); each slice is one target/arg item.
 pub(super) fn split_items(toks: &[Tok]) -> Vec<&[Tok]> {
     let mut out = Vec::new();
     let mut depth = 0;

@@ -1,4 +1,4 @@
-//! Şema komutları (design 02 §3, 03).
+//! Schema commands.
 
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ struct ConnPayload {
     connection_id: String,
 }
 
-/// Tree'yi besleyen hafif snapshot (design 03 §3).
+/// The lightweight snapshot that feeds the tree.
 #[tauri::command]
 pub async fn get_schema_snapshot(
     connection_id: String,
@@ -24,7 +24,7 @@ pub async fn get_schema_snapshot(
     Ok(conn.schema_cache.load().to_snapshot())
 }
 
-/// Manuel refresh: yeni snapshot kurar; başlangıç/bitiş event ile bildirilir.
+/// Manual refresh: builds a new snapshot; start/finish are announced via events.
 #[tauri::command]
 pub async fn refresh_schema(
     connection_id: String,
@@ -36,14 +36,14 @@ pub async fn refresh_schema(
     Ok(())
 }
 
-/// Arka planda cache fetch + atomik swap + event. connect ve refresh_schema ortak
-/// kullanır. Hata olursa eski snapshot korunur (design 06 §4) — sessiz log.
+/// Background cache fetch + atomic swap + event. Shared by connect and
+/// refresh_schema. On error the old snapshot is kept — logged quietly.
 ///
-/// Debounce (design 03 §5 / 11 §H7): zaten çalışan bir refresh varsa yenisi
-/// başlatılmaz (üst üste DDL'ler tek fetch'e birleşir).
+/// Debounce: if a refresh is already running, a new one isn't started (bursts of
+/// DDL coalesce into a single fetch).
 pub fn spawn_cache_refresh(app: AppHandle, conn: Arc<ActiveConnection>) {
     use std::sync::atomic::Ordering;
-    // swap(true): önceki değer true ise başka refresh çalışıyor → atla.
+    // swap(true): if the previous value was true, another refresh is running → skip.
     if conn.refreshing.swap(true, Ordering::AcqRel) {
         return;
     }
@@ -55,8 +55,8 @@ pub fn spawn_cache_refresh(app: AppHandle, conn: Arc<ActiveConnection>) {
         },
     );
     tauri::async_runtime::spawn(async move {
-        // RAII: task panik'le unwind etse bile bayrak sıfırlanır (aksi halde bu
-        // bağlantı için tüm gelecekteki refresh'ler kalıcı bloklanırdı).
+        // RAII: the flag is reset even if the task unwinds on panic (otherwise all
+        // future refreshes for this connection would be permanently blocked).
         let _guard = RefreshGuard(conn.clone());
         let started = std::time::Instant::now();
         match catalog::fetch_schema_cache(&conn.pool).await {
@@ -72,7 +72,7 @@ pub fn spawn_cache_refresh(app: AppHandle, conn: Arc<ActiveConnection>) {
                 );
             }
             Err(e) => {
-                // Eski snapshot immutable olarak kalır; kullanıcı yine çalışabilir.
+                // The old snapshot stays immutable; the user can still work.
                 tracing::warn!(connection_id = %connection_id, error = %e.message, "schema refresh failed");
             }
         }
@@ -80,7 +80,7 @@ pub fn spawn_cache_refresh(app: AppHandle, conn: Arc<ActiveConnection>) {
     });
 }
 
-/// `refreshing` bayrağını drop anında (normal bitiş VEYA panik unwind) sıfırlar.
+/// Resets the `refreshing` flag on drop (normal finish OR panic unwind).
 struct RefreshGuard(Arc<ActiveConnection>);
 impl Drop for RefreshGuard {
     fn drop(&mut self) {
@@ -90,7 +90,8 @@ impl Drop for RefreshGuard {
     }
 }
 
-/// Boş cache ile ActiveConnection kur (connect anında; fetch arka planda dolar).
+/// Builds an ActiveConnection with an empty cache (at connect time; the fetch fills
+/// it in the background).
 pub fn empty_cache(server_version: String) -> SchemaCache {
     SchemaCache::empty(server_version)
 }

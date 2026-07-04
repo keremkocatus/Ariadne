@@ -1,8 +1,9 @@
-//! Şema cache: Ariadne'nin performans kalbi (design 03). Autocomplete ve object
-//! explorer'ın TEK veri kaynağı. Canlı DB'ye sadece kurulurken/yenilenirken gidilir.
+//! Schema cache: Ariadne's performance core. The SINGLE data source for
+//! autocomplete and the object explorer. The live DB is only queried on connect and
+//! on refresh.
 //!
-//! Cache **immutable snapshot**'tır: refresh yeni bir SchemaCache kurup `ArcSwap`
-//! ile atomik değiştirir; okuyanlar (completion) lock beklemez (design 01 §3, 03 §5).
+//! The cache is an **immutable snapshot**: a refresh builds a new SchemaCache and
+//! swaps it in atomically via `ArcSwap`, so readers (completion) never wait on a lock.
 
 pub mod catalog;
 pub mod snapshot;
@@ -17,7 +18,7 @@ use smallvec::SmallVec;
 
 pub type TableId = u32; // pg_class.oid
 pub type FunctionId = u32; // pg_proc.oid
-pub type ColIdx = usize; // Table.columns içindeki indeks
+pub type ColIdx = usize; // index into Table.columns
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -71,8 +72,8 @@ pub enum ArgMode {
     Out,
     InOut,
     Variadic,
-    /// TABLE(...) dönüşlü fonksiyon arg'ı. Katalogdan modellenir; signature help
-    /// bunu Phase 1'de ayrı gösterecek. Şimdilik `In` gibi ele alınır.
+    /// An arg of a TABLE(...)-returning function. Modeled from the catalog; treated
+    /// like `In` for now.
     #[allow(dead_code)]
     Table,
 }
@@ -80,14 +81,14 @@ pub enum ArgMode {
 #[derive(Debug, Clone)]
 pub struct Column {
     pub name: String,
-    pub type_name: String, // format_type() çıktısı: "int4", "varchar(255)"
+    pub type_name: String, // format_type() output: "int4", "varchar(255)"
     pub not_null: bool,
-    // Katalogdan doldurulur; object-detail paneli / inline-edit (Phase 1) okuyacak.
+    // Filled from the catalog; read by the object-detail panel / inline edit.
     #[allow(dead_code)]
     pub has_default: bool,
     #[allow(dead_code)]
     pub comment: Option<String>,
-    pub attnum: i16, // dahili: PK/FK attnum çözümü için
+    pub attnum: i16, // internal: for PK/FK attnum resolution
 }
 
 #[derive(Debug, Clone)]
@@ -96,14 +97,14 @@ pub struct Table {
     pub schema: String,
     pub name: String,
     pub kind: RelKind,
-    pub columns: Vec<Column>, // attnum sırasında
+    pub columns: Vec<Column>, // in attnum order
     pub primary_key: Vec<ColIdx>,
     pub comment: Option<String>,
     pub estimated_rows: i64, // pg_class.reltuples
 }
 
 impl Table {
-    /// attnum → columns indeksi (dropped kolonlar çıkarıldığı için gap olabilir).
+    /// attnum → columns index (may have gaps because dropped columns are removed).
     fn attnum_index(&self) -> HashMap<i16, ColIdx> {
         self.columns
             .iter()
@@ -127,7 +128,7 @@ pub struct FnArg {
     pub name: Option<String>,
     pub type_name: String,
     pub mode: ArgMode,
-    /// DEFAULT'lu arg (çağrıda atlanabilir). Signature help Phase 1'de gösterecek.
+    /// An arg with a DEFAULT (may be omitted at the call site).
     #[allow(dead_code)]
     pub has_default: bool,
 }
@@ -140,14 +141,14 @@ pub struct Function {
     pub args: Vec<FnArg>,
     pub return_type: String,
     pub kind: FnKind,
-    /// Dönüş tipi `trigger` mı — Explorer'da "trigger function" filtresi için
-    /// (design 15 §P1-U3). `kind`'den bağımsız (trigger fn'ler prokind='f').
+    /// Whether the return type is `trigger` — for the "trigger function" filter in
+    /// the explorer. Independent of `kind` (trigger fns have prokind='f').
     pub is_trigger: bool,
     pub comment: Option<String>,
 }
 
 impl Function {
-    /// "get_user_orders(user_id int4) → setof orders" — öneri/peek etiketi.
+    /// "get_user_orders(user_id int4) → setof orders" — the completion/peek label.
     pub fn signature(&self) -> String {
         let args = self
             .args
@@ -166,13 +167,13 @@ impl Function {
 #[derive(Debug, Clone)]
 pub struct SchemaInfo {
     pub name: String,
-    /// Katalogdan; explorer'da şema sahibini göstermek için (Phase 1).
+    /// From the catalog; for showing the schema owner in the explorer.
     #[allow(dead_code)]
     pub owner: String,
     pub is_system: bool,
 }
 
-/// Immutable şema snapshot'ı + hızlı lookup indeksleri.
+/// Immutable schema snapshot + fast lookup indexes.
 pub struct SchemaCache {
     pub fetched_at: DateTime<Utc>,
     pub server_version: String,
@@ -182,15 +183,15 @@ pub struct SchemaCache {
     pub tables: HashMap<TableId, Table>,
     pub functions: HashMap<FunctionId, Function>,
 
-    // ---- Lookup indeksleri (fetch sonrası bir kez kurulur) ----
+    // ---- Lookup indexes (built once after fetch) ----
     pub table_by_qualified: HashMap<String, TableId>, // "schema.name" (lc) → id
     pub table_by_name: HashMap<String, SmallVec<[TableId; 2]>>, // "name" (lc) → ids
     pub function_by_name: HashMap<String, SmallVec<[FunctionId; 2]>>,
-    pub fk_adjacency: HashMap<TableId, Vec<FkEdge>>, // iki yönlü (design 03 §1)
+    pub fk_adjacency: HashMap<TableId, Vec<FkEdge>>, // bidirectional
 }
 
 impl SchemaCache {
-    /// Ham katalog verisinden cache'i kur: indeksleri ve FK grafiğini hesapla.
+    /// Builds the cache from raw catalog data: computes the indexes and the FK graph.
     pub fn build(
         fetched_at: DateTime<Utc>,
         server_version: String,
@@ -219,7 +220,7 @@ impl SchemaCache {
                 .push(f.id);
         }
 
-        // FK grafiği iki yönlü: bir tablodan hem giden hem gelen FK'lar görünür.
+        // Bidirectional FK graph: both outgoing and incoming FKs are visible from a table.
         let mut fk_adjacency: HashMap<TableId, Vec<FkEdge>> = HashMap::new();
         for edge in fks {
             fk_adjacency
@@ -248,7 +249,7 @@ impl SchemaCache {
         }
     }
 
-    /// Boş cache (bağlantı kurulmuş ama fetch bitmemiş durum).
+    /// An empty cache (connection established but the fetch hasn't finished).
     pub fn empty(server_version: String) -> Self {
         Self::build(
             Utc::now(),
@@ -261,10 +262,9 @@ impl SchemaCache {
         )
     }
 
-    /// Bir tablonun tahmini satır sayısı (pg_class.reltuples). Destructive guard'ın
-    /// "~2.1M satır etkilenecek" mesajı için (design 11 §H6). `name` yalın ("orders")
-    /// ya da şema-nitelikli ("public.orders") olabilir; yalın adlar search_path
-    /// önceliğiyle çözülür.
+    /// A table's estimated row count (pg_class.reltuples). Used for the destructive
+    /// guard's "~2.1M rows affected" message. `name` may be bare ("orders") or
+    /// schema-qualified ("public.orders"); bare names resolve by search_path priority.
     pub fn table_estimated_rows(&self, name: &str) -> Option<i64> {
         let id = if let Some((schema, tbl)) = name.split_once('.') {
             self.table_by_qualified
@@ -284,7 +284,7 @@ impl SchemaCache {
                         .copied()
                 })
         };
-        // reltuples = -1 → hiç analiz edilmemiş (bilinmiyor); tahmin gösterme.
+        // reltuples = -1 → never analyzed (unknown); don't show an estimate.
         id.and_then(|id| self.tables.get(&id))
             .map(|t| t.estimated_rows)
             .filter(|&n| n >= 0)
@@ -322,7 +322,7 @@ mod tests {
 
     #[test]
     fn estimated_rows_by_bare_name_uses_search_path() {
-        // Aynı ad iki şemada; search_path'te public var → public'inki seçilir.
+        // Same name in two schemas; public is on the search_path → public's is chosen.
         let c = cache(vec![
             tbl(1, "public", "orders", 5000),
             tbl(2, "archive", "orders", 9),
@@ -337,7 +337,7 @@ mod tests {
             tbl(2, "public", "t", -1),
         ]);
         assert_eq!(c.table_estimated_rows("archive.orders"), Some(42));
-        // -1 (analiz edilmemiş) → None; olmayan tablo → None.
+        // -1 (not analyzed) → None; missing table → None.
         assert_eq!(c.table_estimated_rows("t"), None);
         assert_eq!(c.table_estimated_rows("nope"), None);
     }

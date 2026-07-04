@@ -1,5 +1,6 @@
-//! Pool kurulumu (design 06 §3). Profil + şifreden PgPool kurar; `application_name`
-//! daima `ariadne`, `statement_timeout` ve `read_only` her yeni bağlantıda SET edilir.
+//! Pool setup. Builds a PgPool from a profile + password; `application_name` is
+//! always `ariadne`, and `statement_timeout` / read-only are SET on every new
+//! connection.
 
 use std::time::Duration;
 
@@ -18,9 +19,10 @@ fn map_ssl(mode: SslMode) -> PgSslMode {
     }
 }
 
-/// `database_override`: verilirse profildeki DB yerine bu DB'ye bağlanır (design 15
-/// §P1-U1 "aynı sunucuda başka DB'ye geç"). Postgres'te DB değiştirmek yeni bir
-/// bağlantı gerektirir; bu yüzden bu bir "ikinci pool açma" yoludur, mutasyon değil.
+/// `database_override`: if given, connect to this database instead of the profile's
+/// (used to switch to another database on the same server). Postgres requires a new
+/// connection to change database, so this is really an "open a second pool" path,
+/// not a mutation of the existing one.
 pub async fn build_pool(
     profile: &ConnectionProfile,
     password: Option<&str>,

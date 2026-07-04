@@ -1,11 +1,11 @@
-//! DB katmanı (design 05). Tauri'den habersiz — saf DB, UI olmadan test edilebilir
-//! (design 01 §4). Sorumluluklar dosyalara ayrılmıştır (design 11 §R2):
+//! Database layer. Unaware of Tauri — pure DB logic, testable without a UI.
+//! Responsibilities are split across files:
 //!
-//! - [`pool`]     — profil → PgPool kurulumu
-//! - [`types`]    — IPC sözleşme tipleri (RunResult, Page, TxStatus...)
-//! - [`classify`] — statement sınıflandırma (row/destructive/tx)
-//! - [`rows`]     — PgRow → text hücreler
-//! - [`exec`]     — cursor'lu execution yaşam döngüsü (asıl motor)
+//! - [`pool`]     — profile → PgPool setup
+//! - [`types`]    — IPC contract types (RunResult, Page, TxStatus, …)
+//! - [`classify`] — statement classification (rows / destructive / tx)
+//! - [`rows`]     — PgRow → text cells
+//! - [`exec`]     — cursored execution lifecycle (the actual engine)
 
 pub mod classify;
 pub mod exec;
@@ -17,8 +17,8 @@ pub use pool::build_pool;
 
 use classify::first_keyword;
 
-/// Statement'lardan biri şemayı değiştiriyor mu (DDL) — cache auto-refresh tetiği
-/// (design 03 §4.3). pg_query split + ilk kelime; ucuz ve %90 senaryoyu kapar.
+/// Whether any statement changes the schema (DDL) — the trigger for cache
+/// auto-refresh. pg_query split + first keyword; cheap and covers ~90% of cases.
 pub fn touches_schema(sql: &str) -> bool {
     let stmts = pg_query::split_with_parser(sql).unwrap_or_default();
     stmts.iter().any(|s| {

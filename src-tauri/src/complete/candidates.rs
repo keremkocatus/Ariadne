@@ -1,12 +1,12 @@
-//! Clause'a göre aday üretimi + ranking (design 04 §4-5). Saf fonksiyonlar;
-//! SchemaCache okur, DB'ye gitmez.
+//! Candidate generation per clause + ranking. Pure functions; reads the SchemaCache,
+//! never touches the DB.
 
 use crate::cache::{RelKind, SchemaCache, Table};
 
 use super::context::{Clause, CompletionContext, RelRef};
 use super::{CompletionItem, CompletionKind};
 
-/// Dahili aday: `filter` fuzzy eşleştirme anahtarı (alias öneki olmadan).
+/// An internal candidate: `filter` is the fuzzy-match key (without any alias prefix).
 struct Cand {
     label: String,
     insert: String,
@@ -14,7 +14,7 @@ struct Cand {
     is_snippet: bool,
     detail: Option<String>,
     filter: String,
-    base: i32, // clause-içi öncelik (yüksek = üstte)
+    base: i32, // within-clause priority (higher = on top)
 }
 
 pub fn generate(cache: &SchemaCache, ctx: &CompletionContext) -> Vec<CompletionItem> {
@@ -50,7 +50,7 @@ pub fn generate(cache: &SchemaCache, ctx: &CompletionContext) -> Vec<CompletionI
             join_on_candidates(cache, ctx, &mut cands);
         }
         Clause::InsertCols | Clause::UpdateSet => {
-            // Hedef tablo: tek relation.
+            // Target table: a single relation.
             columns_candidates(cache, ctx, &mut cands);
         }
         Clause::Unknown => {
@@ -65,12 +65,12 @@ pub fn generate(cache: &SchemaCache, ctx: &CompletionContext) -> Vec<CompletionI
     rank(ctx, cands)
 }
 
-// ---- Kolonlar ----
+// ---- Columns ----
 
 fn columns_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut Vec<Cand>) {
     let multi = ctx.relations.len() > 1;
 
-    // qualifier varsa sadece o relation.
+    // With a qualifier, only that relation.
     let rels: Vec<&RelRef> = match &ctx.qualifier {
         Some(q) => ctx.relations.iter().filter(|r| r.matches(q)).collect(),
         None => ctx.relations.iter().collect(),
@@ -78,7 +78,7 @@ fn columns_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut Ve
 
     for rel in rels {
         let alias = rel.alias.clone().unwrap_or_else(|| rel.name.clone());
-        // CTE kolonları
+        // CTE columns
         if rel.is_cte {
             for c in &rel.cte_columns {
                 out.push(col_cand(c, &alias, multi && ctx.qualifier.is_none(), None));
@@ -116,10 +116,10 @@ fn col_cand(col: &str, alias: &str, prefix_alias: bool, detail: Option<String>) 
     }
 }
 
-// ---- İlişkiler (FROM) ----
+// ---- Relations (FROM) ----
 
 fn relation_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut Vec<Cand>) {
-    // CTE adları (aynı statement'ta tanımlı).
+    // CTE names (defined in the same statement).
     for r in &ctx.relations {
         if r.is_cte {
             out.push(Cand {
@@ -169,7 +169,7 @@ fn relation_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut V
     let _ = ctx;
 }
 
-// ---- FK-güdümlü JOIN (design 04 §4 ⭐) ----
+// ---- FK-driven JOIN ----
 
 fn join_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut Vec<Cand>) {
     let taken: Vec<String> = ctx
@@ -188,7 +188,7 @@ fn join_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut Vec<C
         };
 
         for e in edges {
-            // Karşı tabloyu ve ON kolon çiftlerini yönüne göre belirle.
+            // Determine the other table and the ON column pairs by direction.
             let (other_id, r_cols, o_cols) = if e.from_table == t.id {
                 (e.to_table, &e.from_cols, &e.to_cols)
             } else {
@@ -199,7 +199,7 @@ fn join_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut Vec<C
             };
             let a_o = gen_alias(&other.name, &taken);
 
-            // Yeni (join edilen) tablonun kolonu önce: "orders o ON o.user_id = u.id".
+            // The newly joined table's column first: "orders o ON o.user_id = u.id".
             let on: Vec<String> = r_cols
                 .iter()
                 .zip(o_cols.iter())
@@ -223,14 +223,14 @@ fn join_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut Vec<C
                 is_snippet: false,
                 detail: Some(format!("FK {}", e.constraint_name)),
                 filter: other.name.clone(),
-                base: 200, // FK bağlı tablo her şeyin üstünde
+                base: 200, // an FK-linked table ranks above everything
             });
         }
     }
 }
 
 fn join_on_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut Vec<Cand>) {
-    // Önce FK eşleşen tam koşul (design 04 §4 JoinOn).
+    // First the full FK-matched condition.
     let resolved: Vec<(&RelRef, &Table)> = ctx
         .relations
         .iter()
@@ -275,11 +275,11 @@ fn join_on_candidates(cache: &SchemaCache, ctx: &CompletionContext, out: &mut Ve
             }
         }
     }
-    // Sonra iki taraftaki kolonlar.
+    // Then the columns on both sides.
     columns_candidates(cache, ctx, out);
 }
 
-// ---- Fonksiyonlar ----
+// ---- Functions ----
 
 fn function_candidates(cache: &SchemaCache, out: &mut Vec<Cand>, set_returning_only: bool) {
     for f in cache.functions.values() {
@@ -307,7 +307,7 @@ fn function_candidates(cache: &SchemaCache, out: &mut Vec<Cand>, set_returning_o
     }
 }
 
-// ---- Keyword'ler ----
+// ---- Keywords ----
 
 fn push_kw(out: &mut Vec<Cand>, kws: &[&str]) {
     for k in kws {
@@ -323,7 +323,7 @@ fn push_kw(out: &mut Vec<Cand>, kws: &[&str]) {
     }
 }
 
-// ---- Yardımcılar ----
+// ---- Helpers ----
 
 fn resolve_rel<'a>(cache: &'a SchemaCache, rel: &RelRef) -> Option<&'a Table> {
     if rel.is_cte || rel.name.is_empty() {
@@ -343,7 +343,7 @@ fn gen_alias(name: &str, taken: &[String]) -> String {
     lower
 }
 
-// ---- Ranking (design 04 §5) ----
+// ---- Ranking ----
 
 fn rank(ctx: &CompletionContext, cands: Vec<Cand>) -> Vec<CompletionItem> {
     let prefix = ctx.prefix.to_lowercase();
@@ -355,7 +355,7 @@ fn rank(ctx: &CompletionContext, cands: Vec<Cand>) -> Vec<CompletionItem> {
         })
         .collect();
 
-    // Skora göre azalan; eşitlikte alfabetik.
+    // Descending by score; alphabetical on ties.
     scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.label.cmp(&b.1.label)));
     scored.truncate(50);
 
@@ -373,7 +373,7 @@ fn rank(ctx: &CompletionContext, cands: Vec<Cand>) -> Vec<CompletionItem> {
         .collect()
 }
 
-/// Skorlu subsequence eşleşmesi; eşleşmezse None (design 04 §5).
+/// Scored subsequence match; None if it doesn't match.
 fn fuzzy_score(prefix: &str, text: &str) -> Option<i32> {
     if prefix.is_empty() {
         return Some(0);

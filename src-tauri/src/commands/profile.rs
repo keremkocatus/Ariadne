@@ -1,4 +1,4 @@
-//! Profil komutları (design 02 §3, 06).
+//! Profile commands.
 
 use std::time::Instant;
 
@@ -18,7 +18,8 @@ pub async fn list_profiles(
     Ok(state.profiles.list())
 }
 
-/// Profili kaydeder (create/update); şifre verilirse keyring'e yazılır, JSON'a asla.
+/// Saves the profile (create/update); if a password is given it goes to the keyring,
+/// never to JSON.
 #[tauri::command]
 pub async fn save_profile(
     profile: ProfileInput,
@@ -42,7 +43,8 @@ pub struct TestResult {
     pub latency_ms: u64,
 }
 
-/// Profili kalıcılaştırmadan bağlantıyı dener (bağlantı diyaloğundaki "Test").
+/// Tries the connection without persisting the profile (the "Test" button in the
+/// connection dialog).
 #[tauri::command]
 pub async fn test_connection(
     profile: ProfileInput,

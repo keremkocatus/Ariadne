@@ -1,5 +1,5 @@
-//! On-demand nesne detayı komutları (design 15 §P1-U3). Cache'e GİRMEZ — peek
-//! insan hızında bir eylem, 1 round-trip kabul edilebilir; her refresh'i şişirmez.
+//! On-demand object-detail commands. NOT cached — peek is a human-speed action, so
+//! one round-trip is acceptable and it doesn't bloat every refresh.
 
 use serde::Serialize;
 use sqlx::{PgPool, Row};
@@ -37,8 +37,8 @@ pub struct RelationDetails {
     pub live_rows: i64,
 }
 
-/// Bir ilişkinin indeks + trigger + boyut/satır bilgisi. Peek açılınca lazy çekilir
-/// (design 15 §P1-U3). Kolonlar cache'ten geldiği için burada YOK.
+/// A relation's index + trigger + size/row info. Lazily fetched when peek opens.
+/// Columns come from the cache, so they're NOT here.
 #[tauri::command]
 pub async fn get_relation_details(
     connection_id: String,
@@ -119,8 +119,8 @@ async fn fetch_triggers(
     schema: &str,
     name: &str,
 ) -> Result<Vec<TriggerInfo>, AriadneError> {
-    // tgtype bit maskesi: BEFORE=2, INSERT=4, DELETE=8, UPDATE=16, TRUNCATE=32,
-    // INSTEAD OF=64. Dahili (constraint/FK) trigger'lar dışlanır (tgisinternal).
+    // tgtype bitmask: BEFORE=2, INSERT=4, DELETE=8, UPDATE=16, TRUNCATE=32,
+    // INSTEAD OF=64. Internal (constraint/FK) triggers are excluded (tgisinternal).
     let rows = sqlx::query(
         "SELECT t.tgname AS name, \
                 CASE WHEN (t.tgtype & 64) <> 0 THEN 'INSTEAD OF' \
@@ -160,9 +160,9 @@ async fn fetch_triggers(
 
 // ---- get_function_source ----
 
-/// Bir fonksiyonun `CREATE OR REPLACE FUNCTION …` kaynağı (design 15 §P1-U3 —
-/// SQL Server "Modify" akışı). Aggregate/window fonksiyonlarında gövde yoktur;
-/// DB'ye gitmeden önce cache'ten bakıp anlaşılır bir hata döneriz.
+/// A function's `CREATE OR REPLACE FUNCTION …` source (the SQL Server "Modify"
+/// flow). Aggregate/window functions have no body; we check the cache before hitting
+/// the DB and return a clear error.
 #[tauri::command]
 pub async fn get_function_source(
     connection_id: String,

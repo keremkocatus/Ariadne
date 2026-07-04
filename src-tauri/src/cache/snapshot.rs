@@ -1,9 +1,8 @@
-//! Frontend'e giden hafif şema görünümü (design 03 §3).
+//! The lightweight schema view sent to the frontend.
 //!
-//! FK grafiği ve fonksiyon arg detayı buraya GİRMEZ; completion zaten Rust'ta
-//! hesaplanır. `to_snapshot` immutable cache'ten deterministik sıralı bir
-//! `SchemaSnapshot` üretir. Faz 1 disk persist eklerken `cache/persist.rs` bunun
-//! yanına gelecek; model tanımı [`super`]'de yalın kalır (design 11 §R4).
+//! The FK graph and function argument detail are NOT included here; completion is
+//! computed in Rust. `to_snapshot` produces a deterministically ordered
+//! `SchemaSnapshot` from the immutable cache.
 
 use std::collections::HashMap;
 
@@ -12,7 +11,7 @@ use serde::Serialize;
 use super::{FnKind, RelKind, SchemaCache};
 
 impl SchemaCache {
-    /// Tree + fuzzy search'ün ihtiyacı olan hafif görünüm (design 03 §3).
+    /// The lightweight view the tree + fuzzy search need.
     pub fn to_snapshot(&self) -> SchemaSnapshot {
         let mut by_schema: HashMap<&str, SnapSchema> = HashMap::new();
         for s in &self.schemas {
@@ -61,7 +60,7 @@ impl SchemaCache {
             }
         }
 
-        // Deterministik sıra: şema adına, sonra nesne adına göre.
+        // Deterministic order: by schema name, then by object name.
         let mut schemas: Vec<SnapSchema> = by_schema.into_values().collect();
         schemas.sort_by(|a, b| a.name.cmp(&b.name));
         for sch in &mut schemas {
@@ -78,7 +77,7 @@ impl SchemaCache {
     }
 }
 
-// ---- SchemaSnapshot: frontend sözleşmesi (design 02 §3 / 03 §3) ----
+// ---- SchemaSnapshot: the frontend contract ----
 
 #[derive(Debug, Serialize)]
 pub struct SchemaSnapshot {

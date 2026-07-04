@@ -1,9 +1,7 @@
-//! Ariadne kütüphane kökü (design 11 §R1).
+//! Library root.
 //!
-//! `main.rs` yalnızca `run()`'ı çağırır; tüm modüller ve Tauri builder burada
-//! yaşar. Böylece `tests/` klasöründeki integration testler crate'i
-//! `use ariadne::...` ile import edebilir (design 08 §2). Faz 0'da yalnızca unit
-//! test var; bu ayrım gerçek-DB integration testlerini Faz 1'de mümkün kılar.
+//! `main.rs` only calls `run()`; every module and the Tauri builder live here so
+//! that integration tests can import the crate as `ariadne_lib::…`.
 
 mod cache;
 mod commands;
@@ -22,7 +20,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use state::{ActiveConnection, AppState};
 
-/// Idle cursor kontrol periyodu ve eşiği (design 05 §2 / 11 §H7).
+/// How often idle cursors are swept, and how long a cursor may stay idle first.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 const CURSOR_IDLE_LIMIT: Duration = Duration::from_secs(15 * 60);
 
@@ -32,17 +30,17 @@ struct FrozenPayload {
     tab_id: String,
 }
 
-/// Uygulamayı kurar ve çalıştırır. `main.rs`'in tek işi budur.
+/// Builds and runs the application. The only thing `main.rs` calls.
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            // Logging: konsol + dönen dosya (design 01 §6). Dosya yolu alınamazsa
-            // yalnız konsola düşer.
+            // Logging: console + rolling file. Falls back to console only if the
+            // log directory can't be resolved.
             if let Ok(log_dir) = app.path().app_log_dir() {
                 logging::init(log_dir);
             }
-            // Profiller {app_config_dir}/profiles.json'da tutulur (design 06 §1).
+            // Profiles are stored in {app_config_dir}/profiles.json.
             let config_dir = app.path().app_config_dir()?;
             tracing::info!("Ariadne started");
             app.manage(AppState::new(config_dir));
@@ -79,18 +77,19 @@ pub fn run() {
             commands::complete::get_signature_help,
         ])
         .run(tauri::generate_context!())
-        .expect("Ariadne başlatılamadı");
+        .expect("failed to start Ariadne");
 }
 
-/// Periyodik olarak tüm bağlantıların idle iç-tx cursor'larını kapatır (design 11 §H7):
-/// uzun açık kalan READ ONLY tx'ler prod'da vacuum'u geciktirmesin. Kapatılan tab
-/// için `result:frozen` event'i → grid "sonuç dondu, yeniden çalıştır" bandı gösterir.
+/// Periodically closes idle internal-transaction cursors across all connections so
+/// that long-lived READ ONLY transactions don't hold back vacuum in production. For
+/// each closed tab it emits `result:frozen`, which makes the grid show a
+/// "result expired — re-run to continue paging" banner.
 fn spawn_idle_cursor_sweeper(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(SWEEP_INTERVAL);
         loop {
             ticker.tick().await;
-            // RwLock guard'ını await boyunca tutma: bağlantıları klonlayıp bırak.
+            // Don't hold the RwLock guard across await points: clone the connections out.
             let conns: Vec<Arc<ActiveConnection>> = {
                 let state = app.state::<AppState>();
                 let guard = state.connections.read().unwrap();

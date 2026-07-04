@@ -1,8 +1,8 @@
-//! PgRow → text-format hücreler (design 02 §3 / 05 §4).
+//! PgRow → text-format cells.
 //!
-//! Değerler Postgres text format'ında string olarak okunur (bigint/numeric
-//! hassasiyeti + bytea/timestamp gösterimi için, design 02 §3). 8 KB'ı aşan hücre
-//! kesilir ve `truncated_cells` işaretlenir.
+//! Values are read as strings in Postgres text format (to preserve bigint/numeric
+//! precision and to render bytea/timestamps faithfully). Cells larger than 8 KB are
+//! truncated and `truncated_cells` is flagged.
 
 use sqlx::postgres::PgColumn;
 use sqlx::{Column, Row, TypeInfo};
@@ -11,8 +11,8 @@ use super::types::ColumnMeta;
 
 pub const MAX_CELL_BYTES: usize = 8 * 1024;
 
-/// PgColumn dilimini IPC ColumnMeta'ya çevirir. Hem satır-metadata'sından
-/// (`PgRow::columns()`) hem de describe sonucundan (`Describe::columns()`) çağrılır.
+/// Converts a slice of PgColumn into IPC ColumnMeta. Called both from row metadata
+/// (`PgRow::columns()`) and from a describe result (`Describe::columns()`).
 pub fn columns_from(cols: &[PgColumn]) -> Vec<ColumnMeta> {
     cols.iter()
         .map(|c| ColumnMeta {
@@ -26,8 +26,9 @@ pub fn columns_from(cols: &[PgColumn]) -> Vec<ColumnMeta> {
 pub fn read_rows(
     rows: &[sqlx::postgres::PgRow],
 ) -> (Vec<ColumnMeta>, Vec<Vec<Option<String>>>, bool) {
-    // 0 satırlık sonuçta sütun adları buradan alınamaz (rows.first() None); çağıran
-    // taraf boş columns görürse describe ile doldurur (bkz. exec::describe_columns).
+    // With zero rows we can't derive column names here (rows.first() is None); the
+    // caller fills them in via describe when it sees empty columns (see
+    // exec::describe_columns).
     let columns: Vec<ColumnMeta> = match rows.first() {
         Some(r) => columns_from(r.columns()),
         None => Vec::new(),

@@ -1,11 +1,11 @@
-//! Tek-hücre veri düzenleme (design 19 §P1-X4, N8). **DATA-WRITE — dikkatli.**
+//! Single-cell data editing. **DATA-WRITE — handle with care.**
 //!
-//! Yalnız tek-tablo + PK çözülebilen sonuçta kullanılır (frontend editörü ancak o
-//! zaman gösterir). Buradaki **1-satır guard** (`BEGIN; UPDATE …; rowcount==1 ?
-//! COMMIT : ROLLBACK`) yanlış/çoğul satır güncellemesini önler. Read-only profilde
-//! bağlantı `default_transaction_read_only=on` olduğundan UPDATE zaten 25006 ile
-//! reddedilir (defense in depth; frontend de editörü hiç açmaz). ctid fallback
-//! BİLİNÇLİ OLARAK YOK (kırılgan — bkz. design 19 §6).
+//! Only used when the result comes from a single table with a resolvable primary key
+//! (the frontend only shows the editor then). The **single-row guard** here
+//! (`BEGIN; UPDATE …; rowcount==1 ? COMMIT : ROLLBACK`) prevents wrong/multi-row
+//! updates. On a read-only profile the connection has `default_transaction_read_only=on`,
+//! so the UPDATE is rejected with 25006 anyway (defense in depth; the frontend also
+//! never opens the editor). There is deliberately NO ctid fallback (too fragile).
 
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
@@ -14,20 +14,20 @@ use tauri::State;
 use crate::error::{AriadneError, ErrorKind};
 use crate::state::AppState;
 
-/// Identifier'ı güvenli tırnaklar (gömülü çift-tırnağı ikile). Tablo/kolon adları
-/// SQL'e hep bundan geçer (injection'a karşı).
+/// Safely quotes an identifier (doubling embedded double-quotes). Table/column names
+/// always go through this before entering SQL (injection-safe).
 fn quote_ident(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 
-/// `"schema"."table"` — `to_regclass($1)`'e bind edilir (relation'ı oid'e çözer;
-/// nspname eşleşmesinden sağlam — search_path/case/temp durumlarını doğru ele alır).
+/// `"schema"."table"` — bound to `to_regclass($1)` (resolves the relation to an oid;
+/// more robust than matching nspname — handles search_path/case/temp correctly).
 fn qualified(schema: &str, table: &str) -> String {
     format!("{}.{}", quote_ident(schema), quote_ident(table))
 }
 
-/// Bir tablonun PK kolonlarını sıralı döndürür (design 19 §P1-X4). PK yoksa boş Vec
-/// → frontend düzenlemeyi kapatır (WHERE kurulamaz).
+/// Returns a table's primary-key columns in order. Empty Vec if there's no PK → the
+/// frontend disables editing (no WHERE can be built).
 #[tauri::command]
 pub async fn get_primary_key(
     connection_id: String,
@@ -53,7 +53,8 @@ pub async fn get_primary_key(
         .collect()
 }
 
-/// WHERE yükleminin bir PK kolonu = değeri (değer sonuç satırından metin olarak gelir).
+/// One `pk_column = value` term of the WHERE clause (the value arrives as text from
+/// the result row).
 #[derive(Deserialize)]
 pub struct PkPredicate {
     pub column: String,
@@ -65,7 +66,7 @@ pub struct UpdateResult {
     pub updated: u64,
 }
 
-/// Tek bir hücreyi günceller (design 19 §P1-X4 N8).
+/// Updates a single cell.
 #[tauri::command]
 pub async fn update_cell(
     connection_id: String,
@@ -88,8 +89,8 @@ pub async fn update_cell(
     .await
 }
 
-/// update_cell çekirdeği (State yerine pool alır → test edilebilir). Kolon tipini
-/// çözer, SQL'i kurar, 1-satır guard'lı tx içinde uygular.
+/// The core of update_cell (takes a pool rather than State → testable). Resolves the
+/// column type, builds the SQL, and applies it inside a single-row-guarded transaction.
 async fn do_update_cell(
     pool: &PgPool,
     schema: &str,
@@ -105,9 +106,9 @@ async fn do_update_cell(
         ));
     }
 
-    // Kolon tipini al (metin değeri doğru tipe cast etmek için). format_type
-    // array/domain/enum'u doğru verir ve katalog-türevi olduğundan interpolasyonu
-    // güvenli (kullanıcı girdisi değil).
+    // Look up the column type (to cast the text value to the right type). format_type
+    // renders arrays/domains/enums correctly, and since it's catalog-derived it's safe
+    // to interpolate (not user input).
     let coltype: String = sqlx::query_scalar(
         "SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) \
          FROM pg_catalog.pg_attribute a \
@@ -123,8 +124,9 @@ async fn do_update_cell(
 
     let (sql, params) = build_update(schema, table, pk, column, &coltype, new_value);
 
-    // 1-satır guard: tx içinde UPDATE; tam 1 satır değilse ROLLBACK (yanlış/çoğul
-    // güncellemeyi önler — satır bu arada değişmiş/silinmiş ya da PK tekil değil).
+    // Single-row guard: UPDATE inside a tx; ROLLBACK unless exactly one row matched
+    // (prevents wrong/multi-row updates — the row changed/was deleted meanwhile, or
+    // the PK isn't unique).
     let mut tx = pool.begin().await.map_err(AriadneError::from)?;
     let mut q = sqlx::query(&sql);
     for pval in &params {
@@ -143,9 +145,9 @@ async fn do_update_cell(
     Ok(UpdateResult { updated: n })
 }
 
-/// UPDATE SQL'ini ve bind sırasını kurar (saf; DB'ye dokunmaz → test edilebilir).
+/// Builds the UPDATE SQL and the bind order (pure; no DB access → testable).
 /// `new_value` Some → `SET col = $1::type` + PK $2..; None → `SET col = NULL` + PK $1..
-/// PK karşılaştırması `col::text = $n` (değerler metin geldiği için tip-cast'sız eşleşir).
+/// PK comparison is `col::text = $n` (both sides are text, so they match without a cast).
 fn build_update<'a>(
     schema: &str,
     table: &str,
@@ -195,7 +197,7 @@ mod tests {
     fn quote_ident_escapes_embedded_quotes() {
         assert_eq!(quote_ident("users"), "\"users\"");
         assert_eq!(quote_ident("my table"), "\"my table\"");
-        // Gömülü çift-tırnak ikilenir (injection kapalı).
+        // Embedded double-quotes are doubled (injection closed).
         assert_eq!(quote_ident("a\"b"), "\"a\"\"b\"");
     }
 
@@ -235,8 +237,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
     async fn update_cell_round_trip_and_multi_match_rollback() {
-        // TEMP tablo (session-local) → kullanıcı verisine DOKUNMAZ. max_connections=1
-        // ile temp tablo + update aynı bağlantıda görünür.
+        // TEMP tables (session-local) → never touch user data. max_connections=1 keeps
+        // the temp table + update on the same connection.
         let url = std::env::var("ARIADNE_DATABASE_URL").expect("ARIADNE_DATABASE_URL");
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(1)
@@ -252,14 +254,14 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        // Temp tablonun gerçek şema adı (pg_temp_N) — to_regclass onu çözebilsin.
+        // The temp table's real schema name (pg_temp_N) so to_regclass can resolve it.
         let tsch: String =
             sqlx::query_scalar("SELECT nspname FROM pg_namespace WHERE oid = pg_my_temp_schema()")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
 
-        // (1) normal güncelleme: tam 1 satır.
+        // (1) normal update: exactly 1 row.
         let r = do_update_cell(
             &pool,
             &tsch,
@@ -277,7 +279,7 @@ mod tests {
             .unwrap();
         assert_eq!(got, "zzz");
 
-        // (2) NULL yazma.
+        // (2) writing NULL.
         do_update_cell(&pool, &tsch, "ariadne_edit", &[pk("id", "2")], "name", None)
             .await
             .unwrap();
@@ -287,7 +289,7 @@ mod tests {
             .unwrap();
         assert!(is_null);
 
-        // (3) çoğul eşleşme (g=5 iki satır) → rollback + hata; veri değişmez.
+        // (3) multi-match (g=5 hits two rows) → rollback + error; data unchanged.
         let err = do_update_cell(
             &pool,
             &tsch,
@@ -297,13 +299,13 @@ mod tests {
             Some("nope"),
         )
         .await
-        .expect_err("çoğul eşleşme reddedilmeli");
+        .expect_err("a multi-match must be rejected");
         assert!(err.message.contains("matched 2"), "msg={}", err.message);
         let untouched: i64 =
             sqlx::query_scalar("SELECT count(*) FROM ariadne_dup WHERE name='nope'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(untouched, 0, "rollback → hiçbir satır değişmemeli");
+        assert_eq!(untouched, 0, "rollback → no row should change");
     }
 }

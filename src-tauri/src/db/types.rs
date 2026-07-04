@@ -1,5 +1,5 @@
-//! IPC sözleşme tipleri (design 02 §3): run_query / fetch_page dönüş şekilleri.
-//! Saf veri; frontend'deki `api.ts` tipleriyle birebir. Hiçbir davranış içermez.
+//! IPC contract types: the return shapes for run_query / fetch_page. Pure data
+//! that mirrors the TypeScript types in `api.ts` one-to-one; no behavior.
 
 use serde::Serialize;
 
@@ -12,11 +12,12 @@ pub struct RunResult {
     pub tx_status: TxStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub needs_confirmation: Option<Confirmation>,
-    /// Bir statement hata verdiyse: o ana kadarki `statements` korunur, hata burada
-    /// döner (psql davranışı, design 05 §1 / 11 §H2). Kalan statement'lar çalışmaz.
+    /// If a statement failed: the statements accumulated so far are kept and the
+    /// error is returned here (psql-like partial results). Remaining statements
+    /// are not executed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<AriadneError>,
-    /// Hatalı statement'ın script içindeki 0-based indeksi (UI "statement N" mesajı için).
+    /// 0-based index of the failed statement in the script (for a "statement N" message).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_statement_index: Option<usize>,
 }

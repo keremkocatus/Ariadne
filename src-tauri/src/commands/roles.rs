@@ -1,6 +1,6 @@
-//! Rol/kullanıcı listesi (design 15 §P1-U4, salt-okunur). On-demand — cache'e
-//! girmez. `pg_roles` tüm kullanıcılara okunabilir (şifre alanı hariç); düşük
-//! yetkide bazı alanlar kısıtlı olabilir, hata yerine kısmi veri döneriz.
+//! Role/user listing (read-only). On-demand — not part of the cache. `pg_roles` is
+//! readable by all users (except the password field); at low privilege some fields
+//! may be restricted, in which case we return partial data rather than an error.
 
 use serde::Serialize;
 use sqlx::Row;
@@ -17,9 +17,9 @@ pub struct RoleInfo {
     pub create_db: bool,
     pub create_role: bool,
     pub replication: bool,
-    /// Şifre geçerlilik sonu (timestamptz metni) — yoksa null.
+    /// Password expiry (timestamptz as text) — null if none.
     pub valid_until: Option<String>,
-    /// Doğrudan üye olunan roller.
+    /// Roles this role is a direct member of.
     pub member_of: Vec<String>,
 }
 

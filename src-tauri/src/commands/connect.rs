@@ -1,4 +1,4 @@
-//! Bağlantı komutları (design 02 §3, 06).
+//! Connection commands.
 
 use std::sync::Arc;
 
@@ -14,10 +14,11 @@ use crate::state::{ActiveConnection, AppState, ConnectionInfo};
 
 use super::schema::{empty_cache, spawn_cache_refresh};
 
-/// Profile bağlan: pool kur, ConnectionInfo dön; cache fetch **arka planda** başlar.
+/// Connect to a profile: build the pool, return ConnectionInfo; the cache fetch
+/// starts **in the background**.
 ///
-/// `database_override`: verilirse profildeki DB yerine bu DB'ye bağlanır (design 15
-/// §P1-U1). Şifre/SSL/timeout profile bağlıdır; yalnız hedef DB değişir.
+/// `database_override`: if given, connect to this database instead of the profile's.
+/// Password/SSL/timeout come from the profile; only the target database changes.
 #[tauri::command]
 pub async fn connect(
     profile_id: String,
@@ -65,7 +66,7 @@ pub async fn connect(
         .unwrap()
         .insert(connection_id, conn.clone());
 
-    // Şifre/host loglanmaz (design 06 §2); yalnız kimliklendirici alanlar.
+    // Password/host are never logged; only identifying fields.
     tracing::info!(
         connection_id = %info.connection_id,
         database = %info.database,
@@ -73,14 +74,14 @@ pub async fn connect(
         "connected"
     );
 
-    // Cache'i arka planda doldur.
+    // Fill the cache in the background.
     spawn_cache_refresh(app, conn);
 
     Ok(info)
 }
 
-/// Bağlantıyı kapat: çalışan sorgular iptal edilir, açık cursor/tx'ler kapatılır,
-/// sonra pool kapatılır ve map'ten silinir (design 11 §H3).
+/// Disconnect: running queries are cancelled, open cursors/transactions are closed,
+/// then the pool is closed and removed from the map.
 #[tauri::command]
 pub async fn disconnect(
     connection_id: String,
@@ -88,23 +89,23 @@ pub async fn disconnect(
 ) -> Result<(), AriadneError> {
     let conn = state.connections.write().unwrap().remove(&connection_id);
     if let Some(conn) = conn {
-        // Pool'u kapatmadan önce cursor/tx/çalışan sorguları temizle.
+        // Clean up cursors/transactions/running queries before closing the pool.
         conn.exec.shutdown(&conn.pool).await;
         conn.pool.close().await;
     }
     Ok(())
 }
 
-/// Sunucudaki bağlanılabilir veritabanları (design 15 §P1-U1 "Databases ▸").
+/// Connectable databases on the server (for the "Databases ▸" switcher).
 #[derive(Serialize)]
 pub struct DatabaseInfo {
     pub name: String,
-    /// Bu bağlantının şu an bağlı olduğu DB mi (menüde işaretlenir).
+    /// Whether this is the database the connection is currently on (marked in the menu).
     pub is_current: bool,
 }
 
-/// Aynı sunucudaki başka DB'lere geçiş için liste. Template ve bağlantı kabul
-/// etmeyen DB'ler dışlanır (`pg_database`). On-demand — cache'e girmez.
+/// Lists the other databases on the same server for switching. Template and
+/// non-connectable databases are excluded (`pg_database`). On-demand — not cached.
 #[tauri::command]
 pub async fn list_databases(
     connection_id: String,

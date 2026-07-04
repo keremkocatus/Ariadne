@@ -1,5 +1,5 @@
-//! İnce IPC katmanı (design 01 §4): deserialize → ilgili modülü çağır → serialize.
-//! İş mantığı `db/`, `cache/`, `profiles/` içinde yaşar.
+//! Thin IPC layer: deserialize → call the relevant module → serialize. The business
+//! logic lives in `db/`, `cache/`, and `profiles/`.
 
 pub mod activity;
 pub mod complete;

@@ -1,9 +1,9 @@
-//! Query komutları (design 02 §3, 05). M3: cursor'lu execution, pagination,
-//! cancel, tab=session transaction, destructive guard.
+//! Query commands: cursored execution, pagination, cancel, per-tab session
+//! transactions, and the destructive guard.
 //!
-//! API notu (design'dan pratik sapma): run_query request'i client-üretimli
-//! `query_id` taşır (çalışırken cancel için); fetch_page/cancel/close ayrıca
-//! `connection_id` alır. Frontend ikisini de bilir.
+//! API note: the run_query request carries a client-generated `query_id` (used to
+//! cancel it while running); fetch_page/cancel/close additionally take a
+//! `connection_id`. The frontend knows both.
 
 use tauri::{AppHandle, State};
 
@@ -15,8 +15,8 @@ use crate::state::AppState;
 
 use super::schema::spawn_cache_refresh;
 
-// Tauri IPC sınırı: her argüman JS invoke payload'ından ayrı deserialize edilir;
-// struct'a paketlemek api.ts sözleşmesini bozar (design 02 §1). Bilinçli sınır.
+// Tauri IPC boundary: each argument is deserialized separately from the JS invoke
+// payload; packing them into a struct would break the api.ts contract. Deliberate.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn run_query(
@@ -30,7 +30,7 @@ pub async fn run_query(
     state: State<'_, AppState>,
 ) -> Result<RunResult, AriadneError> {
     let conn = state.connection(&connection_id)?;
-    // SQL metni yalnız debug seviyesinde (design 06 §2); info'da süre/sonuç.
+    // SQL text only at debug level; duration/result at info.
     tracing::debug!(query_id = %query_id, sql = %sql, "run_query");
     let started = std::time::Instant::now();
     let mut result = exec::run_query(
@@ -46,8 +46,8 @@ pub async fn run_query(
     )
     .await?;
 
-    // Destructive guard satır tahminini cache'ten doldur (design 11 §H6). db katmanı
-    // cache'ten habersizdir (design 01 §4); tahmin bu komut katmanında eklenir.
+    // Fill the destructive guard's row estimate from the cache. The db layer is
+    // unaware of the cache; the estimate is added here at the command layer.
     if let Some(conf) = result.needs_confirmation.as_mut() {
         if conf.estimated_rows.is_none() {
             conf.estimated_rows = conn.schema_cache.load().table_estimated_rows(&conf.table);
@@ -62,7 +62,7 @@ pub async fn run_query(
         "run_query done"
     );
 
-    // Ariadne içinden çalıştırılan DDL kendi cache'imizi bayatlatır → sessiz refresh.
+    // DDL run from within Ariadne makes our own cache stale → silent refresh.
     if touches_schema(&sql) {
         spawn_cache_refresh(app, conn);
     }
@@ -89,9 +89,9 @@ pub async fn cancel_query(
     exec::cancel_query(&conn.exec, &conn.pool, &query_id).await
 }
 
-/// Donmuş sorgunun backend'ini öldürür (design 17 §P1-V4 madde 2). Cancel 5 sn
-/// içinde etki etmezse frontend "Force kill" butonuyla buraya düşer; pid sunucu
-/// tarafında query_id'den çözülür.
+/// Kills the backend of a stuck query. If cancel has no effect within a few seconds,
+/// the frontend's "Force kill" button lands here; the pid is resolved server-side
+/// from the query_id.
 #[tauri::command]
 pub async fn force_kill_query(
     connection_id: String,

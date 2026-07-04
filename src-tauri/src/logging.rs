@@ -1,11 +1,11 @@
-//! Yapılandırılmış logging kurulumu (design 01 §6).
+//! Structured logging setup.
 //!
-//! Konsol (dev) + günlük dönen dosya (`app_log_dir/ariadne.YYYY-MM-DD.log`, 7 gün
-//! saklama). Seviye env `ARIADNE_LOG` ile ayarlanır (varsayılan `info`).
+//! Console (dev) + a daily rolling file (`app_log_dir/ariadne.YYYY-MM-DD.log`, kept
+//! for 7 days). The level is set via the `ARIADNE_LOG` env var (default `info`).
 //!
-//! Kurallar (design 06 §2 redaksiyon): SQL metni yalnız `debug` seviyesinde;
-//! `info`'da süre/satır sayısı; şifre/connection string **hiçbir** seviyede.
-//! Bu kurallar çağrı yerlerinde (`tracing::debug!`/`info!`) uygulanır.
+//! Redaction rules: SQL text only at `debug` level; duration/row counts at `info`;
+//! passwords/connection strings at **no** level. These are enforced at the call
+//! sites (`tracing::debug!`/`info!`).
 
 use std::path::PathBuf;
 
@@ -13,8 +13,9 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
 
-/// Global subscriber'ı kurar. Bir kez (setup'ta) çağrılır. Dosya appender'ı
-/// kurulamazsa (izin/yol) sessizce yalnız konsola düşer — uygulama çalışır.
+/// Installs the global subscriber. Called once (at setup). If the file appender
+/// can't be created (permissions/path), it silently falls back to console only — the
+/// app still runs.
 pub fn init(log_dir: PathBuf) {
     let filter = EnvFilter::try_from_env("ARIADNE_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
 
@@ -27,8 +28,8 @@ pub fn init(log_dir: PathBuf) {
         .ok()
         .map(|appender| {
             let (non_blocking, guard) = tracing_appender::non_blocking(appender);
-            // Guard süreç ömrü boyunca yaşamalı (drop olursa flush durur); süreç
-            // kapanışında OS zaten buffer'ı bırakır. Kasıtlı sızdırma.
+            // The guard must live for the whole process (dropping it stops the flush);
+            // the OS releases the buffer on process exit anyway. Deliberate leak.
             std::mem::forget(guard);
             fmt::layer().with_ansi(false).with_writer(non_blocking)
         });

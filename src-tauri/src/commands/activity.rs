@@ -1,6 +1,6 @@
-//! Sunucu aktivitesi + backend sinyalleme (design 17 §P1-V4). Prod yangını
-//! personası (P2): "kim ne koşuyor" → "şunu iptal et / öldür". `pg_stat_activity`
-//! cluster-geneli olduğundan tüm DB'ler görünür; on-demand, cache'e girmez.
+//! Server activity + backend signaling. For the production-firefighting workflow:
+//! "who's running what" → "cancel / kill that". `pg_stat_activity` is cluster-wide so
+//! all databases are visible; on-demand, not cached.
 
 use serde::Serialize;
 use sqlx::Row;
@@ -17,23 +17,22 @@ pub struct ActivityRow {
     pub application_name: String,
     pub client_addr: Option<String>,
     pub state: Option<String>,
-    /// wait_event_type[:wait_event] birleşik (yoksa null).
+    /// wait_event_type[:wait_event] combined (null if none).
     pub wait_event: Option<String>,
     pub backend_start: Option<String>,
     pub query_start: Option<String>,
-    /// Aktif sorgunun şu ana kadarki süresi (ms); aktif değilse null.
+    /// Elapsed time of the active query so far (ms); null if not active.
     pub duration_ms: Option<i64>,
-    /// Sorgu metninin ilk 200 karakteri (yetkisiz kullanıcıda `<insufficient privilege>`).
+    /// First 200 chars of the query text (`<insufficient privilege>` for unprivileged users).
     pub query: String,
-    /// Bu satır listeyi çeken bağlantının kendi backend'i mi (tam eşleşme).
+    /// Whether this row is the backend of the connection fetching the list (exact match).
     pub is_self: bool,
-    /// Ariadne'nin herhangi bir backend'i mi (application_name='ariadne') — kullanıcı
-    /// kendi uygulamasının bağlantısını yanlışlıkla öldürmesin diye işaretlenir.
+    /// Whether this is any Ariadne backend (application_name='ariadne') — flagged so
+    /// the user doesn't accidentally kill their own app's connection.
     pub is_app: bool,
 }
 
-/// `pg_stat_activity` client backend'leri (design 17 §P1-V4). Aktifler önce,
-/// en uzun süredir koşan en üstte.
+/// `pg_stat_activity` client backends. Active first, longest-running at the top.
 #[tauri::command]
 pub async fn list_activity(
     connection_id: String,
@@ -82,10 +81,11 @@ pub async fn list_activity(
         .collect()
 }
 
-/// Bir backend'e sinyal gönderir (design 17 §P1-V4): `cancel` = pg_cancel_backend
-/// (koşan sorguyu durdur), `terminate` = pg_terminate_backend (bağlantıyı kopar).
-/// Dönen bool: böyle bir backend var/sinyallendi mi. Yetki hatası (superuser değil
-/// + başka rolün backend'i) normal AriadneError yolundan SQLSTATE ile akar.
+/// Signals a backend: `cancel` = pg_cancel_backend (stop the running query),
+/// `terminate` = pg_terminate_backend (drop the connection). The returned bool is
+/// whether such a backend existed / was signaled. A permission error (not superuser
+/// and it's another role's backend) flows through the normal AriadneError path with
+/// its SQLSTATE.
 #[tauri::command]
 pub async fn signal_backend(
     connection_id: String,
@@ -104,23 +104,23 @@ pub async fn signal_backend(
     Ok(ok)
 }
 
-/// StatusBar istatistik şeridi (design 20 §P1-Y3 M5). Düz SQL ile GÜVENİLİR alınan
-/// metrikler; CPU/RAM bilinçli olarak YOK (host metriği düz SQL ile alınamaz — bkz.
-/// design 20 §6). Tek round-trip, on-demand (cache dışı), 30 sn'de bir poll edilir.
+/// Metrics for the StatusBar stats strip. Only values that plain SQL can read
+/// reliably; CPU/RAM are deliberately absent (host metrics can't be read with plain
+/// SQL). One round-trip, on-demand (not cached), polled every 30s.
 #[derive(Serialize)]
 pub struct DbStats {
-    /// Kümedeki client backend sayısı (görünür olanlar; düşük yetkide undercount).
+    /// Client backend count across the cluster (visible ones; undercounts at low privilege).
     pub active_connections: i64,
-    /// `max_connections` GUC (current_setting ile herkese açık; hata olursa None).
+    /// The `max_connections` GUC (readable by all via current_setting; None on error).
     pub max_connections: Option<i64>,
-    /// Cache hit oranı 0..1 (pg_stat_database blks_hit / (blks_hit+blks_read)); hiç
-    /// aktivite yoksa None.
+    /// Cache hit ratio 0..1 (pg_stat_database blks_hit / (blks_hit+blks_read)); None
+    /// if there's been no activity.
     pub cache_hit_ratio: Option<f64>,
-    /// Aktif veritabanının disk boyutu (bytes); alınamıyorsa None.
+    /// On-disk size of the active database (bytes); None if unavailable.
     pub db_size_bytes: Option<i64>,
 }
 
-/// Aktif bağlantının DB istatistiklerini tek SELECT'te toplar (design 20 §P1-Y3 M5).
+/// Gathers the active connection's DB stats in a single SELECT.
 #[tauri::command]
 pub async fn db_stats(
     connection_id: String,
@@ -130,7 +130,8 @@ pub async fn db_stats(
     collect_db_stats(&conn.pool).await
 }
 
-/// db_stats SQL'i (test edilebilir olsun diye komuttan ayrı — State yerine pool alır).
+/// The db_stats query, split out from the command so it's testable (takes a pool
+/// rather than State).
 async fn collect_db_stats(pool: &sqlx::PgPool) -> Result<DbStats, AriadneError> {
     let row = sqlx::query(
         "SELECT \
@@ -154,7 +155,7 @@ async fn collect_db_stats(pool: &sqlx::PgPool) -> Result<DbStats, AriadneError> 
     })
 }
 
-/// Sinyal modu → katalog fonksiyonu. Bilinmeyen mod → None (komut hata döner).
+/// Signal mode → catalog function. Unknown mode → None (the command returns an error).
 fn signal_sql(mode: &str) -> Option<&'static str> {
     match mode {
         "cancel" => Some("SELECT pg_cancel_backend($1)"),
@@ -180,8 +181,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
     async fn db_stats_returns_sane_shape() {
-        // design 20 M5: alanlar dolu döner (bu bağlantının kendisi bir client backend
-        // olduğundan active_connections >= 1; max_connections/db_size erişilebilir).
+        // Fields come back populated (this connection is itself a client backend, so
+        // active_connections >= 1; max_connections/db_size are accessible).
         let url = std::env::var("ARIADNE_DATABASE_URL").expect("ARIADNE_DATABASE_URL");
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(2)
@@ -189,14 +190,14 @@ mod tests {
             .await
             .unwrap();
         let s = collect_db_stats(&pool).await.unwrap();
-        assert!(s.active_connections >= 1, "en az kendi backend'imiz");
+        assert!(s.active_connections >= 1, "at least our own backend");
         assert!(
             s.max_connections.unwrap_or(0) > 0,
-            "max_connections dolmalı"
+            "max_connections should be set"
         );
-        assert!(s.db_size_bytes.unwrap_or(0) > 0, "db boyutu pozitif");
+        assert!(s.db_size_bytes.unwrap_or(0) > 0, "db size positive");
         if let Some(r) = s.cache_hit_ratio {
-            assert!((0.0..=1.0).contains(&r), "oran 0..1: {r}");
+            assert!((0.0..=1.0).contains(&r), "ratio 0..1: {r}");
         }
     }
 }

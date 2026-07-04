@@ -1,7 +1,7 @@
-//! .sql dosya okuma/yazma (design 15 §P1-U4). Native dosya diyaloğu frontend'de
-//! `@tauri-apps/plugin-dialog` ile açılır; seçilen yolun içeriği bu komutlarla
-//! okunur/yazılır. Yol yalnız kullanıcının diyalogda seçtiği yoldur — bilinçli
-//! olarak full-fs plugin izni verilmez (design 15 §P1-U4 riski).
+//! Reading/writing .sql files. The native file dialog is opened on the frontend via
+//! `@tauri-apps/plugin-dialog`; the content of the chosen path is read/written by
+//! these commands. The path is only ever the one the user picked in the dialog — the
+//! full-fs plugin permission is deliberately NOT granted.
 
 use crate::error::AriadneError;
 

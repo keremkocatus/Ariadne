@@ -1,7 +1,8 @@
-//! Paylaşılan uygulama state'i (design 01 §3).
+//! Shared application state.
 //!
-//! `connections`: connection_id → aktif bağlantı (pool + ArcSwap cache). Cache
-//! immutable snapshot olarak tutulur; refresh yeni cache kurup atomik swap eder.
+//! `connections`: connection_id → active connection (pool + ArcSwap cache). The
+//! cache is held as an immutable snapshot; a refresh builds a new cache and swaps it
+//! in atomically.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -45,21 +46,21 @@ impl AppState {
 
 pub struct ActiveConnection {
     pub id: ConnectionId,
-    /// Bağlantıyı profiline geri bağlar (reconnect / pin çözümü — Phase 1).
+    /// Links the connection back to its profile (for reconnect / pin resolution).
     #[allow(dead_code)]
     pub profile_id: ProfileId,
     pub pool: PgPool,
     pub schema_cache: ArcSwap<SchemaCache>,
-    /// connect anındaki sunucu bilgisi (database/user/color) — `list_databases`
-    /// gibi komutlar bağlantının hangi DB'de olduğunu buradan okur.
+    /// Server info captured at connect time (database/user/color) — commands like
+    /// `list_databases` read which database the connection is on from here.
     pub info: ConnectionInfo,
-    /// Cursor'lar, tab session'ları, iptal için PID'ler (design 05).
+    /// Cursors, tab sessions, and PIDs for cancellation.
     pub exec: crate::db::exec::ExecRegistry,
-    /// Çalışan bir cache refresh var mı — üst üste istekleri birleştirir (design 03 §5 / 11 §H7).
+    /// Whether a cache refresh is in flight — coalesces overlapping requests.
     pub refreshing: AtomicBool,
 }
 
-/// connect dönüşü (design 02 §3).
+/// The return value of `connect`.
 #[derive(Debug, Clone, Serialize)]
 pub struct ConnectionInfo {
     pub connection_id: ConnectionId,
