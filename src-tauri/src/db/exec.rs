@@ -1,81 +1,28 @@
-//! Cursor'lu execution, iptal, pagination, tab=session transaction (design 05).
+//! Cursored execution, cancellation, pagination, and per-tab session transactions.
 //!
-//! Ana kısıt: 200M+ satırlık tablolar. Sonuç asla komple belleğe çekilmez;
-//! server-side cursor + FETCH ile sayfalanır. Her sorgu iptal edilebilir.
+//! Core constraint: tables with 200M+ rows. Results are never pulled fully into
+//! memory; they're paged with a server-side cursor + FETCH, and every query is
+//! cancellable.
+//!
+//! IPC types live in [`super::types`], statement classification in
+//! [`super::classify`], and row reading in [`super::rows`]; this file only holds the
+//! execution lifecycle.
 
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use serde::Serialize;
 use sqlx::pool::PoolConnection;
-use sqlx::{Column, Executor, PgPool, Postgres, Row, TypeInfo};
+use sqlx::{Executor, PgPool, Postgres, Row};
 use tokio::sync::Mutex;
 
+use super::classify::{classify, stmt_returns_rows, StmtInfo};
+use super::rows::{columns_from, read_rows};
+use super::types::{ColumnMeta, Confirmation, Page, RunResult, StatementResult, TxStatus};
 use crate::error::{AriadneError, ErrorKind};
 
 pub const PAGE_SIZE: i64 = 500;
-pub const MAX_CELL_BYTES: usize = 8 * 1024;
 
-// ---- Frontend sözleşmesi (design 02 §3) ----
-
-#[derive(Debug, Serialize)]
-pub struct RunResult {
-    pub query_id: String,
-    pub statements: Vec<StatementResult>,
-    pub tx_status: TxStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub needs_confirmation: Option<Confirmation>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum StatementResult {
-    Rows {
-        columns: Vec<ColumnMeta>,
-        first_page: Page,
-        truncated_cells: bool,
-    },
-    Affected {
-        command: String,
-        row_count: u64,
-    },
-    Empty {
-        command: String,
-    },
-}
-
-#[derive(Debug, Serialize)]
-pub struct ColumnMeta {
-    pub name: String,
-    pub type_name: String,
-    pub type_oid: u32,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Page {
-    pub rows: Vec<Vec<Option<String>>>,
-    pub has_more: bool,
-    pub fetched_total: usize,
-    pub elapsed_ms: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TxStatus {
-    Idle,
-    InTransaction,
-    Aborted,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Confirmation {
-    pub statement_index: usize,
-    pub kind: String, // "update" | "delete" | "truncate"
-    pub table: String,
-    pub estimated_rows: Option<i64>,
-}
-
-// ---- Tab durumu (design 05 §7: tab = session) ----
+// ---- Per-tab state (a tab is a session) ----
 
 struct Cursor {
     query_id: String,
@@ -84,13 +31,17 @@ struct Cursor {
 }
 
 struct TabState {
-    /// Açık cursor veya açık tx varken pool'a iade edilmeyen dedicated bağlantı.
+    /// Dedicated connection that isn't returned to the pool while a cursor or a
+    /// transaction is open.
     conn: Option<PoolConnection<Postgres>>,
     backend_pid: i32,
     tx: TxStatus,
-    /// Cursor'un yaşaması için Ariadne'nin açtığı iç READ ONLY tx (kullanıcı tx'i değil).
+    /// An internal READ ONLY transaction Ariadne opens to keep a cursor alive (not a
+    /// user transaction).
     internal_tx: bool,
     cursor: Option<Cursor>,
+    /// Last cursor activity (open/fetch), used for idle auto-close.
+    last_fetch: std::time::Instant,
 }
 
 impl TabState {
@@ -101,15 +52,17 @@ impl TabState {
             tx: TxStatus::Idle,
             internal_tx: false,
             cursor: None,
+            last_fetch: std::time::Instant::now(),
         }
     }
 }
 
-/// ActiveConnection'a asılı; tab'ları ve iptal için PID'leri tutar.
+/// Hangs off an ActiveConnection; holds tabs and the PIDs used for cancellation.
 #[derive(Default)]
 pub struct ExecRegistry {
     tabs: DashMap<String, Arc<Mutex<TabState>>>,
-    /// query_id → (tab_id, backend_pid) — iptal tab kilidi beklemeden PID'e ulaşsın.
+    /// query_id → (tab_id, backend_pid) — lets cancel reach the PID without waiting
+    /// on the tab lock.
     running: DashMap<String, (String, i32)>,
 }
 
@@ -119,6 +72,69 @@ impl ExecRegistry {
             .entry(tab_id.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(TabState::new())))
             .clone()
+    }
+
+    /// Called on disconnect: cancels running queries, closes open cursors/transactions,
+    /// and clears the registry. It never blocks on a lock (`try_lock`) — a still-running
+    /// query's connection returns to the pool when that query finishes (via cancel), and
+    /// closing the pool rolls back any open transactions server-side (no leak).
+    pub async fn shutdown(&self, pool: &PgPool) {
+        // 1) Cancel running queries from a separate connection → run_query unwinds with 57014.
+        let pids: Vec<i32> = self.running.iter().map(|e| e.value().1).collect();
+        for pid in pids {
+            if let Ok(mut c) = pool.acquire().await {
+                let _ = sqlx::query("SELECT pg_cancel_backend($1)")
+                    .bind(pid)
+                    .execute(&mut *c)
+                    .await;
+            }
+        }
+        self.running.clear();
+
+        // 2) Collect the tab Arcs + clear the map (don't hold the DashMap guard across await).
+        let tabs: Vec<Arc<Mutex<TabState>>> = self.tabs.iter().map(|e| e.value().clone()).collect();
+        self.tabs.clear();
+        for tab in tabs {
+            // Skip if a running query holds the lock; its conn is released when it finishes.
+            if let Ok(mut st) = tab.try_lock() {
+                close_cursor(&mut st).await;
+                if st.tx != TxStatus::Idle {
+                    if let Some(c) = st.conn.as_mut() {
+                        let _ = sqlx::query("ROLLBACK").execute(&mut **c).await;
+                    }
+                    st.tx = TxStatus::Idle;
+                }
+                st.conn = None;
+            }
+        }
+    }
+
+    /// Closes cursors backed by an **internal READ ONLY transaction** that has been
+    /// idle longer than `idle`, so long-open transactions don't hold back vacuum.
+    /// Returns the ids of the closed tabs (for the frontend's `result:frozen` event).
+    /// Cursors inside a user transaction are left alone — the user manages those.
+    pub async fn sweep_idle_cursors(&self, idle: std::time::Duration) -> Vec<String> {
+        let now = std::time::Instant::now();
+        let mut frozen = Vec::new();
+        // Collect the tab Arcs (don't hold the DashMap guard across await).
+        let entries: Vec<(String, Arc<Mutex<TabState>>)> = self
+            .tabs
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
+        for (tab_id, tab) in entries {
+            let Ok(mut st) = tab.try_lock() else { continue };
+            let is_idle_internal = st.cursor.is_some()
+                && st.internal_tx
+                && st.tx == TxStatus::Idle
+                && now.duration_since(st.last_fetch) >= idle;
+            if is_idle_internal {
+                close_cursor(&mut st).await; // also commits the internal tx
+                st.conn = None; // return to the pool
+                frozen.push(tab_id);
+            }
+        }
+        frozen
     }
 }
 
@@ -143,7 +159,7 @@ pub async fn run_query(
     let tab = reg.tab(args.tab_id);
     let mut st = tab.lock().await;
 
-    // Bağlantıyı hazırla (açık tx varsa pinned; yoksa pool'dan al).
+    // Prepare the connection (pinned if a tx is open; otherwise take one from the pool).
     if st.conn.is_none() {
         let mut c = pool.acquire().await.map_err(AriadneError::from)?;
         let pid: i32 = sqlx::query("SELECT pg_backend_pid()")
@@ -153,16 +169,20 @@ pub async fn run_query(
         st.backend_pid = pid;
         st.conn = Some(c);
     }
-    reg.running
-        .insert(args.query_id.to_string(), (args.tab_id.to_string(), st.backend_pid));
+    reg.running.insert(
+        args.query_id.to_string(),
+        (args.tab_id.to_string(), st.backend_pid),
+    );
 
-    // Önceki cursor'u kapat (yeni sorgu geldi).
+    // Close the previous cursor (a new query arrived).
     close_cursor(&mut st).await;
 
     let mut results: Vec<StatementResult> = Vec::new();
     let mut needs_confirmation = None;
+    let mut run_error: Option<AriadneError> = None;
+    let mut error_statement_index: Option<usize> = None;
 
-    // Row döndüren SON statement cursor yoluna girer; diğerleri normal.
+    // The LAST row-returning statement takes the cursor path; the rest run normally.
     let last_rows_idx = stmts
         .iter()
         .enumerate()
@@ -173,7 +193,7 @@ pub async fn run_query(
     for (idx, stmt) in stmts.iter().enumerate() {
         let info = classify(stmt);
 
-        // Destructive guard (design 05 §8).
+        // Destructive guard.
         if !args.confirmed {
             if let Some((kind, table)) = &info.destructive {
                 needs_confirmation = Some(Confirmation {
@@ -189,7 +209,7 @@ pub async fn run_query(
         let exec_res = if Some(idx) == last_rows_idx {
             open_cursor_and_fetch(&mut st, stmt, args.query_id, args.page_size, started).await
         } else if info.returns_rows {
-            // Row döndüren ama son olmayan: yine de çalıştır, ilk sayfayı al (cursorsuz).
+            // Row-returning but not the last one: still run it and take the first page (no cursor).
             run_inline_rows(&mut st, stmt, started).await
         } else {
             run_non_query(&mut st, stmt, &info).await
@@ -197,17 +217,24 @@ pub async fn run_query(
 
         match exec_res {
             Ok(r) => results.push(r),
-            Err(e) => {
+            Err(mut e) => {
+                // Postgres position is statement-local (1-based); shift it to the
+                // absolute position in the editor.
+                if let Some(pos) = e.position {
+                    e.position = Some(absolute_position(args.sql, stmt, pos));
+                }
                 if st.tx == TxStatus::InTransaction {
                     st.tx = TxStatus::Aborted;
                 }
-                finalize_conn(&mut st).await;
-                reg.running.remove(args.query_id);
-                return Err(e);
+                // Partial results: the statements accumulated so far are kept, the
+                // error is embedded in RunResult, and remaining statements don't run (psql-like).
+                run_error = Some(e);
+                error_statement_index = Some(idx);
+                break;
             }
         }
 
-        // Tx state machine (design 05 §7).
+        // Transaction state machine.
         if let Some(t) = info.tx_transition {
             st.tx = t;
         }
@@ -222,21 +249,37 @@ pub async fn run_query(
         statements: results,
         tx_status,
         needs_confirmation,
+        error: run_error,
+        error_statement_index,
     })
 }
 
-/// Cursor açık değilse ve tx idle ise bağlantıyı pool'a iade et.
+/// Converts a statement-local 1-based Postgres position into the absolute 1-based
+/// character position in the editor by adding the statement's start offset in the
+/// script. `stmt` must be a sub-slice of `sql` (pg_query::split returns slices); if
+/// it isn't, the offset falls back to 0 and the marker is still shown.
+fn absolute_position(sql: &str, stmt: &str, pos: u32) -> u32 {
+    let base = sql.as_ptr() as usize;
+    let byte_start = (stmt.as_ptr() as usize)
+        .checked_sub(base)
+        .filter(|&b| b <= sql.len())
+        .unwrap_or(0);
+    let char_start = sql.get(..byte_start).map_or(0, |s| s.chars().count());
+    pos + char_start as u32
+}
+
+/// Returns the connection to the pool if no cursor is open and the tx is idle.
 async fn finalize_conn(st: &mut TabState) {
     let keep = st.cursor.is_some() || st.tx != TxStatus::Idle;
     if !keep {
-        // İç cursor tx'i varsa commit et (cursor kapanınca).
+        // Commit the internal cursor tx if there was one (once the cursor is closed).
         if st.internal_tx {
             if let Some(c) = st.conn.as_mut() {
                 let _ = sqlx::query("COMMIT").execute(&mut **c).await;
             }
             st.internal_tx = false;
         }
-        st.conn = None; // drop → pool'a döner
+        st.conn = None; // drop → returns to the pool
         st.backend_pid = 0;
     }
 }
@@ -244,9 +287,11 @@ async fn finalize_conn(st: &mut TabState) {
 async fn close_cursor(st: &mut TabState) {
     if let Some(cur) = st.cursor.take() {
         if let Some(c) = st.conn.as_mut() {
-            let _ = sqlx::query(&format!("CLOSE {}", cur.name)).execute(&mut **c).await;
+            let _ = sqlx::query(&format!("CLOSE {}", cur.name))
+                .execute(&mut **c)
+                .await;
         }
-        // İç tx ile açıldıysa ve kullanıcı tx'i yoksa commit.
+        // If it was opened under the internal tx and there's no user tx, commit.
         if st.internal_tx && st.tx == TxStatus::Idle {
             if let Some(c) = st.conn.as_mut() {
                 let _ = sqlx::query("COMMIT").execute(&mut **c).await;
@@ -263,27 +308,56 @@ async fn open_cursor_and_fetch(
     page_size: i64,
     started: std::time::Instant,
 ) -> Result<StatementResult, AriadneError> {
-    let name = format!("ariadne_cur_{}", query_id.replace('-', "").get(..16).unwrap_or("cur"));
+    let name = format!(
+        "ariadne_cur_{}",
+        query_id.replace('-', "").get(..16).unwrap_or("cur")
+    );
     let conn = st.conn.as_mut().expect("conn").as_mut();
 
-    // Kullanıcı tx'i yoksa cursor için iç READ ONLY tx aç.
+    // Open an internal READ ONLY tx for the cursor if there's no user tx.
     if st.tx == TxStatus::Idle {
         sqlx::query("BEGIN READ ONLY").execute(&mut *conn).await?;
         st.internal_tx = true;
     }
+    // Semantic errors (missing table/column, …) surface at DECLARE time; Postgres
+    // reports the position relative to `decl`, so we subtract the prefix length to get
+    // the statement-local position — otherwise the marker is off by ~58 chars. The
+    // prefix is pure ASCII, so its byte length equals its character count.
     let decl = format!("DECLARE {name} NO SCROLL CURSOR FOR {stmt}");
-    sqlx::query(&decl).execute(&mut *conn).await?;
+    let prefix_len = (decl.len() - stmt.len()) as u32;
+    sqlx::query(&decl).execute(&mut *conn).await.map_err(|e| {
+        let mut ae = AriadneError::from(e);
+        ae.position = ae.position.map(|p| p.saturating_sub(prefix_len).max(1));
+        ae
+    })?;
 
     let fetch_sql = format!("FETCH FORWARD {page_size} FROM {name}");
-    let rows = conn.fetch_all(sqlx::raw_sql(&fetch_sql)).await.map_err(AriadneError::from)?;
-    let (columns, page_rows, truncated) = read_rows(&rows);
+    let rows = conn
+        .fetch_all(sqlx::raw_sql(&fetch_sql))
+        .await
+        .map_err(|e| {
+            // An error during FETCH (a rare runtime error) is positioned against the
+            // FETCH command and can't be mapped to the editor → drop the position so we
+            // don't show a wrong marker.
+            let mut ae = AriadneError::from(e);
+            ae.position = None;
+            ae
+        })?;
+    let (mut columns, page_rows, truncated) = read_rows(&rows);
     let has_more = page_rows.len() as i64 == page_size;
+    // A zero-row SELECT can't derive column names from a row, so fetch the real headers
+    // via describe → the grid renders with headers but an empty body, not a placeholder.
+    // Only in the empty case; on failure columns stay empty (the grid still opens).
+    if columns.is_empty() && page_rows.is_empty() {
+        columns = describe_columns(conn, stmt).await;
+    }
 
     st.cursor = Some(Cursor {
         query_id: query_id.to_string(),
         name,
         has_more,
     });
+    st.last_fetch = std::time::Instant::now();
 
     let fetched_total = page_rows.len();
     Ok(StatementResult::Rows {
@@ -304,8 +378,15 @@ async fn run_inline_rows(
     started: std::time::Instant,
 ) -> Result<StatementResult, AriadneError> {
     let conn = st.conn.as_mut().expect("conn").as_mut();
-    let rows = conn.fetch_all(sqlx::raw_sql(stmt)).await.map_err(AriadneError::from)?;
-    let (columns, page_rows, truncated) = read_rows(&rows);
+    let rows = conn
+        .fetch_all(sqlx::raw_sql(stmt))
+        .await
+        .map_err(AriadneError::from)?;
+    let (mut columns, page_rows, truncated) = read_rows(&rows);
+    // See open_cursor_and_fetch: fill headers via describe on a zero-row result.
+    if columns.is_empty() && page_rows.is_empty() {
+        columns = describe_columns(conn, stmt).await;
+    }
     let fetched_total = page_rows.len();
     Ok(StatementResult::Rows {
         columns,
@@ -325,7 +406,10 @@ async fn run_non_query(
     info: &StmtInfo,
 ) -> Result<StatementResult, AriadneError> {
     let conn = st.conn.as_mut().expect("conn").as_mut();
-    let res = conn.execute(sqlx::raw_sql(stmt)).await.map_err(AriadneError::from)?;
+    let res = conn
+        .execute(sqlx::raw_sql(stmt))
+        .await
+        .map_err(AriadneError::from)?;
     let command = info.command.clone();
     if info.is_dml {
         Ok(StatementResult::Affected {
@@ -334,6 +418,17 @@ async fn run_non_query(
         })
     } else {
         Ok(StatementResult::Empty { command })
+    }
+}
+
+/// Fetches column headers for a zero-row result via an extended-protocol describe
+/// (Parse+Describe; no Execute → side-effect free, safe for a SELECT). The round-trip
+/// happens only in the empty case; on failure it returns an empty Vec (the grid opens
+/// without a body).
+async fn describe_columns(conn: &mut sqlx::postgres::PgConnection, stmt: &str) -> Vec<ColumnMeta> {
+    match conn.describe(stmt).await {
+        Ok(d) => columns_from(d.columns()),
+        Err(_) => Vec::new(),
     }
 }
 
@@ -356,17 +451,26 @@ pub async fn fetch_page(reg: &ExecRegistry, query_id: &str) -> Result<Page, Aria
         return Err(AriadneError::new(ErrorKind::Internal, "No open cursor"));
     };
     if cur.query_id != query_id || !cur.has_more {
-        return Ok(Page { rows: vec![], has_more: false, fetched_total: 0, elapsed_ms: 0 });
+        return Ok(Page {
+            rows: vec![],
+            has_more: false,
+            fetched_total: 0,
+            elapsed_ms: 0,
+        });
     }
     let name = cur.name.clone();
     let conn = st.conn.as_mut().expect("conn").as_mut();
     let fetch_sql = format!("FETCH FORWARD {PAGE_SIZE} FROM {name}");
-    let rows = conn.fetch_all(sqlx::raw_sql(&fetch_sql)).await.map_err(AriadneError::from)?;
+    let rows = conn
+        .fetch_all(sqlx::raw_sql(&fetch_sql))
+        .await
+        .map_err(AriadneError::from)?;
     let (_, page_rows, _) = read_rows(&rows);
     let has_more = page_rows.len() as i64 == PAGE_SIZE;
     if let Some(cur) = st.cursor.as_mut() {
         cur.has_more = has_more;
     }
+    st.last_fetch = std::time::Instant::now();
     let fetched_total = page_rows.len();
     Ok(Page {
         rows: page_rows,
@@ -378,22 +482,29 @@ pub async fn fetch_page(reg: &ExecRegistry, query_id: &str) -> Result<Page, Aria
 
 fn find_tab_by_cursor(reg: &ExecRegistry, query_id: &str) -> Option<String> {
     reg.tabs.iter().find_map(|e| {
-        // lock beklemeden: try_lock (fetch bir sonraki run/close ile çakışmaz genelde)
+        // Don't wait on the lock: try_lock (a fetch rarely races with the next run/close).
         e.value().try_lock().ok().and_then(|st| {
-            st.cursor.as_ref().filter(|c| c.query_id == query_id).map(|_| e.key().clone())
+            st.cursor
+                .as_ref()
+                .filter(|c| c.query_id == query_id)
+                .map(|_| e.key().clone())
         })
     })
 }
 
-// ---- cancel_query (design 05 §3) ----
+// ---- cancel_query ----
 
-pub async fn cancel_query(reg: &ExecRegistry, pool: &PgPool, query_id: &str) -> Result<(), AriadneError> {
+pub async fn cancel_query(
+    reg: &ExecRegistry,
+    pool: &PgPool,
+    query_id: &str,
+) -> Result<(), AriadneError> {
     let Some(entry) = reg.running.get(query_id) else {
-        return Ok(()); // zaten bitmiş
+        return Ok(()); // already finished
     };
     let pid = entry.value().1;
     drop(entry);
-    // Havuzdan BAĞIMSIZ, tek atımlık bağlantı (çalışan FETCH'i bloklamaz).
+    // A one-shot connection INDEPENDENT of the pinned one (won't block the running FETCH).
     let mut c = pool.acquire().await.map_err(AriadneError::from)?;
     let _: bool = sqlx::query_scalar("SELECT pg_cancel_backend($1)")
         .bind(pid)
@@ -403,201 +514,108 @@ pub async fn cancel_query(reg: &ExecRegistry, pool: &PgPool, query_id: &str) -> 
     Ok(())
 }
 
-// ---- close_result (tab kapanınca / yeni sorgu) ----
+// ---- force_kill_query ----
+
+/// Kills a running query's backend with `pg_terminate_backend` — for a stuck query
+/// where cancel had no effect within a few seconds. The pid is resolved from the
+/// `running` map (the frontend doesn't know it); the connection drops server-side and
+/// the tab recovers via the banner path (releaseTabsForConnection). Returns whether a
+/// backend was found/signaled.
+pub async fn force_kill_query(
+    reg: &ExecRegistry,
+    pool: &PgPool,
+    query_id: &str,
+) -> Result<bool, AriadneError> {
+    let Some(entry) = reg.running.get(query_id) else {
+        return Ok(false); // already finished
+    };
+    let pid = entry.value().1;
+    drop(entry);
+    let mut c = pool.acquire().await.map_err(AriadneError::from)?;
+    let killed: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+        .bind(pid)
+        .fetch_one(&mut *c)
+        .await
+        .map_err(AriadneError::from)?;
+    Ok(killed)
+}
+
+// ---- close_result (on tab close / new query) ----
 
 pub async fn close_result(reg: &ExecRegistry, tab_id: &str) -> Result<(), AriadneError> {
     if let Some((_, tab)) = reg.tabs.remove(tab_id) {
         let mut st = tab.lock().await;
         close_cursor(&mut st).await;
-        // Açık kullanıcı tx'i varsa rollback (güvenli taraf).
+        // Roll back an open user tx (safe side).
         if st.tx != TxStatus::Idle {
             if let Some(c) = st.conn.as_mut() {
                 let _ = sqlx::query("ROLLBACK").execute(&mut **c).await;
             }
             st.tx = TxStatus::Idle;
         }
-        st.conn = None; // pool'a iade
+        st.conn = None; // return to the pool
     }
     Ok(())
-}
-
-// ---- Satır okuma (text format, design 02 §3 / 05 §4) ----
-
-fn read_rows(rows: &[sqlx::postgres::PgRow]) -> (Vec<ColumnMeta>, Vec<Vec<Option<String>>>, bool) {
-    let columns: Vec<ColumnMeta> = match rows.first() {
-        Some(r) => r
-            .columns()
-            .iter()
-            .map(|c| ColumnMeta {
-                name: c.name().to_string(),
-                type_name: c.type_info().name().to_string(),
-                type_oid: c.type_info().oid().map(|o| o.0).unwrap_or(0),
-            })
-            .collect(),
-        None => Vec::new(),
-    };
-    let mut truncated = false;
-    let out: Vec<Vec<Option<String>>> = rows
-        .iter()
-        .map(|r| {
-            (0..columns.len())
-                .map(|i| {
-                    let v: Option<String> = r.try_get_unchecked(i).unwrap_or(None);
-                    v.map(|s| {
-                        if s.len() > MAX_CELL_BYTES {
-                            truncated = true;
-                            let mut t: String = s.chars().take(MAX_CELL_BYTES).collect();
-                            t.push('…');
-                            t
-                        } else {
-                            s
-                        }
-                    })
-                })
-                .collect()
-        })
-        .collect();
-    (columns, out, truncated)
-}
-
-// ---- Statement sınıflandırma (pg_query AST) ----
-
-struct StmtInfo {
-    command: String,
-    is_dml: bool,
-    returns_rows: bool,
-    destructive: Option<(String, String)>, // (kind, table)
-    tx_transition: Option<TxStatus>,
-}
-
-fn stmt_returns_rows(sql: &str) -> bool {
-    classify(sql).returns_rows
-}
-
-fn classify(sql: &str) -> StmtInfo {
-    use pg_query::protobuf::node::Node as N;
-
-    let command = first_keyword(sql);
-    let mut info = StmtInfo {
-        command: command.clone(),
-        is_dml: matches!(command.as_str(), "INSERT" | "UPDATE" | "DELETE"),
-        returns_rows: false,
-        destructive: None,
-        tx_transition: None,
-    };
-
-    let Ok(parsed) = pg_query::parse(sql) else {
-        // Parse edilemezse: ilk kelimeye göre kaba tahmin.
-        info.returns_rows = matches!(command.as_str(), "SELECT" | "WITH" | "VALUES" | "TABLE" | "SHOW" | "EXPLAIN");
-        return info;
-    };
-    let Some(node) = parsed.protobuf.stmts.first().and_then(|s| s.stmt.as_ref()).and_then(|n| n.node.as_ref()) else {
-        return info;
-    };
-
-    match node {
-        N::SelectStmt(_) => info.returns_rows = true,
-        N::ExplainStmt(_) => info.returns_rows = true,
-        N::VariableShowStmt(_) => info.returns_rows = true,
-        N::InsertStmt(s) => {
-            info.returns_rows = !s.returning_list.is_empty();
-        }
-        N::UpdateStmt(s) => {
-            info.returns_rows = !s.returning_list.is_empty();
-            if s.where_clause.is_none() {
-                info.destructive = Some(("update".into(), rangevar_name(s.relation.as_ref())));
-            }
-        }
-        N::DeleteStmt(s) => {
-            info.returns_rows = !s.returning_list.is_empty();
-            if s.where_clause.is_none() {
-                info.destructive = Some(("delete".into(), rangevar_name(s.relation.as_ref())));
-            }
-        }
-        N::TruncateStmt(s) => {
-            let table = s
-                .relations
-                .first()
-                .and_then(|n| n.node.as_ref())
-                .map(|n| if let N::RangeVar(rv) = n { rv.relname.clone() } else { String::new() })
-                .unwrap_or_default();
-            info.destructive = Some(("truncate".into(), table));
-        }
-        N::TransactionStmt(s) => {
-            // Tip-güvenli enum (ham i32 değil): prost `kind()` yardımcısı.
-            use pg_query::protobuf::TransactionStmtKind as TK;
-            info.tx_transition = match s.kind() {
-                TK::TransStmtBegin | TK::TransStmtStart => Some(TxStatus::InTransaction),
-                TK::TransStmtCommit | TK::TransStmtRollback => Some(TxStatus::Idle),
-                _ => None,
-            };
-        }
-        _ => {}
-    }
-    info
-}
-
-fn rangevar_name(rv: Option<&pg_query::protobuf::RangeVar>) -> String {
-    rv.map(|r| r.relname.clone()).unwrap_or_default()
-}
-
-fn first_keyword(sql: &str) -> String {
-    sql.trim_start()
-        .split(|c: char| c.is_whitespace() || c == '(')
-        .find(|w| !w.is_empty())
-        .unwrap_or("")
-        .to_uppercase()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ---- Saf classify testleri (destructive guard + tx, design 05 §7-8) ----
+    // ---- Pure: shifting the error position by the statement offset ----
 
     #[test]
-    fn destructive_whereless() {
-        assert_eq!(classify("DELETE FROM orders").destructive, Some(("delete".into(), "orders".into())));
-        assert_eq!(classify("UPDATE orders SET total = 0").destructive, Some(("update".into(), "orders".into())));
-        assert_eq!(classify("TRUNCATE orders").destructive.map(|d| d.0), Some("truncate".to_string()));
+    fn absolute_position_shifts_to_editor_offset() {
+        let sql = "SELECT 1;\nSELECT oops FROM t";
+        let idx = sql.find("SELECT oops").unwrap(); // byte offset of the 2nd statement
+        let stmt = &sql[idx..]; // real sub-slice (as split_with_parser returns)
+        let char_start = sql[..idx].chars().count() as u32;
+        // Postgres pos=8 (statement-local 1-based) → absolute = char_start + 8.
+        assert_eq!(absolute_position(sql, stmt, 8), char_start + 8);
     }
 
     #[test]
-    fn safe_with_where_not_flagged() {
-        assert!(classify("DELETE FROM orders WHERE id = 1").destructive.is_none());
-        assert!(classify("UPDATE orders SET total = 0 WHERE id = 1").destructive.is_none());
-        // CTE'li ama WHERE'li DELETE false-positive vermemeli.
-        assert!(classify("WITH x AS (SELECT 1) DELETE FROM orders WHERE id IN (SELECT * FROM x)").destructive.is_none());
+    fn absolute_position_counts_chars_not_bytes() {
+        // 'é' is 2 bytes / 1 char: count characters, not the byte offset.
+        let sql = "SELECT 'é';\nSELECT x";
+        let idx = sql.find("SELECT x").unwrap();
+        let stmt = &sql[idx..];
+        let char_start = sql[..idx].chars().count() as u32;
+        assert!(char_start < idx as u32, "multibyte → chars < bytes");
+        assert_eq!(absolute_position(sql, stmt, 1), char_start + 1);
     }
 
     #[test]
-    fn tx_transitions() {
-        assert_eq!(classify("BEGIN").tx_transition, Some(TxStatus::InTransaction));
-        assert_eq!(classify("START TRANSACTION").tx_transition, Some(TxStatus::InTransaction));
-        assert_eq!(classify("COMMIT").tx_transition, Some(TxStatus::Idle));
-        assert_eq!(classify("ROLLBACK").tx_transition, Some(TxStatus::Idle));
+    fn absolute_position_non_subslice_is_safe() {
+        // Not a sub-slice: no overflow/panic; falls back to the raw pos (defensive).
+        let sql = "SELECT 1";
+        let foreign = String::from("SELECT 1");
+        let out = absolute_position(sql, &foreign, 3);
+        // char_start falls back to 0 → pos is preserved (barring a rare allocator collision).
+        assert!(out == 3 || out >= 3);
     }
 
-    #[test]
-    fn returns_rows_detection() {
-        assert!(classify("SELECT 1").returns_rows);
-        assert!(classify("WITH x AS (SELECT 1) SELECT * FROM x").returns_rows);
-        assert!(classify("INSERT INTO t VALUES (1) RETURNING id").returns_rows);
-        assert!(!classify("INSERT INTO t VALUES (1)").returns_rows);
-        assert!(!classify("UPDATE t SET x=1 WHERE id=1").returns_rows);
-    }
-
-    // ---- Canlı DB entegrasyonu: cursor + pagination + tx + cancel ----
-    // TEMP tablo kullanır (session-local, otomatik düşer) — kullanıcı verisine DOKUNMAZ.
+    // ---- Live-DB integration: cursor + pagination + tx + cancel ----
+    // Uses a TEMP table (session-local, dropped automatically) — never touches user data.
     // `ARIADNE_DATABASE_URL` + `cargo test -- --ignored`.
 
     async fn pool() -> PgPool {
         let url = std::env::var("ARIADNE_DATABASE_URL").expect("ARIADNE_DATABASE_URL");
-        sqlx::postgres::PgPoolOptions::new().max_connections(5).connect(&url).await.unwrap()
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&url)
+            .await
+            .unwrap()
     }
 
     fn args<'a>(sql: &'a str, tab: &'a str, qid: &'a str) -> RunArgs<'a> {
-        RunArgs { sql, tab_id: tab, query_id: qid, confirmed: false, page_size: 500 }
+        RunArgs {
+            sql,
+            tab_id: tab,
+            query_id: qid,
+            confirmed: false,
+            page_size: 500,
+        }
     }
 
     #[tokio::test]
@@ -606,20 +624,35 @@ mod tests {
         let pool = pool().await;
         let reg = ExecRegistry::default();
 
-        run_query(&reg, &pool, args("BEGIN", "t1", "q0")).await.unwrap();
-        run_query(&reg, &pool, args(
-            "CREATE TEMP TABLE t_ari(id int) ON COMMIT DROP; INSERT INTO t_ari SELECT g FROM generate_series(1,1200) g",
-            "t1", "q1",
-        )).await.unwrap();
+        run_query(&reg, &pool, args("BEGIN", "t1", "q0"))
+            .await
+            .unwrap();
+        run_query(
+            &reg,
+            &pool,
+            args(
+                "CREATE TEMP TABLE t_ari(id int) ON COMMIT DROP; INSERT INTO t_ari SELECT g FROM generate_series(1,1200) g",
+                "t1",
+                "q1",
+            ),
+        )
+        .await
+        .unwrap();
 
-        let r = run_query(&reg, &pool, args("SELECT * FROM t_ari ORDER BY id", "t1", "q2")).await.unwrap();
+        let r = run_query(
+            &reg,
+            &pool,
+            args("SELECT * FROM t_ari ORDER BY id", "t1", "q2"),
+        )
+        .await
+        .unwrap();
         assert_eq!(r.tx_status, TxStatus::InTransaction);
         match &r.statements[0] {
             StatementResult::Rows { first_page, .. } => {
                 assert_eq!(first_page.fetched_total, 500);
                 assert!(first_page.has_more);
             }
-            _ => panic!("Rows bekleniyordu"),
+            _ => panic!("expected Rows"),
         }
 
         let p2 = fetch_page(&reg, "q2").await.unwrap();
@@ -629,8 +662,10 @@ mod tests {
         assert_eq!(p3.fetched_total, 200);
         assert!(!p3.has_more);
 
-        // ROLLBACK → tx kapanır, temp tablo düşer, cursor kapanır.
-        let r = run_query(&reg, &pool, args("ROLLBACK", "t1", "q3")).await.unwrap();
+        // ROLLBACK → tx closes, temp table drops, cursor closes.
+        let r = run_query(&reg, &pool, args("ROLLBACK", "t1", "q3"))
+            .await
+            .unwrap();
         assert_eq!(r.tx_status, TxStatus::Idle);
     }
 
@@ -646,11 +681,83 @@ mod tests {
             run_query(&reg2, &p2, args("SELECT pg_sleep(10)", "tc", "qc")).await
         });
 
-        // Sorgunun başlamasını bekle, sonra iptal et.
+        // Wait for the query to start, then cancel it.
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
         cancel_query(&reg, &pool, "qc").await.unwrap();
 
+        // Partial-results contract: a cancel does not make run_query's outer Result an
+        // Err — it's embedded in RunResult.error as QueryCancelled.
+        let res = handle.await.unwrap().unwrap();
+        let err = res
+            .error
+            .expect("a cancelled query must carry RunResult.error");
+        assert!(
+            matches!(err.kind, ErrorKind::QueryCancelled),
+            "kind={:?}",
+            err.kind
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
+    async fn force_kill_terminates_backend() {
+        let pool = pool().await;
+        let reg = std::sync::Arc::new(ExecRegistry::default());
+        let p2 = pool.clone();
+        let reg2 = reg.clone();
+
+        let handle = tokio::spawn(async move {
+            run_query(&reg2, &p2, args("SELECT pg_sleep(10)", "tk", "qk")).await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        // pg_terminate_backend → true (the backend existed and was signaled).
+        let killed = force_kill_query(&reg, &pool, "qk").await.unwrap();
+        assert!(killed, "force_kill should signal an existing backend");
+
+        // Backend torn down → the query must end with an error. A FETCH error may be
+        // embedded as Ok(RunResult{error}) via the partial-results path, or a transport
+        // error may be Err; either way it is "not a clean success".
         let res = handle.await.unwrap();
-        assert!(res.is_err(), "iptal edilen sorgu hata dönmeli");
+        let errored = match &res {
+            Ok(rr) => rr.error.is_some(),
+            Err(_) => true,
+        };
+        assert!(errored, "a terminated query must end in error");
+
+        // For an already-finished query_id, false (not in the map).
+        let again = force_kill_query(&reg, &pool, "qk").await.unwrap();
+        assert!(!again, "false for a finished query");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
+    async fn zero_row_select_still_reports_columns() {
+        // A zero-row SELECT can't derive column names from a row; the describe fallback
+        // must fill in the real headers → the grid renders with headers but an empty
+        // body (not a placeholder).
+        let pool = pool().await;
+        let reg = ExecRegistry::default();
+        let r = run_query(
+            &reg,
+            &pool,
+            args("SELECT 1 AS id, 'x'::text AS label WHERE false", "tz", "qz"),
+        )
+        .await
+        .unwrap();
+        match &r.statements[0] {
+            StatementResult::Rows {
+                columns,
+                first_page,
+                ..
+            } => {
+                assert_eq!(first_page.fetched_total, 0, "expected 0 rows");
+                assert!(!first_page.has_more);
+                assert_eq!(columns.len(), 2, "describe should fill 2 columns");
+                assert_eq!(columns[0].name, "id");
+                assert_eq!(columns[1].name, "label");
+            }
+            other => panic!("expected Rows, got: {other:?}"),
+        }
     }
 }

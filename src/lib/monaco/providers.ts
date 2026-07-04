@@ -1,11 +1,17 @@
-// Monaco SQL provider'ları (design 04 §6, 07 §5). React ağacının DIŞINDA yaşar;
-// aktif bağlantıyı store'dan getState() ile okur.
+// Monaco SQL providers. They live OUTSIDE the React tree, registered once at the
+// language level, and read which connection to use from the value set by
+// `setActiveConnection` (not from a global store) — since App renders only the
+// active tab's SqlEditor at a time, that corresponds to that tab's connection.
 import * as monaco from "monaco-editor";
 import { getCompletions, getSignatureHelp, type CompletionKind } from "@/lib/api";
-import { useConnectionStore } from "@/stores/connectionStore";
 
 const LANG = "pgsql";
 let registered = false;
+let activeConnectionId: string | null = null;
+
+export function setActiveConnection(connectionId: string | null) {
+  activeConnectionId = connectionId;
+}
 
 export function registerSqlProviders() {
   if (registered) return;
@@ -14,7 +20,7 @@ export function registerSqlProviders() {
   monaco.languages.registerCompletionItemProvider(LANG, {
     triggerCharacters: [".", " ", "(", ","],
     async provideCompletionItems(model, position) {
-      const connId = useConnectionStore.getState().activeConnectionId;
+      const connId = activeConnectionId;
       if (!connId) return { suggestions: [] };
 
       const offset = model.getOffsetAt(position);
@@ -43,7 +49,7 @@ export function registerSqlProviders() {
             ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
             : undefined,
           detail: it.detail ?? undefined,
-          // Sıra Rust'tan gelir; Monaco'nun kendi sort'u sortText ile sabitlenir.
+          // Order comes from Rust; Monaco's own sort is pinned via sortText.
           sortText: it.sort_key,
           range,
         })),
@@ -55,7 +61,7 @@ export function registerSqlProviders() {
     signatureHelpTriggerCharacters: ["(", ","],
     signatureHelpRetriggerCharacters: [","],
     async provideSignatureHelp(model, position) {
-      const connId = useConnectionStore.getState().activeConnectionId;
+      const connId = activeConnectionId;
       if (!connId) return null;
       const offset = model.getOffsetAt(position);
       let sig;

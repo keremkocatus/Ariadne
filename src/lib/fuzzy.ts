@@ -1,5 +1,5 @@
-// Basit skorlu subsequence fuzzy matcher (design 04 §5 ile aynı ruh; frontend
-// tarafında explorer araması için). Harici crate yok.
+// A simple scored subsequence fuzzy matcher (for the explorer search on the
+// frontend). No external dependency.
 
 export interface FuzzyResult {
   matched: boolean;
@@ -7,8 +7,8 @@ export interface FuzzyResult {
 }
 
 /**
- * `query` karakterleri `text` içinde sırayla geçiyor mu? Geçiyorsa skor:
- * exact-prefix > kelime-başı > bitişik > serpiştirilmiş. Büyük skor = daha iyi.
+ * Do the characters of `query` occur in order within `text`? If so, the score ranks:
+ * exact-prefix > word-start > adjacent > scattered. Higher score = better.
  */
 export function fuzzyMatch(query: string, text: string): FuzzyResult {
   if (query.length === 0) return { matched: true, score: 0 };
@@ -26,8 +26,8 @@ export function fuzzyMatch(query: string, text: string): FuzzyResult {
     const c = t[ti];
     if (c === q[qi]) {
       let s = 10;
-      if (ti === prevMatch + 1) s += 15; // bitişik
-      if (wordStart) s += 20; // kelime başı (harf öncesi _/./- veya baş)
+      if (ti === prevMatch + 1) s += 15; // adjacent
+      if (wordStart) s += 20; // word start (preceded by _/./- or at the beginning)
       score += s;
       prevMatch = ti;
       qi++;
@@ -35,6 +35,6 @@ export function fuzzyMatch(query: string, text: string): FuzzyResult {
     wordStart = c === "_" || c === "." || c === "-";
   }
   if (qi < q.length) return { matched: false, score: 0 };
-  // Kısa isim eşleşmeleri hafif öne.
+  // Slightly favor matches on shorter names.
   return { matched: true, score: score - t.length };
 }

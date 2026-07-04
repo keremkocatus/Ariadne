@@ -1,145 +1,140 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { PanelLeft, Play, Square, Check, Undo2 } from "lucide-react";
+import { useCallback, useEffect } from "react";
 import { SqlEditor } from "@/components/editor/SqlEditor";
-import { ObjectInfoPanel } from "@/components/editor/ObjectInfoPanel";
-import { ResultGrid } from "@/components/grid/ResultGrid";
-import { Explorer } from "@/components/explorer/Explorer";
-import { ConnectionMenu } from "@/components/connection/ConnectionMenu";
+import { Sidebar } from "@/components/sidebar/Sidebar";
 import { TabBar } from "@/components/query/TabBar";
+import { ResultArea } from "@/components/query/ResultArea";
 import { ConfirmDialog } from "@/components/query/ConfirmDialog";
+import { CloseTabDialog } from "@/components/query/CloseTabDialog";
+import { ConnectionClosedBanner } from "@/components/query/ConnectionClosedBanner";
+import { EmptyStateCard } from "@/components/query/EmptyStateCard";
+import { SaveTabDialog } from "@/components/query/SaveTabDialog";
+import { Toolbar } from "@/components/layout/Toolbar";
+import { StatusBar } from "@/components/layout/StatusBar";
+import { ResizeHandle, HResizeHandle } from "@/components/layout/ResizeHandle";
+import { CommandPalette } from "@/components/layout/CommandPalette";
+import { SettingsDialog } from "@/components/layout/SettingsDialog";
+import { saveSqlFile } from "@/lib/fileActions";
+import { toast } from "sonner";
+import { offerReconnect } from "@/lib/sessionResume";
 import { registerEventBridge } from "@/lib/events";
+import { getRunSelection } from "@/lib/editorRun";
+import { useGlobalShortcuts } from "@/lib/shortcuts";
 import { useConnectionStore } from "@/stores/connectionStore";
-import { useSchemaStore } from "@/stores/schemaStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useTabsStore } from "@/stores/tabsStore";
-import type { ObjectInfo } from "@/lib/api";
+import { getFunctionSource, isAriadneError, type ObjectInfo, type SnapFn } from "@/lib/api";
 
 export default function App() {
-  const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
-  const activeInfo = useConnectionStore((s) => s.activeInfo());
-  const cacheEntry = useSchemaStore((s) =>
-    activeConnectionId ? s.byConnection[activeConnectionId] : undefined,
-  );
-  const { sidebarVisible, sidebarWidth, toggleSidebar, setSidebarWidth } = useUiStore();
+  const connections = useConnectionStore((s) => s.connections);
+  const { sidebarVisible, sidebarWidth, setSidebarWidth, resultsVisible, setResultsVisible, resultsHeight, setResultsHeight } =
+    useUiStore();
+  const editorFontSize = useUiStore((s) => s.settings.editorFontSize);
+  const theme = useUiStore((s) => s.settings.theme);
 
-  const tabs = useTabsStore((s) => s.tabs);
-  const activeTabId = useTabsStore((s) => s.activeTabId);
-  const { addTab, closeTab, setSql, run, fetchMore, cancel, txControl, dismissConfirmation } =
+  // Apply the color theme to the document root; the light overrides in index.css key off
+  // data-theme. Runs on mount and whenever the setting changes.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
+
+  const active = useTabsStore((s) => s.active());
+  const closeRequest = useTabsStore((s) => s.closeRequest);
+  const dirtyCloseRequest = useTabsStore((s) => s.dirtyCloseRequest);
+  const dirtyTab = useTabsStore((s) => s.tabs.find((t) => t.id === s.dirtyCloseRequest) ?? null);
+  const { addTab, setSql, run, fetchMore, dismissConfirmation, resolveClose, renameTab, setInfoResult } =
     useTabsStore();
-  const active = tabs.find((t) => t.id === activeTabId) ?? null;
+  // Explorer follows the active *tab's* connection, not the global active connection
+  // — switching tabs also switches the schema shown.
+  const tabConnectionId = active?.connectionId ?? null;
+  const tabConnectionInfo = tabConnectionId ? (connections[tabConnectionId] ?? null) : null;
+  const tabConnectionClosed = !!tabConnectionId && !tabConnectionInfo;
 
-  const [peek, setPeek] = useState<ObjectInfo | null>(null);
+  // Alt+F1 object info flows into the results area; open the panel if it's hidden.
+  const showObjectInfo = useCallback(
+    (info: ObjectInfo | null) => {
+      if (!active || !info) return;
+      setInfoResult(active.id, info);
+      if (!resultsVisible) setResultsVisible(true);
+    },
+    [active, resultsVisible, setInfoResult, setResultsVisible],
+  );
 
   useEffect(() => {
     const p = registerEventBridge();
     return () => void p.then((un) => un());
   }, []);
 
-  // Açılışta bir tab garanti et.
+  // Guarantee one tab at startup.
   useEffect(() => {
     if (useTabsStore.getState().tabs.length === 0) addTab();
   }, [addTab]);
 
+  // Startup reconnect invite once profiles load. offerReconnect is once-guarded
+  // internally; silent if there are no matching restored tabs.
+  useEffect(() => {
+    void useConnectionStore.getState().loadProfiles().then(offerReconnect);
+  }, []);
+
+  useGlobalShortcuts();
+
   const runActive = useCallback(() => {
-    if (active) void run(active.id);
+    // If there's a selection, run only it; otherwise the full text.
+    if (active) void run(active.id, getRunSelection() ?? undefined);
   }, [active, run]);
 
   const openRelation = useCallback(
     (schema: string, name: string) => {
-      const id = addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`);
+      // The new tab binds to the connection the Explorer shows (the active tab's) —
+      // the global active connection may differ. sourceTable is set → cell editing
+      // can be enabled.
+      const id = addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`, tabConnectionId, {
+        schema,
+        name,
+      });
       void run(id);
     },
-    [addTab, run],
+    [addTab, run, tabConnectionId],
   );
 
-  // Global kısayollar (design 07 §3).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const k = e.key.toLowerCase();
-      if (e.ctrlKey && k === "b") {
-        e.preventDefault();
-        toggleSidebar();
-      } else if (e.ctrlKey && k === "t") {
-        e.preventDefault();
-        addTab("");
-      } else if (e.ctrlKey && k === "w") {
-        e.preventDefault();
-        if (activeTabId) closeTab(activeTabId);
+  // Double-click a function → open its source in a new editable tab.
+  const openFunction = useCallback(
+    async (fn: SnapFn) => {
+      if (!tabConnectionId) return;
+      try {
+        const src = await getFunctionSource(tabConnectionId, fn.oid);
+        const id = addTab(src, tabConnectionId);
+        renameTab(id, fn.name);
+      } catch (e) {
+        toast.error("Couldn't open function source", {
+          description: isAriadneError(e) ? e.message : String(e),
+        });
       }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [toggleSidebar, addTab, closeTab, activeTabId]);
+    },
+    [addTab, renameTab, tabConnectionId],
+  );
 
   const q = active?.query;
+  // Marker: if a selection ran, shift the offset into the full text; when the SQL is
+  // edited (markerStale) the marker is hidden but the error banner stays.
   const errorMarker =
-    q?.error && q.error.position != null
-      ? { offset: q.error.position - 1, message: q.error.message }
+    q?.error && q.error.position != null && !q.markerStale
+      ? { offset: q.error.position - 1 + q.selectionOffset, message: q.error.message }
       : null;
 
   return (
     <div className="flex h-full flex-col bg-bg text-fg">
-      {/* Toolbar */}
-      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-2">
-        <button
-          className="rounded p-1 text-fg-muted hover:bg-bg-elev hover:text-fg"
-          onClick={toggleSidebar}
-          title="Sidebar (Ctrl+B)"
-        >
-          <PanelLeft size={15} />
-        </button>
-        <ConnectionMenu />
-        {q?.running ? (
-          <button
-            onClick={() => active && cancel(active.id)}
-            className="inline-flex items-center gap-1.5 rounded border border-danger/50 px-2.5 py-1 text-xs font-medium text-danger hover:bg-danger/10"
-            title="Cancel (Esc)"
-          >
-            <Square size={11} /> Cancel
-          </button>
-        ) : (
-          <button
-            onClick={runActive}
-            disabled={!activeConnectionId}
-            className="inline-flex items-center gap-1.5 rounded border border-fg bg-fg px-2.5 py-1 text-xs font-medium text-bg hover:opacity-90 disabled:opacity-40"
-            title="Ctrl+Enter / Ctrl+E / F5"
-          >
-            <Play size={12} /> Run
-          </button>
-        )}
+      <Toolbar />
 
-        {q && q.txStatus !== "idle" && active && (
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => txControl(active.id, "COMMIT")}
-              className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:border-fg-muted"
-            >
-              <Check size={11} /> Commit
-            </button>
-            <button
-              onClick={() => txControl(active.id, "ROLLBACK")}
-              className="inline-flex items-center gap-1 rounded border border-warn/50 px-2 py-1 text-xs text-warn hover:bg-warn/10"
-            >
-              <Undo2 size={11} /> Rollback
-            </button>
-            {q.txStatus === "aborted" && (
-              <span className="text-[11px] text-danger">Transaction aborted — rollback first</span>
-            )}
-          </div>
-        )}
-
-        <div className="ml-auto font-mono text-[11px] tracking-wide text-fg-muted">ariadne</div>
-      </header>
-
-      {/* Gövde */}
+      {/* Body */}
       <div className="flex min-h-0 flex-1">
         {sidebarVisible && (
           <>
             <aside style={{ width: sidebarWidth }} className="shrink-0 border-r border-border">
-              <Explorer
-                connectionId={activeConnectionId}
-                profileId={activeInfo?.profile_id ?? null}
+              <Sidebar
+                connectionId={tabConnectionId}
+                profileId={tabConnectionInfo?.profile_id ?? null}
                 onOpenRelation={openRelation}
+                onOpenFunction={openFunction}
               />
             </aside>
             <ResizeHandle width={sidebarWidth} onResize={setSidebarWidth} />
@@ -150,20 +145,32 @@ export default function App() {
           <TabBar />
           {active ? (
             <>
-              <div className="relative min-h-0 flex-[3] border-b border-border">
-                <SqlEditor
-                  key={active.id}
-                  value={active.sql}
-                  onChange={(v) => setSql(active.id, v)}
-                  onRun={runActive}
-                  onPeek={setPeek}
-                  marker={errorMarker}
-                />
-                {peek && <ObjectInfoPanel info={peek} onClose={() => setPeek(null)} />}
+              <div className="relative flex min-h-0 flex-1 flex-col border-b border-border">
+                {tabConnectionClosed && <ConnectionClosedBanner tabId={active.id} />}
+                <div className="relative min-h-0 flex-1">
+                  <SqlEditor
+                    key={active.id}
+                    value={active.sql}
+                    connectionId={tabConnectionId}
+                    onChange={(v) => setSql(active.id, v)}
+                    onRun={runActive}
+                    onPeek={showObjectInfo}
+                    marker={errorMarker}
+                    fontSize={editorFontSize}
+                    theme={theme}
+                  />
+                  <EmptyStateCard />
+                </div>
               </div>
-              <div className="min-h-0 flex-[2] overflow-hidden bg-bg">
-                <ResultArea tabId={active.id} onFetchMore={() => fetchMore(active.id)} />
-              </div>
+              {resultsVisible && (
+                <>
+                  {/* Vertical resize handle between the editor and results. */}
+                  <HResizeHandle height={resultsHeight} onResize={setResultsHeight} />
+                  <div style={{ height: resultsHeight }} className="min-h-0 shrink-0 overflow-hidden bg-bg">
+                    <ResultArea tabId={active.id} onFetchMore={() => fetchMore(active.id)} />
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <div className="flex-1" />
@@ -171,110 +178,44 @@ export default function App() {
         </main>
       </div>
 
-      {/* Status bar */}
-      <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-border px-2 text-[11px] text-fg-muted">
-        {activeInfo ? (
-          <>
-            <span className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full" style={{ background: activeInfo.color || "#4ade80" }} />
-              {activeInfo.database} · PostgreSQL {activeInfo.server_version.split(" ")[0]}
-            </span>
-            <span>cache: {cacheEntry?.snapshot ? relTime(cacheEntry.snapshot.fetched_at) : "—"}</span>
-          </>
-        ) : (
-          <span>no connection</span>
-        )}
-        <span className="ml-auto">v0.0.0</span>
-      </footer>
+      <StatusBar />
 
       {q?.needsConfirmation && active && (
         <ConfirmDialog
           conf={q.needsConfirmation}
           onConfirm={() => {
+            // The confirmed run must use the SAME opts (a selection if it was one) — pendingRun.
+            const opts = { ...(q.pendingRun ?? {}), confirmed: true };
             dismissConfirmation(active.id);
-            void run(active.id, true);
+            void run(active.id, opts);
           }}
           onCancel={() => dismissConfirmation(active.id)}
         />
       )}
+
+      {closeRequest && (
+        <CloseTabDialog
+          onCommit={() => void resolveClose("commit")}
+          onRollback={() => void resolveClose("rollback")}
+          onCancel={() => void resolveClose("cancel")}
+        />
+      )}
+
+      {dirtyCloseRequest && dirtyTab && (
+        <SaveTabDialog
+          fileName={dirtyTab.title}
+          onSave={() =>
+            void saveSqlFile(dirtyCloseRequest).then((ok) => {
+              if (ok) useTabsStore.getState().forceCloseTab(dirtyCloseRequest);
+            })
+          }
+          onDiscard={() => useTabsStore.getState().forceCloseTab(dirtyCloseRequest)}
+          onCancel={() => useTabsStore.getState().cancelDirtyClose()}
+        />
+      )}
+
+      <CommandPalette />
+      <SettingsDialog />
     </div>
   );
-}
-
-function ResultArea({ tabId, onFetchMore }: { tabId: string; onFetchMore: () => void }) {
-  const tab = useTabsStore((s) => s.tabs.find((t) => t.id === tabId));
-  const q = tab?.query;
-  if (!q) return null;
-
-  if (q.error) {
-    // İptal edilen sorgu hata gibi gösterilmez (design 05 §3).
-    if (q.error.kind === "query_cancelled") {
-      return <p className="p-3 font-mono text-xs text-fg-muted">Query cancelled.</p>;
-    }
-    return (
-      <pre className="whitespace-pre-wrap p-3 font-mono text-xs text-danger">
-        [{q.error.kind}
-        {q.error.sqlstate ? ` ${q.error.sqlstate}` : ""}] {q.error.message}
-        {q.error.hint ? `\nHINT: ${q.error.hint}` : ""}
-      </pre>
-    );
-  }
-  if (q.columns.length > 0) {
-    return (
-      <ResultGrid
-        columns={q.columns}
-        rows={q.rows}
-        hasMore={q.hasMore}
-        fetchingMore={q.fetchingMore}
-        capped={q.capped}
-        fetchedTotal={q.fetchedTotal}
-        elapsedMs={q.elapsedMs}
-        onFetchMore={onFetchMore}
-      />
-    );
-  }
-  if (q.extra.length > 0) {
-    return (
-      <div className="space-y-1 p-3 font-mono text-xs">
-        {q.extra.map((s, i) => (
-          <div key={i} className={s.kind === "empty" ? "text-fg-muted" : ""}>
-            {s.kind === "affected"
-              ? `${s.command} — ${s.row_count} row(s)`
-              : s.kind === "empty"
-                ? s.command
-                : ""}
-          </div>
-        ))}
-      </div>
-    );
-  }
-  return (
-    <p className="p-3 font-mono text-xs text-fg-muted">
-      {q.running ? "Running…" : "Results will appear here. Run with Ctrl+Enter."}
-    </p>
-  );
-}
-
-function ResizeHandle({ width, onResize }: { width: number; onResize: (w: number) => void }) {
-  const startX = useRef(0);
-  const startW = useRef(0);
-  const onDown = (e: React.MouseEvent) => {
-    startX.current = e.clientX;
-    startW.current = width;
-    const onMove = (ev: MouseEvent) => onResize(startW.current + (ev.clientX - startX.current));
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-  return <div onMouseDown={onDown} className="w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-border" />;
-}
-
-function relTime(iso: string): string {
-  const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (secs < 60) return `${Math.floor(secs)}s ago`;
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-  return `${Math.floor(secs / 3600)}h ago`;
 }

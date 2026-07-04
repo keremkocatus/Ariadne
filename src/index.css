@@ -1,9 +1,9 @@
 @import "tailwindcss";
 
 /*
- * Ariadne theme — siyah-beyaz monokrom minimalizm (design 07 §4).
- * Renk yalnızca hata/uyarı/profil-şeridi sinyallerinde kullanılır.
- * Tailwind v4: tema token'ları @theme ile CSS değişkeni olarak tanımlanır.
+ * Ariadne theme — black-and-white monochrome minimalism.
+ * Color is used only for error/warning/profile-stripe signals.
+ * Tailwind v4: theme tokens are defined as CSS variables via @theme.
  */
 @theme {
   --color-bg: #0b0b0c;
@@ -12,11 +12,27 @@
   --color-fg: #ededed;
   --color-fg-muted: #8a8a90;
   --color-accent: #ededed;
-  /* Sinyal renkleri — sadece hata/uyarı için */
+  /* Signal colors — for errors/warnings only */
   --color-danger: #e5484d;
   --color-warn: #f5a524;
   --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Menlo, Consolas,
     monospace;
+}
+
+/*
+ * Light theme: overrides the @theme tokens under a higher-specificity selector so the
+ * generated utilities (bg-bg, text-fg, border-border, …) resolve to light values. The
+ * document root gets data-theme="light" from the theme setting. Signal colors are kept.
+ */
+:root[data-theme="light"] {
+  --color-bg: #ffffff;
+  --color-bg-elev: #f4f4f5;
+  --color-border: #d9d9de;
+  --color-fg: #18181b;
+  --color-fg-muted: #6b6b73;
+  --color-accent: #18181b;
+  --color-danger: #d21c22;
+  --color-warn: #b5760a;
 }
 
 html,
@@ -35,7 +51,7 @@ body {
   overflow: hidden;
 }
 
-/* Ortak scrollbar — ince, monokrom */
+/* Shared scrollbar — thin, monochrome */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;

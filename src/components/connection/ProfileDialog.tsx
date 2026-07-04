@@ -17,9 +17,9 @@ const SSL_MODES: SslMode[] = ["disable", "prefer", "require", "verify_ca", "veri
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  /** Düzenlenecek profil; yoksa yeni profil. */
+  /** The profile to edit; if absent, a new profile. */
   existing?: ConnectionProfile | null;
-  /** Kaydettikten sonra hemen bağlan. */
+  /** Connect immediately after saving. */
   onSaved?: (profileId: string) => void;
 }
 

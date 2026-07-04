@@ -1,9 +1,9 @@
-//! Catalog sorguları → SchemaCache (design 03 §2).
+//! Catalog queries → SchemaCache.
 //!
-//! `information_schema` değil `pg_catalog` kullanılır (daha hızlı, daha zengin).
-//! 4 sorgu `tokio::join!` ile paralel atılır. Sistem şemaları (`pg_catalog`,
-//! `information_schema`) M1'de nesne olarak ÇEKİLMEZ (cache'i yalın tutmak için);
-//! yalnızca şema düğümü olarak listelenir. [design sapması: bilinçli, sonra revize]
+//! Uses `pg_catalog` rather than `information_schema` (faster and richer). Four
+//! queries run in parallel via `tokio::join!`. System schemas (`pg_catalog`,
+//! `information_schema`) are NOT fetched as objects (to keep the cache lean); they're
+//! only listed as schema nodes.
 
 use std::collections::HashMap;
 
@@ -11,17 +11,17 @@ use chrono::Utc;
 use sqlx::{PgPool, Row};
 
 use super::{
-    ArgMode, Column, FkEdge, FnArg, Function, FnKind, RelKind, SchemaCache, SchemaInfo, Table,
+    ArgMode, Column, FkEdge, FnArg, FnKind, Function, RelKind, SchemaCache, SchemaInfo, Table,
     TableId,
 };
 use crate::error::AriadneError;
 
-/// Sistem şemalarını nesne sorgularından dışlayan WHERE parçası.
+/// WHERE fragment that excludes system schemas from object queries.
 const NOT_SYSTEM: &str = "n.nspname NOT LIKE 'pg\\_temp\\_%' \
      AND n.nspname NOT LIKE 'pg\\_toast%' \
      AND n.nspname NOT IN ('pg_catalog', 'information_schema')";
 
-/// Tüm katalog verisini paralel çekip immutable SchemaCache kurar.
+/// Fetches all catalog data in parallel and builds an immutable SchemaCache.
 pub async fn fetch_schema_cache(pool: &PgPool) -> Result<SchemaCache, AriadneError> {
     let (schemas, tables_res, constraints_res, functions_res, search_path, server_version) = tokio::join!(
         fetch_schemas(pool),
@@ -39,13 +39,11 @@ pub async fn fetch_schema_cache(pool: &PgPool) -> Result<SchemaCache, AriadneErr
     let search_path = search_path?;
     let server_version = server_version?;
 
-    // attnum → columns indeksi (her tablo için) — PK/FK çözümünde kullanılır.
-    let attnum_maps: HashMap<TableId, HashMap<i16, usize>> = tables
-        .iter()
-        .map(|t| (t.id, t.attnum_index()))
-        .collect();
+    // attnum → columns index (per table) — used to resolve PK/FK columns.
+    let attnum_maps: HashMap<TableId, HashMap<i16, usize>> =
+        tables.iter().map(|t| (t.id, t.attnum_index())).collect();
 
-    // PK'ları tablolara işle, FK'ları grafiğe çevir.
+    // Apply PKs onto the tables, and turn FKs into the graph.
     let mut fks: Vec<FkEdge> = Vec::new();
     let table_index: HashMap<TableId, usize> =
         tables.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
@@ -56,8 +54,11 @@ pub async fn fetch_schema_cache(pool: &PgPool) -> Result<SchemaCache, AriadneErr
                 if let (Some(&ti), Some(amap)) =
                     (table_index.get(&c.table_oid), attnum_maps.get(&c.table_oid))
                 {
-                    tables[ti].primary_key =
-                        c.conkey.iter().filter_map(|a| amap.get(a).copied()).collect();
+                    tables[ti].primary_key = c
+                        .conkey
+                        .iter()
+                        .filter_map(|a| amap.get(a).copied())
+                        .collect();
                 }
             }
             b'f' => {
@@ -68,9 +69,17 @@ pub async fn fetch_schema_cache(pool: &PgPool) -> Result<SchemaCache, AriadneErr
                 if let (Some(from_map), Some(to_map)) = (from_map, to_map) {
                     fks.push(FkEdge {
                         from_table: c.table_oid,
-                        from_cols: c.conkey.iter().filter_map(|a| from_map.get(a).copied()).collect(),
+                        from_cols: c
+                            .conkey
+                            .iter()
+                            .filter_map(|a| from_map.get(a).copied())
+                            .collect(),
                         to_table: c.ref_table_oid,
-                        to_cols: c.confkey.iter().filter_map(|a| to_map.get(a).copied()).collect(),
+                        to_cols: c
+                            .confkey
+                            .iter()
+                            .filter_map(|a| to_map.get(a).copied())
+                            .collect(),
                         constraint_name: c.name,
                     });
                 }
@@ -90,7 +99,7 @@ pub async fn fetch_schema_cache(pool: &PgPool) -> Result<SchemaCache, AriadneErr
     ))
 }
 
-// ---- Sorgu 1: şemalar ----
+// ---- Query 1: schemas ----
 
 async fn fetch_schemas(pool: &PgPool) -> Result<Vec<SchemaInfo>, AriadneError> {
     let rows = sqlx::query(
@@ -115,7 +124,7 @@ async fn fetch_schemas(pool: &PgPool) -> Result<Vec<SchemaInfo>, AriadneError> {
         .collect()
 }
 
-// ---- Sorgu 2: tablolar + kolonlar (satır = kolon) ----
+// ---- Query 2: tables + columns (one row per column) ----
 
 async fn fetch_tables(pool: &PgPool) -> Result<Vec<Table>, AriadneError> {
     let sql = format!(
@@ -135,7 +144,7 @@ async fn fetch_tables(pool: &PgPool) -> Result<Vec<Table>, AriadneError> {
     );
     let rows = sqlx::query(&sql).fetch_all(pool).await?;
 
-    // oid sırasında gruplanmış; Vec'te sırayı korumak için ayrı index tutulur.
+    // Grouped in oid order; a separate index keeps the Vec order stable.
     let mut tables: Vec<Table> = Vec::new();
     let mut idx: HashMap<TableId, usize> = HashMap::new();
 
@@ -165,13 +174,17 @@ async fn fetch_tables(pool: &PgPool) -> Result<Vec<Table>, AriadneError> {
             }
         };
 
-        // LEFT JOIN: kolonsuz tablo/sequence'ta attnum NULL gelir.
+        // LEFT JOIN: attnum comes back NULL for a column-less table/sequence.
         if let Some(attnum) = r.try_get::<Option<i16>, _>("attnum")? {
             tables[ti].columns.push(Column {
                 name: r.try_get("col_name")?,
-                type_name: r.try_get::<Option<String>, _>("type_name")?.unwrap_or_default(),
+                type_name: r
+                    .try_get::<Option<String>, _>("type_name")?
+                    .unwrap_or_default(),
                 not_null: r.try_get::<Option<bool>, _>("not_null")?.unwrap_or(false),
-                has_default: r.try_get::<Option<bool>, _>("has_default")?.unwrap_or(false),
+                has_default: r
+                    .try_get::<Option<bool>, _>("has_default")?
+                    .unwrap_or(false),
                 comment: r.try_get("col_comment")?,
                 attnum,
             });
@@ -181,7 +194,7 @@ async fn fetch_tables(pool: &PgPool) -> Result<Vec<Table>, AriadneError> {
     Ok(tables)
 }
 
-// ---- Sorgu 3: constraint'ler (PK + FK) ----
+// ---- Query 3: constraints (PK + FK) ----
 
 struct RawConstraint {
     table_oid: TableId,
@@ -218,14 +231,16 @@ async fn fetch_constraints(pool: &PgPool) -> Result<Vec<RawConstraint>, AriadneE
         .collect()
 }
 
-// ---- Sorgu 4: fonksiyonlar ----
+// ---- Query 4: functions ----
 
 async fn fetch_functions(pool: &PgPool) -> Result<Vec<Function>, AriadneError> {
     let sql = format!(
         "SELECT p.oid::int8 AS oid, n.nspname AS schema, p.proname AS name, \
                 pg_catalog.pg_get_function_arguments(p.oid) AS args, \
                 pg_catalog.pg_get_function_result(p.oid) AS result, \
-                p.prokind AS prokind, obj_description(p.oid, 'pg_proc') AS comment \
+                p.prokind AS prokind, \
+                (p.prorettype = 'pg_catalog.trigger'::pg_catalog.regtype) AS is_trigger, \
+                obj_description(p.oid, 'pg_proc') AS comment \
          FROM pg_catalog.pg_proc p \
          JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
          WHERE {NOT_SYSTEM}"
@@ -244,13 +259,14 @@ async fn fetch_functions(pool: &PgPool) -> Result<Vec<Function>, AriadneError> {
                     .try_get::<Option<String>, _>("result")?
                     .unwrap_or_else(|| "void".to_string()),
                 kind: FnKind::from_pg(r.try_get("prokind")?),
+                is_trigger: r.try_get::<Option<bool>, _>("is_trigger")?.unwrap_or(false),
                 comment: r.try_get("comment")?,
             })
         })
         .collect()
 }
 
-// ---- Yardımcı sorgular ----
+// ---- Helper queries ----
 
 async fn fetch_search_path(pool: &PgPool) -> Result<Vec<String>, AriadneError> {
     let row = sqlx::query("SHOW search_path").fetch_one(pool).await?;
@@ -267,11 +283,11 @@ async fn fetch_server_version(pool: &PgPool) -> Result<String, AriadneError> {
     Ok(row.try_get(0)?)
 }
 
-// ---- pg_get_function_arguments string parser'ı (design 08 §1 test hedefi) ----
+// ---- Parser for the pg_get_function_arguments string ----
 
 /// "user_id integer, amount numeric(10,2) DEFAULT 0, VARIADIC tags text[]"
-/// → Vec<FnArg>. Tip içinde virgül olabildiği için (numeric(10,2)) paren-derinliği
-/// gözetilerek bölünür; mode öneki ve DEFAULT soneki ayrıştırılır.
+/// → Vec<FnArg>. Because a type can contain commas (numeric(10,2)), the split
+/// respects paren depth; the mode prefix and DEFAULT suffix are parsed off.
 pub fn parse_function_args(s: &str) -> Vec<FnArg> {
     let s = s.trim();
     if s.is_empty() {
@@ -288,10 +304,10 @@ fn parse_one_arg(part: &str) -> Option<FnArg> {
         return None;
     }
 
-    // 1) Mode öneki
+    // 1) Mode prefix
     let (mode, rest) = strip_mode(part);
 
-    // 2) DEFAULT soneki (paren-derinliği 0'da ilk " DEFAULT ")
+    // 2) DEFAULT suffix (first " DEFAULT " at paren depth 0)
     let (rest, has_default) = match find_default(rest) {
         Some(i) => (rest[..i].trim(), true),
         None => (rest.trim(), false),
@@ -300,8 +316,8 @@ fn parse_one_arg(part: &str) -> Option<FnArg> {
         return None;
     }
 
-    // 3) name + type ayrımı. İlk token bir identifier VE bilinen bir tip anahtar
-    //    kelimesi değilse arg adıdır; kalanı tiptir. Aksi halde tamamı tiptir.
+    // 3) Split name + type. If the first token is an identifier AND not a known type
+    //    lead-word, it's the arg name and the rest is the type. Otherwise it's all type.
     let (name, type_name) = match rest.split_once(char::is_whitespace) {
         Some((first, tail)) if is_ident(first) && !is_type_leadword(first) => {
             (Some(first.to_string()), tail.trim().to_string())
@@ -331,7 +347,7 @@ fn strip_mode(part: &str) -> (ArgMode, &str) {
     (ArgMode::In, part)
 }
 
-/// Paren-derinliği 0'da ilk " DEFAULT " veya " = " konumunu bulur.
+/// Finds the first " DEFAULT " or " = " at paren depth 0.
 fn find_default(s: &str) -> Option<usize> {
     let bytes = s.as_bytes();
     let mut depth = 0i32;
@@ -356,7 +372,7 @@ fn find_default(s: &str) -> Option<usize> {
     None
 }
 
-/// Verilen ayraçta, paren/bracket derinliği 0'da böler.
+/// Splits on `delim` at paren/bracket depth 0.
 fn split_top_level(s: &str, delim: char) -> Vec<&str> {
     let mut out = Vec::new();
     let bytes = s.as_bytes();
@@ -386,18 +402,65 @@ fn is_ident(s: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Çok kelimeli/anahtar tiplerin ilk kelimesi (arg adı sanılmasın diye).
+/// The first word of multi-word / keyword types (so it isn't mistaken for an arg name).
 fn is_type_leadword(w: &str) -> bool {
     matches!(
         w.to_ascii_lowercase().as_str(),
-        "bigint" | "int8" | "integer" | "int" | "int4" | "smallint" | "int2" | "bigserial"
-            | "serial" | "smallserial" | "boolean" | "bool" | "real" | "float4" | "float8"
-            | "double" | "numeric" | "decimal" | "money" | "text" | "varchar" | "char"
-            | "character" | "bpchar" | "name" | "bytea" | "date" | "time" | "timestamp"
-            | "timestamptz" | "timetz" | "interval" | "uuid" | "json" | "jsonb" | "xml"
-            | "cidr" | "inet" | "macaddr" | "bit" | "point" | "line" | "box" | "path"
-            | "polygon" | "circle" | "tsvector" | "tsquery" | "oid" | "void" | "record"
-            | "anyelement" | "anyarray" | "trigger" | "setof"
+        "bigint"
+            | "int8"
+            | "integer"
+            | "int"
+            | "int4"
+            | "smallint"
+            | "int2"
+            | "bigserial"
+            | "serial"
+            | "smallserial"
+            | "boolean"
+            | "bool"
+            | "real"
+            | "float4"
+            | "float8"
+            | "double"
+            | "numeric"
+            | "decimal"
+            | "money"
+            | "text"
+            | "varchar"
+            | "char"
+            | "character"
+            | "bpchar"
+            | "name"
+            | "bytea"
+            | "date"
+            | "time"
+            | "timestamp"
+            | "timestamptz"
+            | "timetz"
+            | "interval"
+            | "uuid"
+            | "json"
+            | "jsonb"
+            | "xml"
+            | "cidr"
+            | "inet"
+            | "macaddr"
+            | "bit"
+            | "point"
+            | "line"
+            | "box"
+            | "path"
+            | "polygon"
+            | "circle"
+            | "tsvector"
+            | "tsquery"
+            | "oid"
+            | "void"
+            | "record"
+            | "anyelement"
+            | "anyarray"
+            | "trigger"
+            | "setof"
     )
 }
 
@@ -427,7 +490,7 @@ mod tests {
 
     #[test]
     fn type_with_comma_in_parens() {
-        // numeric(10,2) içindeki virgül argümanı bölmemeli.
+        // The comma inside numeric(10,2) must not split the argument.
         let a = parse_function_args("amount numeric(10,2), note varchar(255)");
         assert_eq!(a.len(), 2);
         assert_eq!(names(&a), vec![Some("amount"), Some("note")]);
@@ -438,7 +501,10 @@ mod tests {
     fn unnamed_multiword_type() {
         let a = parse_function_args("double precision, timestamp with time zone");
         assert_eq!(names(&a), vec![None, None]);
-        assert_eq!(types(&a), vec!["double precision", "timestamp with time zone"]);
+        assert_eq!(
+            types(&a),
+            vec!["double precision", "timestamp with time zone"]
+        );
     }
 
     #[test]
@@ -467,8 +533,8 @@ mod tests {
         assert!(a[0].has_default);
     }
 
-    /// Canlı DB'ye karşı catalog fetch (salt-okunur). `ARIADNE_DATABASE_URL` set
-    /// edip `cargo test -- --ignored`. Sadece SELECT'ler; hiçbir şey değiştirmez.
+    /// Catalog fetch against a live DB (read-only). Set `ARIADNE_DATABASE_URL` and run
+    /// `cargo test -- --ignored`. SELECTs only; changes nothing.
     #[tokio::test]
     #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
     async fn fetch_cache_from_live_db() {
@@ -492,14 +558,14 @@ mod tests {
             cache.server_version,
         );
 
-        // Temel invariant'lar: en az bir şema, indeksler tutarlı.
-        assert!(!cache.schemas.is_empty(), "en az bir şema beklenir");
+        // Basic invariants: at least one schema, indexes consistent.
+        assert!(!cache.schemas.is_empty(), "expected at least one schema");
         assert_eq!(
             cache.table_by_qualified.len(),
             cache.tables.len(),
-            "qualified index tablo sayısıyla eşleşmeli"
+            "qualified index should match the table count"
         );
-        // Snapshot serileşebilmeli ve şema sayısı korunmalı.
+        // The snapshot must serialize and preserve the schema count.
         let snap = cache.to_snapshot();
         assert_eq!(snap.schemas.len(), cache.schemas.len());
         let json = serde_json::to_string(&snap).expect("snapshot serialize");

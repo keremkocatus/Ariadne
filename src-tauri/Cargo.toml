@@ -1,12 +1,19 @@
 [package]
 name = "ariadne"
-version = "0.0.0"
+version = "0.0.2"
 description = "Local-first PostgreSQL IDE"
 authors = ["Kerem"]
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.77.2"
 
-# Tauri v2 masaüstü uygulaması: tek binary (src/main.rs).
+# Kütüphane hedefi (design 11 §R1): iş mantığı burada, integration testler
+# `use ariadne::...` ile buradan import eder. Farklı ad (`ariadne_lib`) Windows'ta
+# bin ile çıktı dosyası çakışmasını önler; integration testler bu adı kullanır.
+[lib]
+name = "ariadne_lib"
+path = "src/lib.rs"
+
+# Tauri v2 masaüstü uygulaması: ince binary (src/main.rs → ariadne_lib::run).
 [[bin]]
 name = "ariadne"
 path = "src/main.rs"
@@ -46,6 +53,16 @@ dashmap = "6"
 chrono = { version = "0.4", features = ["serde"] }
 # OS keychain — Windows Credential Manager öncelikli (design 06 §2).
 keyring = { version = "3", features = ["windows-native"] }
+
+# Yapılandırılmış logging (design 01 §6): konsol + günlük dönen dosya (7 gün).
+# Şifre/connection string HİÇBİR seviyede loglanmaz (design 06 §2 redaksiyon).
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+# .sql aç/kaydet (design 15 §P1-U4): yalnız native dosya diyaloğu için. Okuma/yazma
+# kendi komutlarımızda (read_text_file/write_text_file) — full-fs plugin izni verilmez;
+# komutlar yalnız kullanıcının diyalogda seçtiği yolla çağrılır.
+tauri-plugin-dialog = "2"
 
 [profile.dev]
 # Geliştirmede daha hızlı link.

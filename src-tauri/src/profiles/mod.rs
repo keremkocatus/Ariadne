@@ -1,7 +1,7 @@
-//! Bağlantı profilleri + OS keychain (design 06).
+//! Connection profiles + OS keychain.
 //!
-//! Profiller `{app_config_dir}/profiles.json`'da **şifresiz** saklanır; şifreler
-//! `keyring` ile OS keychain'e (Windows Credential Manager) yazılır.
+//! Profiles are stored **without passwords** in `{app_config_dir}/profiles.json`;
+//! passwords go to the OS keychain (e.g. Windows Credential Manager) via `keyring`.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -51,7 +51,7 @@ fn default_port() -> u16 {
     5432
 }
 
-/// save_profile girdisi. `id` yoksa yeni profil (uuid atanır), varsa günceller.
+/// Input to save_profile. No `id` → new profile (a uuid is assigned); with `id` → update.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProfileInput {
     #[serde(default)]
@@ -75,7 +75,7 @@ pub struct ProfileInput {
 }
 
 impl ProfileInput {
-    /// Kalıcılaştırmadan (test_connection) geçici ConnectionProfile üretir.
+    /// Builds a temporary ConnectionProfile without persisting (for test_connection).
     pub fn into_profile_temp(self) -> ConnectionProfile {
         let id = self.id.clone().unwrap_or_else(|| "__test__".to_string());
         self.into_profile(id)
@@ -98,14 +98,14 @@ impl ProfileInput {
     }
 }
 
-/// Disk'teki profiller (şifresiz). Bellekte tutulur, değişiklikte persist edilir.
+/// Profiles on disk (without passwords). Held in memory, persisted on change.
 pub struct ProfileStore {
     path: PathBuf,
     profiles: Mutex<Vec<ConnectionProfile>>,
 }
 
 impl ProfileStore {
-    /// profiles.json'ı yükler (yoksa boş başlar).
+    /// Loads profiles.json (starts empty if absent).
     pub fn load(config_dir: PathBuf) -> Self {
         let path = config_dir.join("profiles.json");
         let profiles = std::fs::read_to_string(&path)
@@ -131,13 +131,16 @@ impl ProfileStore {
             .cloned()
     }
 
-    /// Profili kaydeder (create/update) + şifre verildiyse keyring'e yazar.
+    /// Saves the profile (create/update) and, if a password is given, writes it to the keyring.
     pub fn save(
         &self,
         input: ProfileInput,
         password: Option<String>,
     ) -> Result<ConnectionProfile, AriadneError> {
-        let id = input.id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let id = input
+            .id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let profile = input.into_profile(id.clone());
 
         {
@@ -155,14 +158,14 @@ impl ProfileStore {
         Ok(profile)
     }
 
-    /// Profili + keyring kaydını siler.
+    /// Deletes the profile and its keyring entry.
     pub fn delete(&self, id: &str) -> Result<(), AriadneError> {
         {
             let mut list = self.profiles.lock().unwrap();
             list.retain(|p| p.id != id);
         }
         self.persist()?;
-        // Keyring'de kayıt yoksa hata değil.
+        // Not an error if there's no keyring entry.
         let _ = delete_password(id);
         Ok(())
     }
@@ -180,7 +183,7 @@ impl ProfileStore {
     }
 }
 
-// ---- Keyring yardımcıları (design 06 §2) ----
+// ---- Keyring helpers ----
 
 fn entry(id: &str) -> Result<keyring::Entry, AriadneError> {
     keyring::Entry::new(KEYRING_SERVICE, id).map_err(keyring_err)

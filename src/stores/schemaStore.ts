@@ -10,11 +10,31 @@ interface SchemaEntry {
   snapshot?: SchemaSnapshot;
 }
 
+/// Explorer group filter: name substring + kind selection. Empty `kinds` means all
+/// kinds. Kept separately for Tables and Functions.
+export interface CategoryFilter {
+  name: string;
+  kinds: string[];
+}
+export interface ExplorerFilter {
+  rel: CategoryFilter;
+  fn: CategoryFilter;
+}
+export const EMPTY_FILTER: ExplorerFilter = {
+  rel: { name: "", kinds: [] },
+  fn: { name: "", kinds: [] },
+};
+export function isCategoryActive(f: CategoryFilter): boolean {
+  return f.name.trim() !== "" || f.kinds.length > 0;
+}
+
 interface SchemaState {
   byConnection: Record<string, SchemaEntry>;
-  /** profil bazında pin'ler: profileId → ["public.users", ...] (kalıcı) */
+  /** Pins per profile: profileId → ["public.users", ...] (persisted) */
   pins: Record<string, string[]>;
   search: string;
+  /** Explorer filter per connection (session-only, not persisted) */
+  filters: Record<string, ExplorerFilter>;
 
   loadSnapshot: (connectionId: string) => Promise<void>;
   onRefreshStarted: (connectionId: string) => void;
@@ -23,6 +43,10 @@ interface SchemaState {
   setSearch: (q: string) => void;
   togglePin: (profileId: string, qualified: string) => void;
   isPinned: (profileId: string, qualified: string) => boolean;
+
+  getFilter: (connectionId: string | null) => ExplorerFilter;
+  setFilter: (connectionId: string, which: "rel" | "fn", patch: Partial<CategoryFilter>) => void;
+  clearFilter: (connectionId: string, which: "rel" | "fn") => void;
 
   entry: (connectionId: string | null) => SchemaEntry | undefined;
 }
@@ -33,6 +57,7 @@ export const useSchemaStore = create<SchemaState>()(
       byConnection: {},
       pins: {},
       search: "",
+      filters: {},
 
       async loadSnapshot(connectionId) {
         set((s) => ({
@@ -87,6 +112,34 @@ export const useSchemaStore = create<SchemaState>()(
         return (get().pins[profileId] ?? []).includes(qualified);
       },
 
+      getFilter(connectionId) {
+        return (connectionId ? get().filters[connectionId] : undefined) ?? EMPTY_FILTER;
+      },
+
+      setFilter(connectionId, which, patch) {
+        set((s) => {
+          const cur = s.filters[connectionId] ?? EMPTY_FILTER;
+          return {
+            filters: {
+              ...s.filters,
+              [connectionId]: { ...cur, [which]: { ...cur[which], ...patch } },
+            },
+          };
+        });
+      },
+
+      clearFilter(connectionId, which) {
+        set((s) => {
+          const cur = s.filters[connectionId] ?? EMPTY_FILTER;
+          return {
+            filters: {
+              ...s.filters,
+              [connectionId]: { ...cur, [which]: { name: "", kinds: [] } },
+            },
+          };
+        });
+      },
+
       entry(connectionId) {
         return connectionId ? get().byConnection[connectionId] : undefined;
       },
@@ -94,7 +147,7 @@ export const useSchemaStore = create<SchemaState>()(
     {
       name: "ariadne-schema",
       storage: createJSONStorage(() => localStorage),
-      // Sadece pin'ler kalıcı; snapshot'lar/aramalar oturumluk.
+      // Only pins are persisted; snapshots/searches are session-only.
       partialize: (s) => ({ pins: s.pins }) as SchemaState,
     },
   ),

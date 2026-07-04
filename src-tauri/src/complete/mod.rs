@@ -1,14 +1,14 @@
-//! Completion motoru (design 04). Tauri'den bağımsız saf modül — UI olmadan
-//! unit test edilir (design 01 §4, 08 §1).
+//! Completion engine. A pure module, independent of Tauri — unit-tested without a UI.
 
 pub mod candidates;
 pub mod context;
+mod lexer;
 
 use serde::Serialize;
 
 use crate::cache::{RelKind, SchemaCache, Table};
 
-// ---- Frontend sözleşmesi (design 02 §3) ----
+// ---- Frontend contract ----
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -17,7 +17,7 @@ pub enum CompletionKind {
     View,
     Column,
     Function,
-    /// Şema-önerisi ikonu; schema-qualified completion Phase 1'de üretecek.
+    /// Schema-suggestion icon; schema-qualified completion will produce these.
     #[allow(dead_code)]
     Schema,
     Keyword,
@@ -83,7 +83,7 @@ pub struct SignatureHelp {
 
 // ---- Orchestration ----
 
-/// Ana completion girişi (design 04 §1).
+/// The main completion entry point.
 pub fn complete(cache: &SchemaCache, sql: &str, offset: usize) -> CompletionResult {
     let ctx = context::analyze(sql, offset);
     let items = candidates::generate(cache, &ctx);
@@ -95,12 +95,13 @@ pub fn complete(cache: &SchemaCache, sql: &str, offset: usize) -> CompletionResu
     }
 }
 
-/// Alt+F1: imleçteki identifier'ı (alias dahil) cache'te çözüp nesne bilgisini döner.
+/// Alt+F1: resolves the identifier at the cursor (including an alias) in the cache
+/// and returns its object info.
 pub fn object_info(cache: &SchemaCache, sql: &str, offset: usize) -> Option<ObjectInfo> {
     let (qual, name) = context::identifier_at(sql, offset)?;
     let ctx = context::analyze(sql, offset);
 
-    // Önce alias olarak dene (relations içinde), sonra tablo adı olarak.
+    // Try as an alias first (among the relations), then as a table name.
     let table = ctx
         .relations
         .iter()
@@ -111,7 +112,7 @@ pub fn object_info(cache: &SchemaCache, sql: &str, offset: usize) -> Option<Obje
     Some(build_object_info(cache, table))
 }
 
-/// Signature help: imleç fonksiyon çağrısı içindeyse parametre ipucu (design 04 §6).
+/// Signature help: a parameter hint when the cursor is inside a function call.
 pub fn signature_help(cache: &SchemaCache, sql: &str, offset: usize) -> Option<SignatureHelp> {
     let (fname, active) = context::call_context(sql, offset)?;
     let ids = cache.function_by_name.get(&fname.to_lowercase())?;
@@ -154,7 +155,7 @@ fn build_object_info(cache: &SchemaCache, t: &Table) -> ObjectInfo {
         })
         .collect();
 
-    // Dışa giden FK'lar (bu tablonun from_table olduğu edge'ler).
+    // Outgoing FKs (edges where this table is the from_table).
     let foreign_keys = cache
         .fk_adjacency
         .get(&t.id)
@@ -165,9 +166,17 @@ fn build_object_info(cache: &SchemaCache, t: &Table) -> ObjectInfo {
                 .filter_map(|e| {
                     let other = cache.tables.get(&e.to_table)?;
                     Some(ObjFk {
-                        columns: e.from_cols.iter().filter_map(|&i| t.columns.get(i).map(|c| c.name.clone())).collect(),
+                        columns: e
+                            .from_cols
+                            .iter()
+                            .filter_map(|&i| t.columns.get(i).map(|c| c.name.clone()))
+                            .collect(),
                         ref_table: format!("{}.{}", other.schema, other.name),
-                        ref_columns: e.to_cols.iter().filter_map(|&i| other.columns.get(i).map(|c| c.name.clone())).collect(),
+                        ref_columns: e
+                            .to_cols
+                            .iter()
+                            .filter_map(|&i| other.columns.get(i).map(|c| c.name.clone()))
+                            .collect(),
                         constraint_name: e.constraint_name.clone(),
                     })
                 })
@@ -198,7 +207,8 @@ fn rel_kind_str(k: RelKind) -> &'static str {
     }
 }
 
-/// Şema + ad → tablo (search_path önceliğiyle). candidates ve object_info ortak.
+/// Resolve schema + name → table (with search_path priority). Shared by candidates
+/// and object_info.
 pub(super) fn resolve_named<'a>(
     cache: &'a SchemaCache,
     schema: Option<&str>,
@@ -206,7 +216,10 @@ pub(super) fn resolve_named<'a>(
 ) -> Option<&'a Table> {
     if let Some(schema) = schema {
         let key = format!("{}.{}", schema, name).to_lowercase();
-        return cache.table_by_qualified.get(&key).and_then(|id| cache.tables.get(id));
+        return cache
+            .table_by_qualified
+            .get(&key)
+            .and_then(|id| cache.tables.get(id));
     }
     let ids = cache.table_by_name.get(&name.to_lowercase())?;
     let mut best: Option<&Table> = None;
@@ -233,18 +246,15 @@ mod golden {
     use crate::cache::*;
     use chrono::Utc;
 
-    /// design 08 §1 fixture: users(id,email), orders(id,user_id,total),
-    /// FK orders.user_id → users.id, + set-returning fonksiyon.
+    /// Fixture: users(id,email), orders(id,user_id,total),
+    /// FK orders.user_id → users.id, plus a set-returning function.
     fn fixture() -> SchemaCache {
         let users = Table {
             id: 1,
             schema: "public".into(),
             name: "users".into(),
             kind: RelKind::Table,
-            columns: vec![
-                col("id", "int4", true, 1),
-                col("email", "text", false, 2),
-            ],
+            columns: vec![col("id", "int4", true, 1), col("email", "text", false, 2)],
             primary_key: vec![0],
             comment: None,
             estimated_rows: 1000,
@@ -274,16 +284,26 @@ mod golden {
             id: 10,
             schema: "public".into(),
             name: "get_orders".into(),
-            args: vec![FnArg { name: Some("uid".into()), type_name: "int4".into(), mode: ArgMode::In, has_default: false }],
+            args: vec![FnArg {
+                name: Some("uid".into()),
+                type_name: "int4".into(),
+                mode: ArgMode::In,
+                has_default: false,
+            }],
             return_type: "setof orders".into(),
             kind: FnKind::Function,
+            is_trigger: false,
             comment: None,
         };
         SchemaCache::build(
             Utc::now(),
             "17".into(),
             vec!["public".into()],
-            vec![SchemaInfo { name: "public".into(), owner: "me".into(), is_system: false }],
+            vec![SchemaInfo {
+                name: "public".into(),
+                owner: "me".into(),
+                is_system: false,
+            }],
             vec![users, orders],
             vec![func],
             vec![fk],
@@ -291,11 +311,18 @@ mod golden {
     }
 
     fn col(name: &str, ty: &str, not_null: bool, attnum: i16) -> Column {
-        Column { name: name.into(), type_name: ty.into(), not_null, has_default: false, comment: None, attnum }
+        Column {
+            name: name.into(),
+            type_name: ty.into(),
+            not_null,
+            has_default: false,
+            comment: None,
+            attnum,
+        }
     }
 
     fn run(sql_with_cursor: &str) -> Vec<String> {
-        let offset = sql_with_cursor.find('|').expect("| gerekli");
+        let offset = sql_with_cursor.find('|').expect("'|' required");
         let sql = sql_with_cursor.replacen('|', "", 1);
         complete(&fixture(), &sql, offset)
             .items
@@ -318,7 +345,7 @@ mod golden {
     fn qualifier_columns_only() {
         let l = run("SELECT u.| FROM users u");
         assert!(has(&l, "email"), "labels: {l:?}");
-        assert!(!has(&l, "user_id"), "orders kolonu sızmamalı: {l:?}");
+        assert!(!has(&l, "user_id"), "orders columns must not leak: {l:?}");
     }
 
     #[test]
@@ -330,7 +357,11 @@ mod golden {
     #[test]
     fn join_fk_first() {
         let l = run("SELECT * FROM users u JOIN |");
-        assert_eq!(l.first().map(String::as_str), Some("orders o ON o.user_id = u.id"), "labels: {l:?}");
+        assert_eq!(
+            l.first().map(String::as_str),
+            Some("orders o ON o.user_id = u.id"),
+            "labels: {l:?}"
+        );
     }
 
     #[test]
@@ -348,14 +379,14 @@ mod golden {
     #[test]
     fn correlated_scope() {
         let l = run("SELECT (SELECT | FROM orders o) FROM users u");
-        // İç subquery'de dış u.email görünür (multi-relation → alias önekli).
+        // The outer u.email is visible in the inner subquery (multi-relation → alias-prefixed).
         assert!(l.iter().any(|s| s == "u.email"), "labels: {l:?}");
     }
 
     #[test]
     fn string_empty() {
         let l = run("SELECT '| ' FROM users");
-        assert!(l.is_empty(), "string içi öneri olmamalı: {l:?}");
+        assert!(l.is_empty(), "no suggestions inside a string: {l:?}");
     }
 
     #[test]
@@ -366,7 +397,8 @@ mod golden {
 
     #[test]
     fn object_info_via_alias() {
-        let info = object_info(&fixture(), "SELECT u.id FROM users u", 8).expect("u çözülmeli");
+        let info =
+            object_info(&fixture(), "SELECT u.id FROM users u", 8).expect("u should resolve");
         assert_eq!(info.name, "users");
         assert_eq!(info.primary_key, vec!["id".to_string()]);
     }

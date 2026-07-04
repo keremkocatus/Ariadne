@@ -1,8 +1,8 @@
-// Frontend ↔ Rust sözleşmesi (design 02). Tipler Rust'taki serde tipleriyle
-// birebir tutulur. Component'ler çıplak invoke ÇAĞIRMAZ; hep buradan geçer (07 §5).
+// The frontend ↔ Rust contract. These types mirror the serde types in Rust
+// one-to-one. Components never call `invoke` directly; everything goes through here.
 import { invoke } from "@tauri-apps/api/core";
 
-// ---- Hata modeli (design 02 §2) ----
+// ---- Error model ----
 export type ErrorKind =
   | "connection_failed"
   | "connection_lost"
@@ -26,7 +26,7 @@ export function isAriadneError(e: unknown): e is AriadneError {
   return typeof e === "object" && e !== null && "kind" in e && "message" in e;
 }
 
-// ---- Profiller (design 06) ----
+// ---- Connection profiles ----
 export type SslMode = "disable" | "prefer" | "require" | "verify_ca" | "verify_full";
 
 export interface ConnectionProfile {
@@ -43,7 +43,7 @@ export interface ConnectionProfile {
   options: Record<string, string>;
 }
 
-// save_profile girdisi — id yoksa yeni profil.
+// Input to save_profile — a missing id means a new profile.
 export type ProfileInput = Omit<ConnectionProfile, "id"> & { id?: string };
 
 export interface ConnectionInfo {
@@ -78,14 +78,26 @@ export function testConnection(
 ): Promise<TestResult> {
   return invoke("test_connection", { profile, password });
 }
-export function connect(profileId: string): Promise<ConnectionInfo> {
-  return invoke("connect", { profileId });
+export function connect(
+  profileId: string,
+  databaseOverride?: string,
+): Promise<ConnectionInfo> {
+  return invoke("connect", { profileId, databaseOverride });
 }
 export function disconnect(connectionId: string): Promise<void> {
   return invoke("disconnect", { connectionId });
 }
 
-// ---- Şema (design 03) ----
+// ---- Database list (for the "Databases ▸" switcher) ----
+export interface DatabaseInfo {
+  name: string;
+  is_current: boolean;
+}
+export function listDatabases(connectionId: string): Promise<DatabaseInfo[]> {
+  return invoke("list_databases", { connectionId });
+}
+
+// ---- Schema ----
 export type RelKind = "table" | "view" | "mat_view" | "foreign" | "partitioned" | "sequence";
 export type FnKind = "function" | "procedure" | "aggregate" | "window";
 
@@ -107,6 +119,8 @@ export interface SnapFn {
   name: string;
   signature: string;
   kind: FnKind;
+  /** Whether the return type is `trigger` — for the explorer's "trigger function" filter. */
+  is_trigger: boolean;
   comment?: string | null;
 }
 export interface SnapSchema {
@@ -129,7 +143,94 @@ export function refreshSchema(connectionId: string): Promise<void> {
   return invoke("refresh_schema", { connectionId });
 }
 
-// ---- Query (design 02 §3, 05) ----
+// ---- Relation detail + function source (on-demand) ----
+export interface IndexInfo {
+  name: string;
+  definition: string;
+  is_unique: boolean;
+  is_primary: boolean;
+}
+export interface TriggerInfo {
+  name: string;
+  timing: string;
+  events: string;
+  function: string;
+}
+export interface RelationDetails {
+  indexes: IndexInfo[];
+  triggers: TriggerInfo[];
+  size_bytes: number;
+  live_rows: number;
+}
+export function getRelationDetails(
+  connectionId: string,
+  schema: string,
+  name: string,
+): Promise<RelationDetails> {
+  return invoke("get_relation_details", { connectionId, schema, name });
+}
+export function getFunctionSource(connectionId: string, fnOid: number): Promise<string> {
+  return invoke("get_function_source", { connectionId, fnOid });
+}
+
+// ---- DB stats strip ----
+export interface DbStats {
+  active_connections: number;
+  max_connections?: number | null;
+  cache_hit_ratio?: number | null; // 0..1
+  db_size_bytes?: number | null;
+}
+export function dbStats(connectionId: string): Promise<DbStats> {
+  return invoke("db_stats", { connectionId });
+}
+
+// ---- Single-cell editing (DATA-WRITE) ----
+export interface PkPredicate {
+  column: string;
+  value: string;
+}
+export function getPrimaryKey(
+  connectionId: string,
+  schema: string,
+  table: string,
+): Promise<string[]> {
+  return invoke("get_primary_key", { connectionId, schema, table });
+}
+export function updateCell(args: {
+  connectionId: string;
+  schema: string;
+  table: string;
+  pk: PkPredicate[];
+  column: string;
+  newValue: string | null;
+}): Promise<{ updated: number }> {
+  return invoke("update_cell", args);
+}
+
+// ---- Roles (read-only) ----
+export interface RoleInfo {
+  name: string;
+  is_superuser: boolean;
+  can_login: boolean;
+  create_db: boolean;
+  create_role: boolean;
+  replication: boolean;
+  valid_until?: string | null;
+  member_of: string[];
+}
+export function listRoles(connectionId: string): Promise<RoleInfo[]> {
+  return invoke("list_roles", { connectionId });
+}
+
+// ---- .sql file read/write. The path comes from the native dialog. ----
+export function readTextFile(path: string): Promise<string> {
+  return invoke("read_text_file", { path });
+}
+export function writeTextFile(path: string, content: string): Promise<void> {
+  return invoke("write_text_file", { path, content });
+}
+
+// ---- Query ----
 export interface ColumnMeta {
   name: string;
   type_name: string;
@@ -157,6 +258,10 @@ export interface RunResult {
   statements: StatementResult[];
   tx_status: TxStatus;
   needs_confirmation?: Confirmation | null;
+  // Partial results: if a statement failed, the earlier statements and the error are
+  // returned together.
+  error?: AriadneError | null;
+  error_statement_index?: number | null;
 }
 
 export function runQuery(
@@ -175,11 +280,15 @@ export function fetchPage(connectionId: string, queryId: string): Promise<Page> 
 export function cancelQuery(connectionId: string, queryId: string): Promise<void> {
   return invoke("cancel_query", { connectionId, queryId });
 }
+/// Kills the backend of a stuck query. The returned bool is whether it was signaled.
+export function forceKillQuery(connectionId: string, queryId: string): Promise<boolean> {
+  return invoke("force_kill_query", { connectionId, queryId });
+}
 export function closeResult(connectionId: string, tabId: string): Promise<void> {
   return invoke("close_result", { connectionId, tabId });
 }
 
-// ---- Completion (design 02 §3, 04) ----
+// ---- Completion ----
 export type CompletionKind =
   | "table"
   | "view"

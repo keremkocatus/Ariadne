@@ -1,9 +1,8 @@
-//! CompletionContext çıkarımı (design 04 §2-3).
+//! CompletionContext inference.
 //!
-//! Gerçek Postgres lexer'ı (`pg_query::scan`) üzerinden çalışır — regex/heuristic
-//! lexer YOK (design prensip 3). Yarım SQL parse edilemese bile token akışı
-//! sağlamdır; bu yüzden context'i token akışından çıkarıyoruz (design 04 §2
-//! Kademe 3'ün ruhu — ama tüm kademeler aynı CompletionContext'e düşer).
+//! Works on top of the real Postgres lexer (`pg_query::scan`) — no regex/heuristic
+//! lexer. The token stream is robust even when half-written SQL can't be parsed, so
+//! the context is derived from the token stream.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Clause {
@@ -30,22 +29,25 @@ pub enum StmtKind {
     Other,
 }
 
-/// FROM/JOIN'de görünen bir ilişki (tablo, alias veya CTE).
+/// A relation visible in FROM/JOIN (table, alias, or CTE).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelRef {
     pub alias: Option<String>,
     pub schema: Option<String>,
     pub name: String,
     pub is_cte: bool,
-    /// CTE ise gövdesinden çıkarılabilen çıktı kolonları (best-effort).
+    /// If a CTE, the output columns derivable from its body (best-effort).
     pub cte_columns: Vec<String>,
 }
 
 impl RelRef {
-    /// qualifier bu ilişkiye mi işaret ediyor? (alias önce, sonra tablo adı)
+    /// Does the qualifier refer to this relation? (alias first, then table name)
     pub fn matches(&self, q: &str) -> bool {
         let q = q.to_lowercase();
-        self.alias.as_deref().map(|a| a.to_lowercase() == q).unwrap_or(false)
+        self.alias
+            .as_deref()
+            .map(|a| a.to_lowercase() == q)
+            .unwrap_or(false)
             || self.name.to_lowercase() == q
     }
 }
@@ -56,110 +58,29 @@ pub struct CompletionContext {
     pub relations: Vec<RelRef>,
     pub prefix: String,
     pub qualifier: Option<String>,
-    /// Analiz sırasında belirlenir; clause bazlı aday üretimi zaten `clause`'u
-    /// kullanır, bu alan Phase 1'de DML-özel önerileri için okunacak.
+    /// Determined during analysis; candidate generation already keys off `clause`,
+    /// this field is for future DML-specific suggestions.
     #[allow(dead_code)]
     pub stmt_kind: StmtKind,
-    /// İmleç string/comment içinde → öneri verilmez (design 04 §7).
+    /// Cursor inside a string/comment → no suggestions.
     pub suppress: bool,
 }
 
-// ---- Token modeli (pg_query::scan çıktısı, offset'lerle metne çevrilmiş) ----
+// The token model and lexer helpers (Tok, tokenize, statement_bounds, match_paren,
+// split_items) live in [`super::lexer`]; only semantic analysis lives here.
+use super::lexer::{match_paren, split_items, statement_bounds, tokenize, Tok, TokKind};
 
-#[derive(Debug, Clone)]
-struct Tok {
-    text: String,
-    upper: String,
-    start: usize,
-    end: usize,
-    is_keyword: bool,
-    kind: TokKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TokKind {
-    Ident,
-    Keyword,
-    String,
-    Comment,
-    Dot,
-    Comma,
-    LParen,
-    RParen,
-    Semicolon,
-    Other,
-}
-
-fn tokenize(sql: &str) -> Vec<Tok> {
-    let scan = match pg_query::scan(sql) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
-    let bytes = sql.as_bytes();
-    let mut out = Vec::with_capacity(scan.tokens.len());
-    for t in scan.tokens {
-        let (start, end) = (t.start.max(0) as usize, t.end.max(0) as usize);
-        if start > end || end > bytes.len() {
-            continue;
-        }
-        let text = sql[start..end].to_string();
-        let is_keyword = t.keyword_kind != 0; // 0 = NO_KEYWORD
-        let kind = classify(&text, is_keyword);
-        out.push(Tok {
-            upper: text.to_uppercase(),
-            text,
-            start,
-            end,
-            is_keyword,
-            kind,
-        });
-    }
-    out
-}
-
-fn classify(text: &str, is_keyword: bool) -> TokKind {
-    let b = text.as_bytes();
-    match b.first() {
-        Some(b'\'') => TokKind::String,
-        Some(b'"') => TokKind::Ident, // quoted identifier
-        Some(b'-') if text.starts_with("--") => TokKind::Comment,
-        Some(b'/') if text.starts_with("/*") => TokKind::Comment,
-        Some(b'.') if text == "." => TokKind::Dot,
-        Some(b',') if text == "," => TokKind::Comma,
-        Some(b'(') if text == "(" => TokKind::LParen,
-        Some(b')') if text == ")" => TokKind::RParen,
-        Some(b';') if text == ";" => TokKind::Semicolon,
-        _ if is_keyword => TokKind::Keyword,
-        Some(c) if c.is_ascii_alphabetic() || *c == b'_' => TokKind::Ident,
-        _ => TokKind::Other,
-    }
-}
-
-/// İmlecin bulunduğu statement'ın token aralığını (`;` sınırları) bulur.
-fn statement_bounds(tokens: &[Tok], offset: usize) -> (usize, usize) {
-    let mut start = 0;
-    let mut end = tokens.len();
-    for (i, t) in tokens.iter().enumerate() {
-        if t.kind == TokKind::Semicolon {
-            if t.end <= offset {
-                start = i + 1;
-            } else {
-                end = i;
-                break;
-            }
-        }
-    }
-    (start, end)
-}
-
-/// Ana giriş: SQL + imleç ofseti → CompletionContext.
+/// Main entry: SQL + cursor offset → CompletionContext.
 pub fn analyze(sql: &str, offset: usize) -> CompletionContext {
     let offset = offset.min(sql.len());
     let all = tokenize(sql);
 
-    // İmleç string/comment içinde mi?
+    // Is the cursor inside a string/comment?
     for t in &all {
-        if matches!(t.kind, TokKind::String | TokKind::Comment) && t.start < offset && offset < t.end {
+        if matches!(t.kind, TokKind::String | TokKind::Comment)
+            && t.start < offset
+            && offset < t.end
+        {
             return CompletionContext {
                 clause: Clause::Unknown,
                 relations: Vec::new(),
@@ -189,13 +110,15 @@ pub fn analyze(sql: &str, offset: usize) -> CompletionContext {
     }
 }
 
-/// İmlecin üstündeki tam identifier'ı (Alt+F1 için) döndürür: (qualifier, name).
+/// Returns the full identifier under the cursor (for Alt+F1): (qualifier, name).
 pub fn identifier_at(sql: &str, offset: usize) -> Option<(Option<String>, String)> {
     let offset = offset.min(sql.len());
     let all = tokenize(sql);
     let (lo, hi) = statement_bounds(&all, offset);
     let toks = &all[lo..hi];
-    let i = toks.iter().position(|t| t.start < offset && offset <= t.end)?;
+    let i = toks
+        .iter()
+        .position(|t| t.start < offset && offset <= t.end)?;
     if !matches!(toks[i].kind, TokKind::Ident) {
         return None;
     }
@@ -203,15 +126,15 @@ pub fn identifier_at(sql: &str, offset: usize) -> Option<(Option<String>, String
     Some((dot_qualifier(toks, i), name))
 }
 
-/// İmleç bir fonksiyon çağrısı `f( ... | ...)` içindeyse (fonksiyon adı, aktif
-/// parametre indeksi) döndürür — signature help için (design 04 §6).
+/// If the cursor is inside a function call `f( ... | ...)`, returns (function name,
+/// active parameter index) — for signature help.
 pub fn call_context(sql: &str, offset: usize) -> Option<(String, u32)> {
     let offset = offset.min(sql.len());
     let all = tokenize(sql);
     let (lo, hi) = statement_bounds(&all, offset);
     let toks = &all[lo..hi];
 
-    // (fonksiyon_adı, o seviyedeki virgül sayısı) yığını.
+    // A stack of (function name, comma count at that level).
     let mut stack: Vec<(Option<String>, u32)> = Vec::new();
     let mut prev_ident: Option<String> = None;
 
@@ -243,8 +166,10 @@ pub fn call_context(sql: &str, offset: usize) -> Option<(String, u32)> {
 }
 
 fn extract_prefix_qualifier(sql: &str, toks: &[Tok], offset: usize) -> (String, Option<String>) {
-    // İmlecin bittiği/içinde olduğu token.
-    let cur = toks.iter().position(|t| t.start < offset && offset <= t.end);
+    // The token the cursor ends in / is inside.
+    let cur = toks
+        .iter()
+        .position(|t| t.start < offset && offset <= t.end);
 
     if let Some(i) = cur {
         let t = &toks[i];
@@ -255,7 +180,7 @@ fn extract_prefix_qualifier(sql: &str, toks: &[Tok], offset: usize) -> (String, 
                 (prefix, qualifier)
             }
             TokKind::Dot => {
-                // "u." → imleç noktadan hemen sonra
+                // "u." → cursor right after the dot
                 let q = if i >= 1 && toks[i - 1].kind == TokKind::Ident {
                     Some(toks[i - 1].text.trim_matches('"').to_string())
                 } else {
@@ -266,18 +191,21 @@ fn extract_prefix_qualifier(sql: &str, toks: &[Tok], offset: usize) -> (String, 
             _ => (String::new(), None),
         }
     } else {
-        // İmleç boşlukta: bir önceki token nokta ise qualifier'ı taşı.
+        // Cursor on whitespace: if the previous token is a dot, carry its qualifier.
         let prev = toks.iter().rposition(|t| t.end <= offset);
         if let Some(i) = prev {
             if toks[i].kind == TokKind::Dot && i >= 1 && toks[i - 1].kind == TokKind::Ident {
-                return (String::new(), Some(toks[i - 1].text.trim_matches('"').to_string()));
+                return (
+                    String::new(),
+                    Some(toks[i - 1].text.trim_matches('"').to_string()),
+                );
             }
         }
         (String::new(), None)
     }
 }
 
-/// `ident . <cur>` deseninde qualifier'ı döndürür.
+/// Returns the qualifier in the `ident . <cur>` pattern.
 fn dot_qualifier(toks: &[Tok], cur: usize) -> Option<String> {
     if cur >= 2 && toks[cur - 1].kind == TokKind::Dot && toks[cur - 2].kind == TokKind::Ident {
         Some(toks[cur - 2].text.trim_matches('"').to_string())
@@ -287,7 +215,7 @@ fn dot_qualifier(toks: &[Tok], cur: usize) -> Option<String> {
 }
 
 fn detect_stmt_kind(toks: &[Tok]) -> StmtKind {
-    // WITH ... öneki varsa ana fiili bul.
+    // With a WITH … prefix, find the main verb.
     for t in toks {
         if !t.is_keyword {
             continue;
@@ -304,10 +232,12 @@ fn detect_stmt_kind(toks: &[Tok]) -> StmtKind {
     StmtKind::Other
 }
 
-/// İmlece kadar token akışını gezerek clause state machine'i yürütür.
+/// Walks the token stream up to the cursor, running the clause state machine.
 fn detect_clause(toks: &[Tok], offset: usize, stmt_kind: StmtKind) -> Clause {
     let mut clause = match stmt_kind {
-        StmtKind::Select | StmtKind::Insert | StmtKind::Update | StmtKind::Delete => Clause::Unknown,
+        StmtKind::Select | StmtKind::Insert | StmtKind::Update | StmtKind::Delete => {
+            Clause::Unknown
+        }
         StmtKind::Other => Clause::Unknown,
     };
     let mut insert_seen_paren = false;
@@ -334,7 +264,7 @@ fn detect_clause(toks: &[Tok], offset: usize, stmt_kind: StmtKind) -> Clause {
                 "VALUES" => clause = Clause::Unknown,
                 "GROUP" => clause = Clause::GroupBy,
                 "ORDER" => clause = Clause::OrderBy,
-                "BY" => {} // GROUP BY / ORDER BY: clause zaten set edildi
+                "BY" => {} // GROUP BY / ORDER BY: the clause is already set
                 _ => {}
             }
         } else if t.kind == TokKind::LParen
@@ -342,7 +272,7 @@ fn detect_clause(toks: &[Tok], offset: usize, stmt_kind: StmtKind) -> Clause {
             && !insert_seen_paren
             && clause == Clause::Unknown
         {
-            // INSERT INTO t ( → kolon listesi
+            // INSERT INTO t ( → column list
             insert_seen_paren = true;
             clause = Clause::InsertCols;
         }
@@ -354,27 +284,27 @@ fn detect_clause(toks: &[Tok], offset: usize, stmt_kind: StmtKind) -> Clause {
     clause
 }
 
-/// FROM/JOIN'lerden ilişkileri, WITH'ten CTE'leri toplar (tüm statement kapsamı —
-/// correlated subquery'ler için dış alias'lar da görünür kalır, design 04 §3).
+/// Collects relations from FROM/JOINs and CTEs from WITH (whole-statement scope — so
+/// outer aliases stay visible for correlated subqueries).
 fn extract_relations(sql: &str, toks: &[Tok]) -> Vec<RelRef> {
     let mut rels: Vec<RelRef> = Vec::new();
     let mut ctes: Vec<RelRef> = Vec::new();
 
-    // ---- CTE'ler: WITH name [AS] ( body ) [, ...] ----
+    // ---- CTEs: WITH name [AS] ( body ) [, ...] ----
     if let Some(with_i) = toks.iter().position(|t| t.is_keyword && t.upper == "WITH") {
         let mut i = with_i + 1;
         loop {
-            // CTE adı
+            // CTE name
             if i >= toks.len() || toks[i].kind != TokKind::Ident {
                 break;
             }
             let name = toks[i].text.trim_matches('"').to_string();
             i += 1;
-            // opsiyonel AS
+            // optional AS
             if i < toks.len() && toks[i].is_keyword && toks[i].upper == "AS" {
                 i += 1;
             }
-            // gövde parantezi
+            // body parenthesis
             if i >= toks.len() || toks[i].kind != TokKind::LParen {
                 break;
             }
@@ -388,7 +318,7 @@ fn extract_relations(sql: &str, toks: &[Tok]) -> Vec<RelRef> {
                 cte_columns,
             });
             i = after;
-            // virgülle devam?
+            // continue with a comma?
             if i < toks.len() && toks[i].kind == TokKind::Comma {
                 i += 1;
                 continue;
@@ -397,15 +327,14 @@ fn extract_relations(sql: &str, toks: &[Tok]) -> Vec<RelRef> {
         }
     }
 
-    // ---- FROM / JOIN / INSERT INTO / UPDATE hedef ilişkileri ----
-    // (INTO ve UPDATE, INSERT/UPDATE hedef tablosunu getirir; DELETE FROM zaten
-    //  FROM üzerinden yakalanır.)
+    // ---- FROM / JOIN / INSERT INTO / UPDATE target relations ----
+    // (INTO and UPDATE pull the INSERT/UPDATE target table; DELETE FROM is caught via FROM.)
     let mut i = 0;
     while i < toks.len() {
         let t = &toks[i];
         if t.is_keyword && matches!(t.upper.as_str(), "FROM" | "JOIN" | "INTO" | "UPDATE") {
             i += 1;
-            // FROM sonrası virgülle ayrılmış birden çok ilişki olabilir.
+            // After FROM there may be several comma-separated relations.
             loop {
                 let (rel, next) = parse_table_ref(toks, i, &ctes);
                 if let Some(r) = rel {
@@ -423,12 +352,12 @@ fn extract_relations(sql: &str, toks: &[Tok]) -> Vec<RelRef> {
         }
     }
 
-    // CTE'ler de görünür (FROM'da adıyla kullanılınca kolonları önerilebilsin diye
-    // eşleştirme parse_table_ref'te yapılır; burada ayrıca eklemeye gerek yok).
+    // CTEs are also visible (matching is done in parse_table_ref when a CTE name is
+    // used in FROM, so its columns can be suggested; no need to add them again here).
     rels
 }
 
-/// `[schema .] name [[AS] alias]` ya da `( subquery ) [alias]`.
+/// `[schema .] name [[AS] alias]` or `( subquery ) [alias]`.
 fn parse_table_ref(toks: &[Tok], start: usize, ctes: &[RelRef]) -> (Option<RelRef>, usize) {
     let mut i = start;
     if i >= toks.len() {
@@ -459,17 +388,19 @@ fn parse_table_ref(toks: &[Tok], start: usize, ctes: &[RelRef]) -> (Option<RelRe
     i += 1;
 
     // schema.name?
-    let (schema, name) = if i + 1 < toks.len() && toks[i].kind == TokKind::Dot && toks[i + 1].kind == TokKind::Ident {
-        let n = toks[i + 1].text.trim_matches('"').to_string();
-        i += 2;
-        (Some(first), n)
-    } else {
-        (None, first)
-    };
+    let (schema, name) =
+        if i + 1 < toks.len() && toks[i].kind == TokKind::Dot && toks[i + 1].kind == TokKind::Ident
+        {
+            let n = toks[i + 1].text.trim_matches('"').to_string();
+            i += 2;
+            (Some(first), n)
+        } else {
+            (None, first)
+        };
 
     let alias = read_alias(toks, &mut i);
 
-    // CTE eşleşmesi: schema yok ve ad bir CTE ise onun kolonlarını taşı.
+    // CTE match: if there's no schema and the name is a CTE, carry its columns.
     let (is_cte, cte_columns) = if schema.is_none() {
         match ctes.iter().find(|c| c.name.eq_ignore_ascii_case(&name)) {
             Some(c) => (true, c.cte_columns.clone()),
@@ -491,13 +422,13 @@ fn parse_table_ref(toks: &[Tok], start: usize, ctes: &[RelRef]) -> (Option<RelRe
     )
 }
 
-/// `[AS] alias` okur (varsa) ve i'yi ilerletir. Alias yoksa i değişmez.
+/// Reads `[AS] alias` (if present) and advances i. If there's no alias, i is unchanged.
 fn read_alias(toks: &[Tok], i: &mut usize) -> Option<String> {
     let mut j = *i;
     if j < toks.len() && toks[j].is_keyword && toks[j].upper == "AS" {
         j += 1;
     }
-    // Alias identifier olmalı (keyword'ler zaten TokKind::Keyword sınıfında).
+    // The alias must be an identifier (keywords are classified as TokKind::Keyword).
     if j < toks.len() && toks[j].kind == TokKind::Ident {
         let a = toks[j].text.trim_matches('"').to_string();
         *i = j + 1;
@@ -506,32 +437,14 @@ fn read_alias(toks: &[Tok], i: &mut usize) -> Option<String> {
     None
 }
 
-/// LParen indeksinden başlar; (içerik_başı, içerik_sonu, kapanıştan_sonraki) döndürür.
-fn match_paren(toks: &[Tok], lparen: usize) -> (usize, usize, usize) {
-    let mut depth = 0;
-    let mut i = lparen;
-    while i < toks.len() {
-        match toks[i].kind {
-            TokKind::LParen => depth += 1,
-            TokKind::RParen => {
-                depth -= 1;
-                if depth == 0 {
-                    return (lparen + 1, i, i + 1);
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    (lparen + 1, toks.len(), toks.len())
-}
-
-/// Bir SELECT gövdesinin çıktı kolon adlarını best-effort çıkarır (CTE için).
-/// Target list'i top-level virgülle böler; her item'ın çıktı adı: sondaki alias
-/// (`expr [AS] name`) ya da tek kolon referansıysa kolon adı.
+/// Best-effort extraction of a SELECT body's output column names (for a CTE). Splits
+/// the target list on top-level commas; each item's output name is the trailing alias
+/// (`expr [AS] name`), or the column name if it's a single column reference.
 fn extract_select_output_columns(_sql: &str, body: &[Tok]) -> Vec<String> {
-    // SELECT ... FROM arasını al.
-    let sel = body.iter().position(|t| t.is_keyword && t.upper == "SELECT");
+    // Take the range between SELECT ... FROM.
+    let sel = body
+        .iter()
+        .position(|t| t.is_keyword && t.upper == "SELECT");
     let Some(sel) = sel else {
         return Vec::new();
     };
@@ -551,29 +464,11 @@ fn extract_select_output_columns(_sql: &str, body: &[Tok]) -> Vec<String> {
     cols
 }
 
-fn split_items<'a>(toks: &'a [Tok]) -> Vec<&'a [Tok]> {
-    let mut out = Vec::new();
-    let mut depth = 0;
-    let mut start = 0;
-    for (i, t) in toks.iter().enumerate() {
-        match t.kind {
-            TokKind::LParen => depth += 1,
-            TokKind::RParen => depth -= 1,
-            TokKind::Comma if depth == 0 => {
-                out.push(&toks[start..i]);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    if start < toks.len() {
-        out.push(&toks[start..]);
-    }
-    out
-}
-
 fn output_name(item: &[Tok]) -> Option<String> {
-    let item: Vec<&Tok> = item.iter().filter(|t| !matches!(t.kind, TokKind::Comment)).collect();
+    let item: Vec<&Tok> = item
+        .iter()
+        .filter(|t| !matches!(t.kind, TokKind::Comment))
+        .collect();
     if item.is_empty() {
         return None;
     }
@@ -581,16 +476,16 @@ fn output_name(item: &[Tok]) -> Option<String> {
     if item.len() >= 2 && item[item.len() - 2].is_keyword && item[item.len() - 2].upper == "AS" {
         return Some(item[item.len() - 1].text.trim_matches('"').to_string());
     }
-    // `expr name` (son iki token ident) → alias
+    // `expr name` (last two tokens are idents) → alias
     let last = item[item.len() - 1];
     if last.kind == TokKind::Ident {
         if item.len() == 1 {
-            // tek kolon referansı: kolon adı = kendisi (a.b ise b)
+            // single column reference: output name = itself (b if a.b)
             return Some(last.text.trim_matches('"').to_string());
         }
         let prev = item[item.len() - 2];
         if prev.kind == TokKind::Dot {
-            // a.b → çıktı adı b
+            // a.b → output name b
             return Some(last.text.trim_matches('"').to_string());
         }
         // `1 a`, `expr a` → alias a
@@ -603,9 +498,9 @@ fn output_name(item: &[Tok]) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// "SELECT | FROM users" → | imleç. Test yardımcı: '|' konumunu offset yapar.
+    /// "SELECT | FROM users" → | is the cursor. Test helper: turns '|' into the offset.
     fn ctx(s: &str) -> CompletionContext {
-        let offset = s.find('|').expect("| gerekli");
+        let offset = s.find('|').expect("'|' required");
         let sql = s.replacen('|', "", 1);
         analyze(&sql, offset)
     }
@@ -629,7 +524,10 @@ mod tests {
         assert_eq!(c.qualifier.as_deref(), Some("u"));
         assert_eq!(c.clause, Clause::SelectList);
         // relations: users u
-        assert!(c.relations.iter().any(|r| r.name == "users" && r.alias.as_deref() == Some("u")));
+        assert!(c
+            .relations
+            .iter()
+            .any(|r| r.name == "users" && r.alias.as_deref() == Some("u")));
     }
 
     #[test]
@@ -682,7 +580,7 @@ mod tests {
 
     #[test]
     fn correlated_scope_sees_outer() {
-        // İç subquery'de dış alias u görünür olmalı.
+        // The outer alias u must be visible in the inner subquery.
         let c = ctx("SELECT (SELECT | FROM orders o) FROM users u");
         assert!(c.relations.iter().any(|r| r.alias.as_deref() == Some("u")));
         assert!(c.relations.iter().any(|r| r.alias.as_deref() == Some("o")));
@@ -690,7 +588,7 @@ mod tests {
 
     #[test]
     fn multi_statement_isolation() {
-        // İmleç ikinci statement'ta; ilk statement'ın FROM'u sızmamalı.
+        // Cursor in the second statement; the first statement's FROM must not leak.
         let c = ctx("SELECT 1; SELECT * FROM orders WHERE |");
         assert_eq!(c.clause, Clause::Where);
         assert!(c.relations.iter().any(|r| r.name == "orders"));

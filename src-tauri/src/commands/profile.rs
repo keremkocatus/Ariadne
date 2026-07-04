@@ -1,4 +1,4 @@
-//! Profil komutları (design 02 §3, 06).
+//! Profile commands.
 
 use std::time::Instant;
 
@@ -6,16 +6,20 @@ use serde::Serialize;
 use sqlx::Row;
 use tauri::State;
 
+use crate::db::build_pool;
 use crate::error::AriadneError;
 use crate::profiles::{ConnectionProfile, ProfileInput};
-use crate::state::{build_pool, AppState};
+use crate::state::AppState;
 
 #[tauri::command]
-pub async fn list_profiles(state: State<'_, AppState>) -> Result<Vec<ConnectionProfile>, AriadneError> {
+pub async fn list_profiles(
+    state: State<'_, AppState>,
+) -> Result<Vec<ConnectionProfile>, AriadneError> {
     Ok(state.profiles.list())
 }
 
-/// Profili kaydeder (create/update); şifre verilirse keyring'e yazılır, JSON'a asla.
+/// Saves the profile (create/update); if a password is given it goes to the keyring,
+/// never to JSON.
 #[tauri::command]
 pub async fn save_profile(
     profile: ProfileInput,
@@ -39,7 +43,8 @@ pub struct TestResult {
     pub latency_ms: u64,
 }
 
-/// Profili kalıcılaştırmadan bağlantıyı dener (bağlantı diyaloğundaki "Test").
+/// Tries the connection without persisting the profile (the "Test" button in the
+/// connection dialog).
 #[tauri::command]
 pub async fn test_connection(
     profile: ProfileInput,
@@ -48,7 +53,7 @@ pub async fn test_connection(
 ) -> Result<TestResult, AriadneError> {
     let temp = profile.into_profile_temp();
     let started = Instant::now();
-    let pool = build_pool(&temp, password.as_deref()).await?;
+    let pool = build_pool(&temp, password.as_deref(), None).await?;
     let server_version: String = sqlx::query("SHOW server_version")
         .fetch_one(&pool)
         .await?

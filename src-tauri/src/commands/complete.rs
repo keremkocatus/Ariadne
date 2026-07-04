@@ -1,5 +1,4 @@
-//! Completion komutları (design 02 §3, 04). Hepsi cache'ten hesaplanır — DB
-//! round-trip YOK; hedef < 10ms (design 01 §7).
+//! Completion commands. All computed from the cache — no DB round-trip; target < 10ms.
 
 use tauri::State;
 

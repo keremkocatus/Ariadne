@@ -1,21 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Tree, type NodeRendererProps } from "react-arborist";
-import {
-  ChevronRight,
-  Table2,
-  Eye,
-  Layers,
-  Hash,
-  FunctionSquare,
-  Folder,
-  Pin,
-  RefreshCw,
-  Search,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Tree } from "react-arborist";
+import { Pin, RefreshCw, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fuzzyMatch } from "@/lib/fuzzy";
-import { useSchemaStore } from "@/stores/schemaStore";
-import { refreshSchema, type SchemaSnapshot, type SnapFn, type SnapRel } from "@/lib/api";
+import {
+  useSchemaStore,
+  EMPTY_FILTER,
+  isCategoryActive,
+  type CategoryFilter,
+} from "@/stores/schemaStore";
+import { refreshSchema, type SnapFn, type SnapRel } from "@/lib/api";
+import { buildTree, defaultOpenState, filterSnapshot, flatten, type TreeNode } from "./tree";
+import { iconFor } from "./icons";
+import { NodeRow } from "./NodeRow";
+import { PeekPanel } from "./PeekPanel";
+import { ContextBar } from "./ContextBar";
+import { QuickActionMenu } from "./QuickActionMenu";
+import { useTabsStore } from "@/stores/tabsStore";
 
 const EMPTY_PINS: string[] = [];
 
@@ -23,37 +24,61 @@ interface Props {
   connectionId: string | null;
   profileId: string | null;
   onOpenRelation: (schema: string, name: string) => void;
+  onOpenFunction: (fn: SnapFn) => void;
 }
 
-interface TreeNode {
-  id: string;
-  name: string;
-  ntype: "schema" | "category" | "relation" | "function";
-  schema?: string;
-  rel?: SnapRel;
-  fn?: SnapFn;
-  isSystem?: boolean;
-  children?: TreeNode[];
+interface PeekTarget {
+  schema: string;
+  rel: SnapRel;
 }
 
-export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
+export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFunction }: Props) {
   const entry = useSchemaStore((s) => (connectionId ? s.byConnection[connectionId] : undefined));
   const search = useSchemaStore((s) => s.search);
   const setSearch = useSchemaStore((s) => s.setSearch);
-  // Selector'dan yeni [] döndürmek yasak (zustand v5/useSyncExternalStore sonsuz
-  // döngü uyarısı); pins objesini seçip stabil sabitle default'la.
+  // Returning a fresh [] from a selector is forbidden (zustand v5/useSyncExternalStore
+  // infinite-loop warning); select the pins object and default to a stable constant.
   const pinsMap = useSchemaStore((s) => s.pins);
   const pins = (profileId ? pinsMap[profileId] : undefined) ?? EMPTY_PINS;
   const togglePin = useSchemaStore((s) => s.togglePin);
+  // The Explorer group filter: name/kind filter via right-click.
+  const filter = useSchemaStore((s) => (connectionId ? s.filters[connectionId] : undefined)) ?? EMPTY_FILTER;
+  const [filterMenu, setFilterMenu] = useState<{ which: "rel" | "fn"; x: number; y: number } | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
-  const [peek, setPeek] = useState<SnapRel | null>(null);
+  const [peek, setPeek] = useState<PeekTarget | null>(null);
+  // Right-click a schema node → "New query here" menu.
+  const [schemaMenu, setSchemaMenu] = useState<{ schema: string; x: number; y: number } | null>(null);
   const { ref: sizeRef, height } = useSize();
 
   const snapshot = entry?.snapshot;
-  const treeData = useMemo(() => (snapshot ? buildTree(snapshot) : []), [snapshot]);
+  const treeData = useMemo(
+    () => (snapshot ? buildTree(filterSnapshot(snapshot, filter)) : []),
+    [snapshot, filter],
+  );
+  // The active schema + its Tables are open initially. key={connectionId} re-applies
+  // this when the connection changes.
+  const initialOpen = useMemo(() => (snapshot ? defaultOpenState(snapshot) : {}), [snapshot]);
 
-  // Aramada düz liste (nesting'ten kurtul, design 07 §2).
+  const which = (node: TreeNode): "rel" | "fn" => (node.name.startsWith("Functions") ? "fn" : "rel");
+  // Right-click: category → filter popover; schema → "New query here".
+  const openFilterMenu = (node: TreeNode, e: React.MouseEvent) => {
+    if (node.ntype === "category") {
+      e.preventDefault();
+      setFilterMenu({ which: which(node), x: e.clientX, y: e.clientY });
+    } else if (node.ntype === "schema") {
+      e.preventDefault();
+      setSchemaMenu({ schema: node.name, x: e.clientX, y: e.clientY });
+    }
+  };
+  // Click the "more" node → open that category's filter popover.
+  const openMoreFilter = (node: TreeNode, e: React.MouseEvent) => {
+    setFilterMenu({ which: node.moreWhich ?? "rel", x: e.clientX, y: e.clientY });
+  };
+  const isCatFiltered = (node: TreeNode) =>
+    node.ntype === "category" && isCategoryActive(filter[which(node)]);
+
+  // A flat list while searching (drop the nesting).
   const flat = useMemo(() => (snapshot ? flatten(snapshot) : []), [snapshot]);
   const results = useMemo(() => {
     if (!search.trim()) return null;
@@ -76,10 +101,38 @@ export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const openNode = (node: TreeNode) => {
+  // Single click = peek (harmless, info only); double click = open. The single-click
+  // peek is DEBOUNCED: the peek panel is an in-flow flex child (max-h-42%), and
+  // opening it shrinks the tree area and shifts the rows; that shift landed the two
+  // clicks of a double-click on different rows, so `dblclick` never fired. Delaying
+  // the peek lets a double-click cancel the pending timer → the peek does NOT open,
+  // there's no shift, and activate runs immediately.
+  const clickTimer = useRef<number | null>(null);
+  const cancelPendingPeek = () => {
+    if (clickTimer.current != null) {
+      window.clearTimeout(clickTimer.current);
+      clickTimer.current = null;
+    }
+  };
+  useEffect(() => cancelPendingPeek, []);
+  const peekRelation = (node: TreeNode) => {
     if (node.ntype === "relation" && node.rel && node.schema) {
-      setPeek(node.rel);
+      setPeek({ schema: node.schema, rel: node.rel });
+    }
+  };
+  const peekNode = (node: TreeNode) => {
+    cancelPendingPeek();
+    clickTimer.current = window.setTimeout(() => {
+      clickTimer.current = null;
+      peekRelation(node);
+    }, 220);
+  };
+  const activateNode = (node: TreeNode) => {
+    cancelPendingPeek(); // double-click: cancel the pending peek (avoid the shift)
+    if (node.ntype === "relation" && node.rel && node.schema) {
       onOpenRelation(node.schema, node.rel.name);
+    } else if (node.ntype === "function" && node.fn) {
+      onOpenFunction(node.fn);
     }
   };
 
@@ -90,7 +143,13 @@ export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
     for (const sc of snapshot.schemas) {
       for (const r of sc.relations) {
         if (set.has(`${sc.name}.${r.name}`)) {
-          out.push({ id: `pin:${sc.name}.${r.name}`, name: r.name, ntype: "relation", schema: sc.name, rel: r });
+          out.push({
+            id: `pin:${sc.name}.${r.name}`,
+            name: r.name,
+            ntype: "relation",
+            schema: sc.name,
+            rel: r,
+          });
         }
       }
     }
@@ -98,7 +157,20 @@ export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
   }, [snapshot, pins]);
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="flex h-full flex-col"
+      // The webview's own right-click menu (Back/Reload/Print/Inspect) isn't wanted on
+      // any Explorer node. Category/schema nodes open their own menus in
+      // openFilterMenu; this suppression cuts the default menu for leaves/empty
+      // space/pinned rows. The paste menu is preserved over the search box (narrow scope).
+      onContextMenu={(e) => {
+        if ((e.target as HTMLElement).closest("input, textarea")) return;
+        e.preventDefault();
+      }}
+    >
+      {/* Server ▸ database context bar */}
+      <ContextBar connectionId={connectionId} />
+
       {/* Arama + refresh */}
       <div className="flex items-center gap-1 border-b border-border p-1.5">
         <div className="relative flex-1">
@@ -137,7 +209,8 @@ export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
                   icon={<Pin size={12} className="text-fg-muted" />}
                   label={n.name}
                   sub={n.schema}
-                  onClick={() => openNode(n)}
+                  onClick={() => peekNode(n)}
+                  onDoubleClick={() => activateNode(n)}
                   onPin={() => profileId && togglePin(profileId, `${n.schema}.${n.name}`)}
                   pinned
                 />
@@ -155,7 +228,8 @@ export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
                     icon={iconFor(n)}
                     label={n.name}
                     sub={n.schema}
-                    onClick={() => openNode(n)}
+                    onClick={() => peekNode(n)}
+                    onDoubleClick={() => activateNode(n)}
                     onPin={
                       n.ntype === "relation" && profileId
                         ? () => togglePin(profileId, `${n.schema}.${n.name}`)
@@ -168,7 +242,9 @@ export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
             ) : (
               height > 0 && (
                 <Tree<TreeNode>
+                  key={connectionId}
                   data={treeData}
+                  initialOpenState={initialOpen}
                   openByDefault={false}
                   width="100%"
                   height={height}
@@ -180,7 +256,11 @@ export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
                   {(props) => (
                     <NodeRow
                       {...props}
-                      onOpen={openNode}
+                      onPeek={peekNode}
+                      onActivate={activateNode}
+                      onContextMenu={openFilterMenu}
+                      onMore={openMoreFilter}
+                      isFiltered={isCatFiltered}
                       onPin={(node) =>
                         node.rel &&
                         profileId &&
@@ -196,107 +276,150 @@ export function Explorer({ connectionId, profileId, onOpenRelation }: Props) {
             )}
           </div>
 
-          {peek && <PeekPanel rel={peek} onClose={() => setPeek(null)} />}
+          {peek && (
+            <PeekPanel
+              schema={peek.schema}
+              rel={peek.rel}
+              connectionId={connectionId}
+              onClose={() => setPeek(null)}
+            />
+          )}
         </>
       )}
-    </div>
-  );
-}
 
-// ---- Tree node renderer ----
-
-function NodeRow({
-  node,
-  style,
-  onOpen,
-  onPin,
-  isPinned,
-}: NodeRendererProps<TreeNode> & {
-  onOpen: (n: TreeNode) => void;
-  onPin: (n: TreeNode) => void;
-  isPinned: (n: TreeNode) => boolean;
-}) {
-  const d = node.data;
-  const isLeaf = d.ntype === "relation" || d.ntype === "function";
-  return (
-    <div
-      style={style}
-      className={cn(
-        "group flex h-6 cursor-pointer items-center gap-1 pr-1 text-xs hover:bg-bg-elev",
-        node.isSelected && "bg-bg-elev",
-      )}
-      onClick={() => {
-        if (isLeaf) onOpen(d);
-        else node.toggle();
-      }}
-      onDoubleClick={() => isLeaf && onOpen(d)}
-    >
-      {!isLeaf ? (
-        <ChevronRight
-          size={12}
-          className={cn("shrink-0 text-fg-muted transition-transform", node.isOpen && "rotate-90")}
+      {filterMenu && connectionId && (
+        <FilterPopover
+          which={filterMenu.which}
+          x={filterMenu.x}
+          y={filterMenu.y}
+          filter={filter[filterMenu.which]}
+          connectionId={connectionId}
+          onClose={() => setFilterMenu(null)}
         />
-      ) : (
-        <span className="w-3 shrink-0" />
       )}
-      {iconFor(d)}
-      <span className="truncate">{d.name}</span>
-      {d.rel && d.rel.estimated_rows > 0 && (
-        <span className="ml-auto shrink-0 pl-2 text-[10px] text-fg-muted">
-          ~{formatRows(d.rel.estimated_rows)}
-        </span>
-      )}
-      {d.ntype === "relation" && (
-        <button
-          className={cn(
-            "ml-1 shrink-0 opacity-0 group-hover:opacity-100",
-            isPinned(d) && "opacity-100 text-fg",
-          )}
-          onClick={(e) => {
-            e.stopPropagation();
-            onPin(d);
-          }}
-          title="Pin"
-        >
-          <Pin size={11} className={cn(isPinned(d) ? "fill-current" : "text-fg-muted")} />
-        </button>
+
+      {schemaMenu && connectionId && (
+        <QuickActionMenu
+          x={schemaMenu.x}
+          y={schemaMenu.y}
+          onClose={() => setSchemaMenu(null)}
+          actions={[
+            {
+              label: "New query here",
+              onClick: () => useTabsStore.getState().addTab("", connectionId),
+            },
+          ]}
+        />
       )}
     </div>
   );
 }
 
-function PeekPanel({ rel, onClose }: { rel: SnapRel; onClose: () => void }) {
+// ---- Right-click filter popover ----
+
+const REL_KINDS: [string, string][] = [
+  ["table", "Table"],
+  ["view", "View"],
+  ["mat_view", "Materialized"],
+  ["foreign", "Foreign"],
+  ["partitioned", "Partitioned"],
+  ["sequence", "Sequence"],
+];
+const FN_KINDS: [string, string][] = [
+  ["function", "Function"],
+  ["procedure", "Procedure"],
+  ["aggregate", "Aggregate"],
+  ["window", "Window"],
+  ["trigger", "Trigger fn"],
+];
+
+function FilterPopover({
+  which,
+  x,
+  y,
+  filter,
+  connectionId,
+  onClose,
+}: {
+  which: "rel" | "fn";
+  x: number;
+  y: number;
+  filter: CategoryFilter;
+  connectionId: string;
+  onClose: () => void;
+}) {
+  const setFilter = useSchemaStore((s) => s.setFilter);
+  const clearFilter = useSchemaStore((s) => s.clearFilter);
+  const kinds = which === "fn" ? FN_KINDS : REL_KINDS;
+  const toggleKind = (k: string) => {
+    const set = new Set(filter.kinds);
+    if (set.has(k)) set.delete(k);
+    else set.add(k);
+    setFilter(connectionId, which, { kinds: [...set] });
+  };
+
   return (
-    <div className="max-h-[38%] overflow-auto border-t border-border bg-bg-elev p-2 text-xs">
-      <div className="mb-1 flex items-center justify-between">
-        <span className="font-medium">{rel.name}</span>
-        <button className="text-fg-muted hover:text-fg" onClick={onClose}>
-          ×
-        </button>
-      </div>
-      {rel.comment && <p className="mb-1 text-[11px] text-fg-muted">{rel.comment}</p>}
-      <table className="w-full">
-        <tbody>
-          {rel.columns.map((c) => (
-            <tr key={c.name}>
-              <td className="pr-2 font-mono">{c.name}</td>
-              <td className="text-fg-muted">{c.type_name}</td>
-              <td className="pl-1 text-[10px] text-fg-muted">{c.not_null ? "not null" : ""}</td>
-            </tr>
+    // Full-screen overlay: clicking outside or Escape closes it.
+    <div
+      className="fixed inset-0 z-40"
+      onClick={onClose}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+    >
+      <div
+        className="absolute w-52 rounded-md border border-border bg-bg-elev p-2 text-xs shadow-2xl"
+        style={{ left: Math.min(x, window.innerWidth - 220), top: Math.min(y, window.innerHeight - 240) }}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.key === "Escape" && onClose()}
+      >
+        <div className="mb-1 text-[10px] uppercase tracking-wide text-fg-muted">
+          Filter {which === "fn" ? "functions" : "tables"}
+        </div>
+        <input
+          autoFocus
+          value={filter.name}
+          onChange={(e) => setFilter(connectionId, which, { name: e.target.value })}
+          placeholder="Name contains…"
+          className="mb-2 w-full rounded border border-border bg-bg px-1.5 py-0.5 outline-none focus:border-fg-muted"
+        />
+        <div className="space-y-0.5">
+          {kinds.map(([k, label]) => (
+            <label key={k} className="flex cursor-pointer items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={filter.kinds.includes(k)}
+                onChange={() => toggleKind(k)}
+              />
+              {label}
+            </label>
           ))}
-        </tbody>
-      </table>
+        </div>
+        <div className="mt-2 flex justify-between">
+          <button
+            className="text-fg-muted hover:text-fg"
+            onClick={() => clearFilter(connectionId, which)}
+          >
+            Clear
+          </button>
+          <button className="text-fg-muted hover:text-fg" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
-// ---- Yardımcılar ----
+// ---- Small local presentation helpers (used only in this file) ----
 
 function Row({
   icon,
   label,
   sub,
   onClick,
+  onDoubleClick,
   onPin,
   pinned,
 }: {
@@ -304,6 +427,7 @@ function Row({
   label: string;
   sub?: string;
   onClick: () => void;
+  onDoubleClick?: () => void;
   onPin?: () => void;
   pinned?: boolean;
 }) {
@@ -311,6 +435,7 @@ function Row({
     <div
       className="group flex h-6 cursor-pointer items-center gap-1.5 px-2 text-xs hover:bg-bg-elev"
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
     >
       {icon}
       <span className="truncate">{label}</span>
@@ -331,117 +456,32 @@ function Row({
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <div className="px-2 py-0.5 text-[10px] uppercase tracking-wide text-fg-muted">{children}</div>;
+  return (
+    <div className="px-2 py-0.5 text-[10px] uppercase tracking-wide text-fg-muted">{children}</div>
+  );
 }
+
 function Empty({ text }: { text: string }) {
   return <div className="p-3 text-xs text-fg-muted">{text}</div>;
 }
 
-function iconFor(n: TreeNode) {
-  const c = "shrink-0 text-fg-muted";
-  switch (n.ntype) {
-    case "schema":
-      return <Folder size={12} className={c} />;
-    case "category":
-      return <Folder size={12} className={c} />;
-    case "function":
-      return <FunctionSquare size={12} className={c} />;
-    case "relation":
-      switch (n.rel?.kind) {
-        case "view":
-        case "mat_view":
-          return <Eye size={12} className={c} />;
-        case "sequence":
-          return <Hash size={12} className={c} />;
-        case "foreign":
-        case "partitioned":
-          return <Layers size={12} className={c} />;
-        default:
-          return <Table2 size={12} className={c} />;
-      }
-  }
-}
-
-function formatRows(n: number): string {
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
-  return String(n);
-}
-
-function buildTree(snap: SchemaSnapshot): TreeNode[] {
-  return snap.schemas
-    .slice()
-    .sort((a, b) => Number(a.is_system) - Number(b.is_system) || a.name.localeCompare(b.name))
-    .map((sc) => {
-      const cats: TreeNode[] = [];
-      const group = (label: string, rels: SnapRel[]) => {
-        if (rels.length === 0) return;
-        cats.push({
-          id: `${sc.name}:${label}`,
-          name: `${label} (${rels.length})`,
-          ntype: "category",
-          children: rels.map((r) => ({
-            id: `${sc.name}.${r.name}`,
-            name: r.name,
-            ntype: "relation",
-            schema: sc.name,
-            rel: r,
-          })),
-        });
-      };
-      group("Tables", sc.relations.filter((r) => r.kind === "table" || r.kind === "partitioned" || r.kind === "foreign"));
-      group("Views", sc.relations.filter((r) => r.kind === "view"));
-      group("Materialized", sc.relations.filter((r) => r.kind === "mat_view"));
-      group("Sequences", sc.relations.filter((r) => r.kind === "sequence"));
-      if (sc.functions.length > 0) {
-        cats.push({
-          id: `${sc.name}:Functions`,
-          name: `Functions (${sc.functions.length})`,
-          ntype: "category",
-          children: sc.functions.map((f) => ({
-            id: `${sc.name}.fn.${f.oid}`,
-            name: f.name,
-            ntype: "function",
-            schema: sc.name,
-            fn: f,
-          })),
-        });
-      }
-      return {
-        id: `schema:${sc.name}`,
-        name: sc.name,
-        ntype: "schema" as const,
-        isSystem: sc.is_system,
-        children: cats,
-      };
-    });
-}
-
-function flatten(snap: SchemaSnapshot): TreeNode[] {
-  const out: TreeNode[] = [];
-  for (const sc of snap.schemas) {
-    for (const r of sc.relations) {
-      out.push({ id: `${sc.name}.${r.name}`, name: r.name, ntype: "relation", schema: sc.name, rel: r });
-    }
-    for (const f of sc.functions) {
-      out.push({ id: `${sc.name}.fn.${f.oid}`, name: f.name, ntype: "function", schema: sc.name, fn: f });
-    }
-  }
-  return out;
-}
-
-// Container boyutunu ölçüp react-arborist'e height verir.
+// Measures the container size and gives react-arborist a height. Uses a **callback
+// ref**: the measured div is rendered only in the snapshot-READY branch; an observer
+// set up in a mount-time `useEffect([])` would run while the div is still absent
+// (Loading), see `null`, and never attach again → when the snapshot arrived, height
+// stayed 0 and the tree drew empty (a tab-switch remount accidentally "fixed" it). A
+// callback ref attaches the moment the node mounts, with no deps race → the tree
+// appears IMMEDIATELY on a new connection.
 function useSize() {
-  const ref = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
-  useEffect(() => {
-    if (!ref.current) return;
-    const ro = new ResizeObserver((entries) => {
-      setHeight(entries[0].contentRect.height);
-    });
-    ro.observe(ref.current);
-    return () => ro.disconnect();
+  const roRef = useRef<ResizeObserver | null>(null);
+  const ref = useCallback((node: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
+    if (node) {
+      const ro = new ResizeObserver((entries) => setHeight(entries[0].contentRect.height));
+      ro.observe(node);
+      roRef.current = ro;
+    }
   }, []);
   return { ref, height };
 }

@@ -1,10 +1,14 @@
-//! Şema cache: Ariadne'nin performans kalbi (design 03). Autocomplete ve object
-//! explorer'ın TEK veri kaynağı. Canlı DB'ye sadece kurulurken/yenilenirken gidilir.
+//! Schema cache: Ariadne's performance core. The SINGLE data source for
+//! autocomplete and the object explorer. The live DB is only queried on connect and
+//! on refresh.
 //!
-//! Cache **immutable snapshot**'tır: refresh yeni bir SchemaCache kurup `ArcSwap`
-//! ile atomik değiştirir; okuyanlar (completion) lock beklemez (design 01 §3, 03 §5).
+//! The cache is an **immutable snapshot**: a refresh builds a new SchemaCache and
+//! swaps it in atomically via `ArcSwap`, so readers (completion) never wait on a lock.
 
 pub mod catalog;
+pub mod snapshot;
+
+pub use snapshot::SchemaSnapshot;
 
 use std::collections::HashMap;
 
@@ -14,7 +18,7 @@ use smallvec::SmallVec;
 
 pub type TableId = u32; // pg_class.oid
 pub type FunctionId = u32; // pg_proc.oid
-pub type ColIdx = usize; // Table.columns içindeki indeks
+pub type ColIdx = usize; // index into Table.columns
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -68,8 +72,8 @@ pub enum ArgMode {
     Out,
     InOut,
     Variadic,
-    /// TABLE(...) dönüşlü fonksiyon arg'ı. Katalogdan modellenir; signature help
-    /// bunu Phase 1'de ayrı gösterecek. Şimdilik `In` gibi ele alınır.
+    /// An arg of a TABLE(...)-returning function. Modeled from the catalog; treated
+    /// like `In` for now.
     #[allow(dead_code)]
     Table,
 }
@@ -77,14 +81,14 @@ pub enum ArgMode {
 #[derive(Debug, Clone)]
 pub struct Column {
     pub name: String,
-    pub type_name: String, // format_type() çıktısı: "int4", "varchar(255)"
+    pub type_name: String, // format_type() output: "int4", "varchar(255)"
     pub not_null: bool,
-    // Katalogdan doldurulur; object-detail paneli / inline-edit (Phase 1) okuyacak.
+    // Filled from the catalog; read by the object-detail panel / inline edit.
     #[allow(dead_code)]
     pub has_default: bool,
     #[allow(dead_code)]
     pub comment: Option<String>,
-    pub attnum: i16, // dahili: PK/FK attnum çözümü için
+    pub attnum: i16, // internal: for PK/FK attnum resolution
 }
 
 #[derive(Debug, Clone)]
@@ -93,14 +97,14 @@ pub struct Table {
     pub schema: String,
     pub name: String,
     pub kind: RelKind,
-    pub columns: Vec<Column>, // attnum sırasında
+    pub columns: Vec<Column>, // in attnum order
     pub primary_key: Vec<ColIdx>,
     pub comment: Option<String>,
     pub estimated_rows: i64, // pg_class.reltuples
 }
 
 impl Table {
-    /// attnum → columns indeksi (dropped kolonlar çıkarıldığı için gap olabilir).
+    /// attnum → columns index (may have gaps because dropped columns are removed).
     fn attnum_index(&self) -> HashMap<i16, ColIdx> {
         self.columns
             .iter()
@@ -124,7 +128,7 @@ pub struct FnArg {
     pub name: Option<String>,
     pub type_name: String,
     pub mode: ArgMode,
-    /// DEFAULT'lu arg (çağrıda atlanabilir). Signature help Phase 1'de gösterecek.
+    /// An arg with a DEFAULT (may be omitted at the call site).
     #[allow(dead_code)]
     pub has_default: bool,
 }
@@ -137,11 +141,14 @@ pub struct Function {
     pub args: Vec<FnArg>,
     pub return_type: String,
     pub kind: FnKind,
+    /// Whether the return type is `trigger` — for the "trigger function" filter in
+    /// the explorer. Independent of `kind` (trigger fns have prokind='f').
+    pub is_trigger: bool,
     pub comment: Option<String>,
 }
 
 impl Function {
-    /// "get_user_orders(user_id int4) → setof orders" — öneri/peek etiketi.
+    /// "get_user_orders(user_id int4) → setof orders" — the completion/peek label.
     pub fn signature(&self) -> String {
         let args = self
             .args
@@ -160,13 +167,13 @@ impl Function {
 #[derive(Debug, Clone)]
 pub struct SchemaInfo {
     pub name: String,
-    /// Katalogdan; explorer'da şema sahibini göstermek için (Phase 1).
+    /// From the catalog; for showing the schema owner in the explorer.
     #[allow(dead_code)]
     pub owner: String,
     pub is_system: bool,
 }
 
-/// Immutable şema snapshot'ı + hızlı lookup indeksleri.
+/// Immutable schema snapshot + fast lookup indexes.
 pub struct SchemaCache {
     pub fetched_at: DateTime<Utc>,
     pub server_version: String,
@@ -176,15 +183,15 @@ pub struct SchemaCache {
     pub tables: HashMap<TableId, Table>,
     pub functions: HashMap<FunctionId, Function>,
 
-    // ---- Lookup indeksleri (fetch sonrası bir kez kurulur) ----
+    // ---- Lookup indexes (built once after fetch) ----
     pub table_by_qualified: HashMap<String, TableId>, // "schema.name" (lc) → id
     pub table_by_name: HashMap<String, SmallVec<[TableId; 2]>>, // "name" (lc) → ids
     pub function_by_name: HashMap<String, SmallVec<[FunctionId; 2]>>,
-    pub fk_adjacency: HashMap<TableId, Vec<FkEdge>>, // iki yönlü (design 03 §1)
+    pub fk_adjacency: HashMap<TableId, Vec<FkEdge>>, // bidirectional
 }
 
 impl SchemaCache {
-    /// Ham katalog verisinden cache'i kur: indeksleri ve FK grafiğini hesapla.
+    /// Builds the cache from raw catalog data: computes the indexes and the FK graph.
     pub fn build(
         fetched_at: DateTime<Utc>,
         server_version: String,
@@ -213,7 +220,7 @@ impl SchemaCache {
                 .push(f.id);
         }
 
-        // FK grafiği iki yönlü: bir tablodan hem giden hem gelen FK'lar görünür.
+        // Bidirectional FK graph: both outgoing and incoming FKs are visible from a table.
         let mut fk_adjacency: HashMap<TableId, Vec<FkEdge>> = HashMap::new();
         for edge in fks {
             fk_adjacency
@@ -242,7 +249,7 @@ impl SchemaCache {
         }
     }
 
-    /// Boş cache (bağlantı kurulmuş ama fetch bitmemiş durum).
+    /// An empty cache (connection established but the fetch hasn't finished).
     pub fn empty(server_version: String) -> Self {
         Self::build(
             Utc::now(),
@@ -255,112 +262,83 @@ impl SchemaCache {
         )
     }
 
-    /// Frontend'e giden hafif görünüm (design 03 §3). FK grafiği ve fonksiyon arg
-    /// detayı GİTMEZ; completion zaten Rust'ta hesaplanır.
-    pub fn to_snapshot(&self) -> SchemaSnapshot {
-        let mut by_schema: HashMap<&str, SnapSchema> = HashMap::new();
-        for s in &self.schemas {
-            by_schema.insert(
-                s.name.as_str(),
-                SnapSchema {
-                    name: s.name.clone(),
-                    is_system: s.is_system,
-                    relations: Vec::new(),
-                    functions: Vec::new(),
-                },
-            );
-        }
-
-        for t in self.tables.values() {
-            if let Some(sch) = by_schema.get_mut(t.schema.as_str()) {
-                sch.relations.push(SnapRel {
-                    oid: t.id,
-                    name: t.name.clone(),
-                    kind: t.kind,
-                    estimated_rows: t.estimated_rows,
-                    comment: t.comment.clone(),
-                    columns: t
-                        .columns
-                        .iter()
-                        .map(|c| SnapCol {
-                            name: c.name.clone(),
-                            type_name: c.type_name.clone(),
-                            not_null: c.not_null,
+    /// A table's estimated row count (pg_class.reltuples). Used for the destructive
+    /// guard's "~2.1M rows affected" message. `name` may be bare ("orders") or
+    /// schema-qualified ("public.orders"); bare names resolve by search_path priority.
+    pub fn table_estimated_rows(&self, name: &str) -> Option<i64> {
+        let id = if let Some((schema, tbl)) = name.split_once('.') {
+            self.table_by_qualified
+                .get(&format!("{schema}.{tbl}").to_lowercase())
+                .copied()
+        } else {
+            self.table_by_name
+                .get(&name.to_lowercase())
+                .and_then(|ids| {
+                    ids.iter()
+                        .min_by_key(|id| {
+                            self.tables
+                                .get(id)
+                                .and_then(|t| self.search_path.iter().position(|s| s == &t.schema))
+                                .unwrap_or(usize::MAX)
                         })
-                        .collect(),
-                });
-            }
-        }
-
-        for f in self.functions.values() {
-            if let Some(sch) = by_schema.get_mut(f.schema.as_str()) {
-                sch.functions.push(SnapFn {
-                    oid: f.id,
-                    name: f.name.clone(),
-                    signature: f.signature(),
-                    kind: f.kind,
-                    comment: f.comment.clone(),
-                });
-            }
-        }
-
-        // Deterministik sıra: şema adına, sonra nesne adına göre.
-        let mut schemas: Vec<SnapSchema> = by_schema.into_values().collect();
-        schemas.sort_by(|a, b| a.name.cmp(&b.name));
-        for sch in &mut schemas {
-            sch.relations.sort_by(|a, b| a.name.cmp(&b.name));
-            sch.functions.sort_by(|a, b| a.name.cmp(&b.name));
-        }
-
-        SchemaSnapshot {
-            fetched_at: self.fetched_at.to_rfc3339(),
-            server_version: self.server_version.clone(),
-            search_path: self.search_path.clone(),
-            schemas,
-        }
+                        .copied()
+                })
+        };
+        // reltuples = -1 → never analyzed (unknown); don't show an estimate.
+        id.and_then(|id| self.tables.get(&id))
+            .map(|t| t.estimated_rows)
+            .filter(|&n| n >= 0)
     }
 }
 
-// ---- SchemaSnapshot: frontend sözleşmesi (design 02 §3 / 03 §3) ----
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[derive(Debug, Serialize)]
-pub struct SchemaSnapshot {
-    pub fetched_at: String, // RFC3339
-    pub server_version: String,
-    pub search_path: Vec<String>,
-    pub schemas: Vec<SnapSchema>,
-}
+    fn tbl(id: TableId, schema: &str, name: &str, rows: i64) -> Table {
+        Table {
+            id,
+            schema: schema.into(),
+            name: name.into(),
+            kind: RelKind::Table,
+            columns: Vec::new(),
+            primary_key: Vec::new(),
+            comment: None,
+            estimated_rows: rows,
+        }
+    }
 
-#[derive(Debug, Serialize)]
-pub struct SnapSchema {
-    pub name: String,
-    pub is_system: bool,
-    pub relations: Vec<SnapRel>,
-    pub functions: Vec<SnapFn>,
-}
+    fn cache(tables: Vec<Table>) -> SchemaCache {
+        SchemaCache::build(
+            Utc::now(),
+            "17".into(),
+            vec!["public".into()],
+            Vec::new(),
+            tables,
+            Vec::new(),
+            Vec::new(),
+        )
+    }
 
-#[derive(Debug, Serialize)]
-pub struct SnapRel {
-    pub oid: u32,
-    pub name: String,
-    pub kind: RelKind,
-    pub estimated_rows: i64,
-    pub comment: Option<String>,
-    pub columns: Vec<SnapCol>,
-}
+    #[test]
+    fn estimated_rows_by_bare_name_uses_search_path() {
+        // Same name in two schemas; public is on the search_path → public's is chosen.
+        let c = cache(vec![
+            tbl(1, "public", "orders", 5000),
+            tbl(2, "archive", "orders", 9),
+        ]);
+        assert_eq!(c.table_estimated_rows("orders"), Some(5000));
+    }
 
-#[derive(Debug, Serialize)]
-pub struct SnapCol {
-    pub name: String,
-    pub type_name: String,
-    pub not_null: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SnapFn {
-    pub oid: u32,
-    pub name: String,
-    pub signature: String,
-    pub kind: FnKind,
-    pub comment: Option<String>,
+    #[test]
+    fn estimated_rows_qualified_and_unknown() {
+        let c = cache(vec![
+            tbl(1, "archive", "orders", 42),
+            tbl(2, "public", "t", -1),
+        ]);
+        assert_eq!(c.table_estimated_rows("archive.orders"), Some(42));
+        // -1 (not analyzed) → None; missing table → None.
+        assert_eq!(c.table_estimated_rows("t"), None);
+        assert_eq!(c.table_estimated_rows("nope"), None);
+    }
 }
