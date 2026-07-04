@@ -60,6 +60,7 @@ pub fn run() {
             commands::schema::refresh_schema,
             commands::details::get_relation_details,
             commands::details::get_function_source,
+            commands::roles::list_roles,
             commands::query::run_query,
             commands::query::fetch_page,
             commands::query::cancel_query,

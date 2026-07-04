@@ -6,4 +6,5 @@ pub mod connect;
 pub mod details;
 pub mod profile;
 pub mod query;
+pub mod roles;
 pub mod schema;

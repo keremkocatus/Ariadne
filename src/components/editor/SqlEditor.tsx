@@ -17,9 +17,11 @@ interface SqlEditorProps {
   onPeek?: (info: ObjectInfo | null) => void;
   /** SQL hata marker'ı (design 05 hata sunumu): byte offset + mesaj. */
   marker?: { offset: number; message: string } | null;
+  /** Editör font boyutu (ayarlardan, design 15 §P1-U4). */
+  fontSize?: number;
 }
 
-export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker }: SqlEditorProps) {
+export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker, fontSize = 13 }: SqlEditorProps) {
   const runRef = useRef(onRun);
   runRef.current = onRun;
   const peekRef = useRef(onPeek);
@@ -58,6 +60,11 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
       },
     ]);
   }, [marker]);
+
+  // Font boyutu ayardan değişince canlı uygula (design 15 §P1-U4).
+  useEffect(() => {
+    edRef.current?.updateOptions({ fontSize });
+  }, [fontSize]);
 
   // Bu editör görünürken çalıştırma yolunun seçimi okuyabilmesi için getter kaydı
   // (design 15 §P1-U2). Editör unmount olunca (tab değişince, bir sonraki mount
@@ -116,7 +123,7 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
   };
 
   const options: editor.IStandaloneEditorConstructionOptions = {
-    fontSize: 13,
+    fontSize,
     fontFamily:
       'ui-monospace, "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace',
     minimap: { enabled: false },

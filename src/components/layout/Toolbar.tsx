@@ -1,4 +1,4 @@
-import { PanelLeft, Play, Square, Check, Undo2 } from "lucide-react";
+import { PanelLeft, Play, Square, Check, Undo2, Settings } from "lucide-react";
 import { ConnectionMenu } from "@/components/connection/ConnectionMenu";
 import { useUiStore } from "@/stores/uiStore";
 import { useTabsStore } from "@/stores/tabsStore";
@@ -71,7 +71,14 @@ export function Toolbar() {
         </div>
       )}
 
-      <div className="ml-auto font-mono text-[11px] tracking-wide text-fg-muted">ariadne</div>
+      <button
+        className="ml-auto rounded p-1 text-fg-muted hover:bg-bg-elev hover:text-fg"
+        onClick={() => useUiStore.getState().setSettingsOpen(true)}
+        title="Settings"
+      >
+        <Settings size={15} />
+      </button>
+      <span className="font-mono text-[11px] tracking-wide text-fg-muted">ariadne</span>
     </header>
   );
 }

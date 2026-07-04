@@ -79,6 +79,9 @@ export function CommandPalette() {
               <Item onSelect={() => run(() => useUiStore.getState().toggleResults())}>
                 Toggle results panel
               </Item>
+              <Item onSelect={() => run(() => useUiStore.getState().setSettingsOpen(true))}>
+                Open settings
+              </Item>
               {tabConnectionId && (
                 <Item onSelect={() => run(() => void refreshSchema(tabConnectionId))}>
                   Refresh schema

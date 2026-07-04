@@ -5,18 +5,18 @@ import { toast } from "sonner";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSchemaStore } from "@/stores/schemaStore";
 import { useTabsStore, isPristine } from "@/stores/tabsStore";
+import { useUiStore } from "@/stores/uiStore";
 import { isAriadneError, refreshSchema } from "@/lib/api";
 
 // Zaten-bağlı bir bağlantıya geçerken snapshot bu yaştan eskiyse arka planda
-// tazelenir (design 15 §P1-U1 madde 4). Sabit; U4 ayarlarına aday.
-const SCHEMA_STALE_MS = 5 * 60 * 1000;
-
+// tazelenir (design 15 §P1-U1 madde 4). Eşik ayarlardan gelir (design 15 §P1-U4).
 function refreshIfStale(connectionId: string) {
   const entry = useSchemaStore.getState().byConnection[connectionId];
   const snap = entry?.snapshot;
   if (!snap || entry?.status === "loading") return;
+  const staleMs = useUiStore.getState().settings.schemaStaleMinutes * 60 * 1000;
   const age = Date.now() - new Date(snap.fetched_at).getTime();
-  if (age > SCHEMA_STALE_MS) void refreshSchema(connectionId);
+  if (age > staleMs) void refreshSchema(connectionId);
 }
 
 /**

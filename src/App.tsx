@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from "react";
 import { SqlEditor } from "@/components/editor/SqlEditor";
-import { Explorer } from "@/components/explorer/Explorer";
+import { Sidebar } from "@/components/sidebar/Sidebar";
 import { TabBar } from "@/components/query/TabBar";
 import { ResultArea } from "@/components/query/ResultArea";
 import { ConfirmDialog } from "@/components/query/ConfirmDialog";
@@ -10,6 +10,7 @@ import { Toolbar } from "@/components/layout/Toolbar";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { ResizeHandle } from "@/components/layout/ResizeHandle";
 import { CommandPalette } from "@/components/layout/CommandPalette";
+import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { toast } from "sonner";
 import { registerEventBridge } from "@/lib/events";
 import { getRunSelection } from "@/lib/editorRun";
@@ -22,6 +23,7 @@ import { getFunctionSource, isAriadneError, type ObjectInfo, type SnapFn } from 
 export default function App() {
   const connections = useConnectionStore((s) => s.connections);
   const { sidebarVisible, sidebarWidth, setSidebarWidth, resultsVisible, setResultsVisible } = useUiStore();
+  const editorFontSize = useUiStore((s) => s.settings.editorFontSize);
 
   const active = useTabsStore((s) => s.active());
   const closeRequest = useTabsStore((s) => s.closeRequest);
@@ -104,7 +106,7 @@ export default function App() {
         {sidebarVisible && (
           <>
             <aside style={{ width: sidebarWidth }} className="shrink-0 border-r border-border">
-              <Explorer
+              <Sidebar
                 connectionId={tabConnectionId}
                 profileId={tabConnectionInfo?.profile_id ?? null}
                 onOpenRelation={openRelation}
@@ -130,6 +132,7 @@ export default function App() {
                     onRun={runActive}
                     onPeek={showObjectInfo}
                     marker={errorMarker}
+                    fontSize={editorFontSize}
                   />
                 </div>
               </div>
@@ -169,6 +172,7 @@ export default function App() {
       )}
 
       <CommandPalette />
+      <SettingsDialog />
     </div>
   );
 }

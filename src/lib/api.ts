@@ -173,6 +173,21 @@ export function getFunctionSource(connectionId: string, fnOid: number): Promise<
   return invoke("get_function_source", { connectionId, fnOid });
 }
 
+// ---- Roller (design 15 §P1-U4, salt-okunur) ----
+export interface RoleInfo {
+  name: string;
+  is_superuser: boolean;
+  can_login: boolean;
+  create_db: boolean;
+  create_role: boolean;
+  replication: boolean;
+  valid_until?: string | null;
+  member_of: string[];
+}
+export function listRoles(connectionId: string): Promise<RoleInfo[]> {
+  return invoke("list_roles", { connectionId });
+}
+
 // ---- Query (design 02 §3, 05) ----
 export interface ColumnMeta {
   name: string;
