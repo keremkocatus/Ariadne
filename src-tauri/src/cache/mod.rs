@@ -257,4 +257,80 @@ impl SchemaCache {
             Vec::new(),
         )
     }
+
+    /// Bir tablonun tahmini satır sayısı (pg_class.reltuples). Destructive guard'ın
+    /// "~2.1M satır etkilenecek" mesajı için (design 11 §H6). `name` yalın ("orders")
+    /// ya da şema-nitelikli ("public.orders") olabilir; yalın adlar search_path
+    /// önceliğiyle çözülür.
+    pub fn table_estimated_rows(&self, name: &str) -> Option<i64> {
+        let id = if let Some((schema, tbl)) = name.split_once('.') {
+            self.table_by_qualified
+                .get(&format!("{schema}.{tbl}").to_lowercase())
+                .copied()
+        } else {
+            self.table_by_name.get(&name.to_lowercase()).and_then(|ids| {
+                ids.iter()
+                    .min_by_key(|id| {
+                        self.tables
+                            .get(id)
+                            .and_then(|t| self.search_path.iter().position(|s| s == &t.schema))
+                            .unwrap_or(usize::MAX)
+                    })
+                    .copied()
+            })
+        };
+        // reltuples = -1 → hiç analiz edilmemiş (bilinmiyor); tahmin gösterme.
+        id.and_then(|id| self.tables.get(&id))
+            .map(|t| t.estimated_rows)
+            .filter(|&n| n >= 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tbl(id: TableId, schema: &str, name: &str, rows: i64) -> Table {
+        Table {
+            id,
+            schema: schema.into(),
+            name: name.into(),
+            kind: RelKind::Table,
+            columns: Vec::new(),
+            primary_key: Vec::new(),
+            comment: None,
+            estimated_rows: rows,
+        }
+    }
+
+    fn cache(tables: Vec<Table>) -> SchemaCache {
+        SchemaCache::build(
+            Utc::now(),
+            "17".into(),
+            vec!["public".into()],
+            Vec::new(),
+            tables,
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn estimated_rows_by_bare_name_uses_search_path() {
+        // Aynı ad iki şemada; search_path'te public var → public'inki seçilir.
+        let c = cache(vec![
+            tbl(1, "public", "orders", 5000),
+            tbl(2, "archive", "orders", 9),
+        ]);
+        assert_eq!(c.table_estimated_rows("orders"), Some(5000));
+    }
+
+    #[test]
+    fn estimated_rows_qualified_and_unknown() {
+        let c = cache(vec![tbl(1, "archive", "orders", 42), tbl(2, "public", "t", -1)]);
+        assert_eq!(c.table_estimated_rows("archive.orders"), Some(42));
+        // -1 (analiz edilmemiş) → None; olmayan tablo → None.
+        assert_eq!(c.table_estimated_rows("t"), None);
+        assert_eq!(c.table_estimated_rows("nope"), None);
+    }
 }

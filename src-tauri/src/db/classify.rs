@@ -94,7 +94,14 @@ pub fn classify(sql: &str) -> StmtInfo {
 }
 
 fn rangevar_name(rv: Option<&pg_query::protobuf::RangeVar>) -> String {
-    rv.map(|r| r.relname.clone()).unwrap_or_default()
+    rv.map(|r| {
+        if r.schemaname.is_empty() {
+            r.relname.clone()
+        } else {
+            format!("{}.{}", r.schemaname, r.relname)
+        }
+    })
+    .unwrap_or_default()
 }
 
 /// SQL'in ilk anlamlı kelimesini büyük harfle döndürür ("SELECT", "INSERT"...).
