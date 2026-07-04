@@ -9,6 +9,7 @@ import { CloseTabDialog } from "@/components/query/CloseTabDialog";
 import { Toolbar } from "@/components/layout/Toolbar";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { ResizeHandle } from "@/components/layout/ResizeHandle";
+import { CommandPalette } from "@/components/layout/CommandPalette";
 import { registerEventBridge } from "@/lib/events";
 import { useGlobalShortcuts } from "@/lib/shortcuts";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -125,6 +126,8 @@ export default function App() {
           onCancel={() => void resolveClose("cancel")}
         />
       )}
+
+      <CommandPalette />
     </div>
   );
 }
