@@ -1,5 +1,19 @@
 # 15 — GUI Backlog Derin Planı (design/14 → milestone'lar)
 
+> **DURUM (2026-07-04): P1-U1…U4 tamamının HEPSİ tamamlandı ve `p1-u-gui-backlog`
+> dalına commit'lendi.** Commit'ler: U1 (bağlantı↔tab semantiği + DB switch),
+> U2 (seçili çalıştırma, marker, tab numaralandırma/etiket/rename, + butonu),
+> U3a (tık ayrımı, zengin peek, fonksiyon kaynağı), U3b (Alt+F1→sonuç alanı +
+> sağ-tık filtreler), U4a (ayarlar iskeleti + Users&Roles salt-okunur),
+> U4b (.sql aç/kaydet + dirty izleme). Her commit gate'i geçti (39 rust testi,
+> clippy -D warnings, tsc, vite build). Sözleşme değişiklikleri design/02'ye
+> işlendi. **Canlı DB elle testi henüz yapılmadı** (kullanıcı ekran başında
+> değildi); ilk fırsatta `npm run tauri dev` ile duman testi yapılmalı.
+> Bilinçli sapma: dosya-tab'ları restart'ta diskten YENİDEN OKUNMAZ (kaydedilmemiş
+> düzenleme kaybını önlemek için persist edilen içerik kullanılır) — "file
+> missing" rozeti bu yüzden eklenmedi (Faz 2 watch ile birlikte).
+
+
 > Tarih: 2026-07-04. Girdi: design/14'teki ham GUI bulguları. Bu dosya o listeyi
 > design/12 tarzında (neredeyiz / plan / kabul / risk) analiz edip **P1-U1…U4**
 > milestone'larına böler. "U" = UX track; design/12'nin P1-M2…M5 numaralarına

@@ -30,8 +30,9 @@
 Kullanıcı önceliğiyle sıralı (Q&A 2026-07-04). Her milestone "çalışan uygulama bırakır".
 
 1. ~~**P1-M1 — Multi-connection eşzamanlı + hızlı geçiş**~~ ✅ **tamamlandı**, elle test edildi (yukarı bakın).
-2. ~~**P1-M1.5 — design/14'teki GUI backlog'unun derin planlaması.**~~ ✅ **Plan yazıldı (2026-07-04): design/15** (P1-U1…U4 milestone'ları; U1 = tab↔connection semantik düzeltmesi — pristine-tab kuralı — öncelikli) ve **design/16** (kullanıcı senaryoları + Ö1–Ö8 önerileri; Ö5/Ö1/Ö7 ilgili U-milestone'lara iliştirilecek). **Buradan başla: P1-U1'i uygula** (design/15 §P1-U1), sonra U2→U3→U4, sonra P1-M2.
-3. **P1-M2 — Yerel SQLite depo + cache disk persist** (design 12 §P1-M2). `rusqlite` + `store/` modülü; cache build-girdilerini `postcard` ile diske yaz, `connect`'te load-then-refresh. Bu depo M4 history'nin de altyapısı.
+2. ~~**P1-M1.5 — design/14'teki GUI backlog'unun derin planlaması.**~~ ✅ **Plan design/15**, senaryolar design/16.
+   ~~**P1-U1…U4 — GUI backlog uygulaması.**~~ ✅ **HEPSİ tamamlandı (2026-07-04)**, `p1-u-gui-backlog` dalında 6 commit (U1, U2, U3a, U3b, U4a, U4b). Gate her commit'te yeşil. **Kalan iş: dalı main'e merge et + canlı DB duman testi** (`npm run tauri dev`) — U1 iki-DB akışı, seçim-run + marker, peek index/trigger, Alt+F1 overlay, sağ-tık filtre, roller, .sql aç/kaydet+dirty. Ö1/Ö6 (boş-durum kartı, yeni-tab başlangıç içeriği) ve Ö2/Ö3/Ö4/Ö7/Ö8 uygulanmadı (design/16 §4 sıralaması; Ö4/Ö6 M4/M5 bağımlı).
+3. **P1-M2 — Yerel SQLite depo + cache disk persist** (design 12 §P1-M2). **Buradan devam et.** `rusqlite` + `store/` modülü; cache build-girdilerini `postcard` ile diske yaz, `connect`'te load-then-refresh. Bu depo M4 history'nin de altyapısı. Not: U4 ayarları şimdilik localStorage'da; liste büyürse bu depoya taşınır.
 4. **P1-M3 — Okunaklı EXPLAIN (ANALYZE)** (design 12 §P1-M3). `classify` zaten `ExplainStmt` görüyor; `StatementResult::Explain{plan_json}` + ağaç UI; DML'de ANALYZE otomatik `BEGIN…ROLLBACK` sarmalı.
 5. **P1-M4 — Query history + snippets**, **P1-M5 — konfor paketi** (force kill, tam CSV export, hücre tam-değer, frequency ranking, açık tema).
 
@@ -46,9 +47,11 @@ Sözleşme değişiklikleri (02'ye işlenecek) özeti design/12 §4'te.
 
 ## 5. Yeni oturum "start here"
 
-> "design/13'ü, design/15'i ve design/16'yı oku; **P1-U1'i uygula** (design/15
-> §P1-U1 — tab↔connection semantiği: pristine-tab kuralı, focusConnection,
-> Databases ▸; + design/16 Ö5 read-only rozeti). Sonra U2 (+Ö1/Ö7) → U3 → U4,
-> sonra Faz 1 P1-M2'ye (yerel SQLite depo, design/12 §P1-M2) geç."
+> "design/13'ü oku; `p1-u-gui-backlog` dalını (P1-U1…U4 tamam) main'e merge et ve
+> `npm run tauri dev` ile canlı DB duman testi yap (iki-DB switch, seçim-run+marker,
+> peek index/trigger, Alt+F1 overlay, sağ-tık filtre, roller, .sql aç/kaydet).
+> Sonra Faz 1 **P1-M2**'ye (yerel SQLite depo, design/12 §P1-M2) geç. İsteğe bağlı
+> küçük işler: design/16 Ö1/Ö2/Ö3/Ö5/Ö7 (boş-durum kartı, reconnect daveti,
+> grid zengin kopyalama, read-only rozeti, bitiş sinyali)."
 
 Memory: `m0-status.md` güncel durumu tutuyor.
