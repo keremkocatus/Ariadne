@@ -2,9 +2,14 @@
 
 > Tarih: 2026-07-04. Girdi: kullanıcının design/19 turuyla aynı gün gelen 5 ek not.
 > design/15/17/18/19 tarzında (neredeyiz / plan / kabul / risk) **P1-Y1…Y3**
-> milestone'larına böler. "Y" = ergonomi/görünürlük track. **Bu belge PLAN'dır;
-> henüz uygulanmadı** (design/19'la birlikte kuyruğa alındı; uygulama ayrı adımda).
-> Kod referansları 2026-07-04 (v0.0.1, `p1-u-gui-backlog` dalı) itibarıyladır.
+> milestone'larına böler. "Y" = ergonomi/görünürlük track.
+> Kod referansları 2026-07-04 (`p1-u-gui-backlog` dalı) itibarıyladır.
+>
+> **DURUM (2026-07-04): Y1–Y3 TAMAMEN UYGULANDI** (design/19'la birleşik v0.0.2
+> turunda). Y1 grid sütun resize + sidebar tutamak affordance; Y2 `sql-formatter`
+> + Ctrl+K (editörde format, dışarıda palette); Y3 `db_stats` komutu + StatusBar
+> şeridi (30 sn poll, CPU/RAM YOK) + Toolbar Activity butonu. Gate her commit'te
+> yeşil. Henüz main'e merge/canlı duman testi YAPILMADI (bkz. design/19 durum notu).
 
 ## 0. Ham notlar → madde eşlemesi
 

@@ -41,7 +41,7 @@ export function StatusBar() {
       )}
       <div className="ml-auto flex items-center gap-2">
         {stats && <StatsStrip stats={stats} />}
-        <span>v0.0.1</span>
+        <span>v0.0.2</span>
       </div>
     </footer>
   );

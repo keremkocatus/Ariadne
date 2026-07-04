@@ -6,10 +6,11 @@
 
 ## 1. Şu anki durum (main branch)
 
-> **v0.0.1 (2026-07-04):** P1-M1 + GUI backlog (P1-U1…U4) + senaryo-türevi paket
-> (P1-V1…V4) + Explorer/nav turu (P1-W1…W3, design/18) `p1-u-gui-backlog` dalında
-> tamam. Ayrıntı §3. Aşağısı P1-M1 dönemine ait tarihsel not; en güncel "sırada ne
-> var" için §3'e bakın.
+> **v0.0.2 (2026-07-04):** P1-M1 + GUI backlog (P1-U1…U4) + senaryo-türevi paket
+> (P1-V1…V4) + Explorer/nav turu (P1-W1…W3, design/18) + cila/düzenleme &
+> ergonomi turu (**P1-X1…X4** design/19, **P1-Y1…Y3** design/20) `p1-u-gui-backlog`
+> dalında tamam. Ayrıntı §3. Aşağısı P1-M1 dönemine ait tarihsel not; en güncel
+> "sırada ne var" için §3'e bakın.
 
 - **Faz 0 (M0–M3) tamamlandı** ve **design/11 refactor + sertleştirme main'e merge edildi** (merge commit `Merge phase0-refactor: …`).
 - **Faz 1, P1-M1 (multi-connection eşzamanlı + hızlı geçiş) tamamlandı** (2026-07-04, commit `feat(P1-M1): …`). Tab artık kalıcı `connectionId` taşıyor; Explorer/StatusBar/CommandPalette/ConnectionMenu/Toolbar/TabBar/Monaco completion+peek hepsi aktif *tab'ın* bağlantısını takip ediyor (global `activeConnectionId` yalnız "yeni tab" varsayılanı). Yeni `ConnectionClosedBanner` + Ctrl+K/menü "switch connection" ile disconnect sonrası tab yeniden bağlanabiliyor. Yüksek-efor 5-açılı paralel kod incelemesi 8 gerçek bulgu çıkardı ve hepsi düzeltildi — en ciddisi: bağlantı bir açık tx ortasında koparsa tab'ın sonsuza dek kilitlenmesi (`releaseTabsForConnection` ile çözüldü) ve `setConnection`'ın açık bir sunucu-cursor'u (hasMore) görmezden gelip çapraz-bağlantı fetchMore/closeResult'a yol açması.
@@ -39,28 +40,36 @@ Kullanıcı önceliğiyle sıralı (Q&A 2026-07-04). Her milestone "çalışan u
    ~~**P1-U1…U4 — GUI backlog uygulaması.**~~ ✅ **HEPSİ tamamlandı (2026-07-04)**, `p1-u-gui-backlog` dalında 6 commit (U1, U2, U3a, U3b, U4a, U4b). Gate her commit'te yeşil. **Kalan iş: dalı main'e merge et + canlı DB duman testi** (`npm run tauri dev`) — U1 iki-DB akışı, seçim-run + marker, peek index/trigger, Alt+F1 overlay, sağ-tık filtre, roller, .sql aç/kaydet+dirty. Ö1/Ö6 (boş-durum kartı, yeni-tab başlangıç içeriği) ve Ö2/Ö3/Ö4/Ö7/Ö8 uygulanmadı — **derin teknik planı design/17'de (P1-V1…V4; Ö6/Ö8 orada ertelenmiş)**.
 3. ~~**P1-V1…V4 — senaryo-türevi kazanımlar** (design/17)~~ ✅ **HEPSİ tamamlandı (2026-07-04)**, `p1-u-gui-backlog` dalında 4 commit (V1 görünürlük paketi, V2 grid zengin kopyalama, V3 açılış reconnect daveti + remap, V4 Activity paneli + signal_backend + tab force-kill). Gate her commit'te yeşil (40 rust testi). **Bu sürümle uygulama v0.0.1'e yükseltildi.** Ö6/Ö8 design/17 §6'da ertelendi.
    ~~**P1-W1…W3 — Explorer & navigasyon turu** (design/18)~~ ✅ **HEPSİ tamamlandı (2026-07-04)**, `p1-u-gui-backlog` dalında 3 commit + doc. W1 reconnect toast netliği (profil+host etiketi, 30sn+dismiss), W2 Explorer hijyeni (sistem şemalarını gizle, public'i aç, kategori tavanı=200+"more"), W3 SQL Server tarzı bağlam çubuğu (server ▸ database ▾ DB geçişi) + sağ-tık/Ctrl+N New Query. Hepsi frontend-only. **Kalan iş: dalı main'e merge + canlı DB duman testi** (U+V+W track'lerinin hepsi; W için: iki-DB context bar geçişi, 2000 tablo tavanı, public otomatik açık, reconnect etiketi, Ctrl+N).
+   ~~**P1-X1…X4 (design/19) + P1-Y1…Y3 (design/20) — cila/düzenleme & ergonomi turu**~~ ✅ **HEPSİ tamamlandı (2026-07-04)**, `p1-u-gui-backlog` dalında 7 feat + doc/chore, **v0.0.2'ye yükseltildi**. **X1** boş-sonuç grid'i (kök: `read_rows` 0 satırda sütun vermiyordu → `describe` fallback backend'de), Explorer webview sağ-tık bastırma, footer copy menü konumu. **X2** Explorer connect-anı ağaç (useSize callback-ref) + çift-tık SELECT (peek-shift debounce). **X3** sonuç paneli dikey resize (`resultsHeight` persist) + pencere başlığı. **Y1** grid sütun resize (oturumluk) + sidebar tutamak affordance. **Y2** SQL formatter (`sql-formatter`, editörde Ctrl+K / palette). **Y3** `db_stats` + StatusBar şeridi (30 sn, CPU/RAM YOK) + Toolbar Activity butonu. **X4 (DATA-WRITE)** hücre görüntüle/düzenle popup + `get_primary_key`/`update_cell` (tek-tablo+PK, 1-satır guard, RO'da kapalı, ctid yok; SQL düzenlenince sourceTable temizlenir). Gate her commit'te yeşil (44 rust +7 ignored). **Kalan iş: dalı main'e merge + ZORUNLU canlı duman testi** (design/19 §5 + 20 §5 listesi; özellikle X4'ün gerçek UPDATE'i tek-tablo tabloda + JOIN/RO'da editör kilidi + N1/N2/N4 gerçek-DB doğrulaması).
 4. **P1-M2 — Yerel SQLite depo + cache disk persist** (design 12 §P1-M2). **Buradan devam et.** `rusqlite` + `store/` modülü; cache build-girdilerini `postcard` ile diske yaz, `connect`'te load-then-refresh. Bu depo M4 history'nin de altyapısı. Not: U4 ayarları + V3 lastSession eşlemesi şimdilik localStorage'da (`ariadne-ui`, `ariadne-connections`); liste büyürse bu depoya taşınabilir.
 5. **P1-M3 — Okunaklı EXPLAIN (ANALYZE)** (design 12 §P1-M3). `classify` zaten `ExplainStmt` görüyor; `StatementResult::Explain{plan_json}` + ağaç UI; DML'de ANALYZE otomatik `BEGIN…ROLLBACK` sarmalı.
 6. **P1-M4 — Query history + snippets**, **P1-M5 — kalan konfor paketi** (tam CSV export, hücre tam-değer, frequency ranking, açık tema; force-kill ARTIK V4'te uygulandı → M5'ten düşülebilir).
 
 Sözleşme değişiklikleri (02'ye işlendi): V4 `list_activity`/`signal_backend`/
 `force_kill_query`, V3 `ariadne-connections` localStorage anahtarı, V1
-`longQueryNoticeSeconds` ayarı. Kalan M-track özeti design/12 §4'te.
+`longQueryNoticeSeconds` ayarı; **Y3 `db_stats`, X4 `get_primary_key`/`update_cell`
+(DATA-WRITE)**. Kalan M-track özeti design/12 §4'te.
 
 ## 4. Açık kararlar / dikkat edilecekler
 
 - **CI/testcontainers/criterion: kullanıcı şimdilik istemedi** (tek geliştirici, lokal `cargo test` yeterli). Release/paylaşım fazında yeniden değerlendir.
 - **Windows integration-test kısıtı (design/11 R1 notu):** `tests/`'ten tam Tauri uygulamasını linkleyen testler Windows'ta yüklenemiyor (`STATUS_ENTRYPOINT_NOT_FOUND`). Saf DB/cache/complete mantığını Windows'ta da `tests/`'ten test etmek istenirse, bunları Tauri'siz bir **`core` crate**'e almak gerekir (workspace split — design 01 §4 tetikleyicisi ilk kez oluştu). Faz 1'de P1-M2'nin `store/` işiyle birlikte değerlendirilebilir.
 - **Faz 0 çıkış ölçümleri hâlâ elle yapılacak:** cold start < 1 sn, idle RAM < 200 MB (design 01 §7, 10 çıkış kriteri). Ölçüm sonuçları design/10'a işlenmeli.
-- **Bilinçli ertelenenler** (design/11 §6, 12 §6): sistem-şema nesneleri cache dışı, kısmi şema refresh, auto-update/release pipeline (09), inline edit, SQL formatter, SSH tüneli.
+- **Bilinçli ertelenenler** (design/11 §6, 12 §6): sistem-şema nesneleri cache dışı, kısmi şema refresh, auto-update/release pipeline (09), SSH tüneli. (~~inline edit~~ X4'te, ~~SQL formatter~~ Y2'de geldi. Kalan X4 sınırları: çok-hücre/satır ekle-sil, PK'sız tabloda ctid, >8KB hücre yeniden çekme — design 19 §6.)
 
 ## 5. Yeni oturum "start here"
 
-> "design/13'ü oku; `p1-u-gui-backlog` dalını (P1-U1…U4 + P1-V1…V4 tamam, v0.0.1)
-> main'e merge et ve `npm run tauri dev` ile canlı DB duman testi yap: U-track
-> (iki-DB switch, seçim-run+marker, peek, Alt+F1, filtreler, roller, .sql) + V-track
-> (RO rozeti, boş-durum kartı, arka-plan bitiş toast'ı, grid sağ-tık kopyalama,
-> kapat-aç→reconnect daveti, Activity paneli + terminate, Cancel→Force kill).
-> Sonra Faz 1 **P1-M2**'ye (yerel SQLite depo, design/12 §P1-M2) geç."
+> "design/13'ü oku; `p1-u-gui-backlog` dalını (P1-U…P1-W + **P1-X1…X4 + P1-Y1…Y3
+> tamam, v0.0.2**) main'e merge et ve `npm run tauri dev` ile canlı DB duman testi
+> yap. U/V/W track'lerinin yanı sıra bu turun ZORUNLU listesi (design/19 §5 + 20 §5):
+> N1 boş SELECT'te başlıklı boş grid; N2 tabloya çift-tık SELECT; N3 sağ-tıkta webview
+> menüsü YOK; N4 yeni bağlantıda ağaç HEMEN gelir; N6 footer copy menü konumu; N7
+> sonuç paneli dikey resize; grid sütun sürükleme + hizalama; Ctrl+K format
+> (seçim/tam/bozuk); StatusBar şeridi 30 sn; Toolbar Activity butonu; **X4: tek-tablo
+> sonucunda hücre düzenle→gerçek UPDATE (tam 1 satır) + JOIN/RO'da editör kilitli +
+> hücre görüntüleyici**. **X4 kullanıcının DB'sine YAZAR — önce güvenli bir test
+> tablosunda doğrula.** Ayrıca X4 için: tabloyu açıp SQL'i düzenlemeden edit çalışmalı
+> (sourceTable mount'ta spurious onChange ile temizlenmemeli — Monaco'da beklenmiyor
+> ama doğrula). Sonra Faz 1 **P1-M2**'ye (yerel SQLite depo) geç."
 
 Memory: `m0-status.md` güncel durumu tutuyor.

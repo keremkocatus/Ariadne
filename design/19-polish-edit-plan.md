@@ -3,10 +3,16 @@
 > Tarih: 2026-07-04. Girdi: kullanıcının v0.0.1 + design/18 sonrası üçüncü GUI test
 > turu (8 not + v0.0.2 hedefi). Bu dosya önce **projenin güncel durumunu** özetler,
 > sonra notları design/15/17/18 tarzında (neredeyiz / plan / kabul / risk)
-> **P1-X1…X4** milestone'larına böler. "X" = polish/edit track. **Bu belge PLAN'dır;
-> henüz uygulanmadı** — kullanıcı notları kaydettirdi, uygulama ayrı adımda
-> (klasik plan→review→fix→commit döngüsü) yapılacak. Kod referansları 2026-07-04
-> (v0.0.1, `p1-u-gui-backlog` dalı) itibarıyladır.
+> **P1-X1…X4** milestone'larına böler. "X" = polish/edit track. Kod referansları
+> 2026-07-04 (`p1-u-gui-backlog` dalı) itibarıyladır.
+>
+> **DURUM (2026-07-04): X1–X4 + design/20 (Y1–Y3) TAMAMEN UYGULANDI, v0.0.2'ye
+> yükseltildi.** Her milestone ayrı feat commit'i, her commit'te gate yeşil (44 Rust
+> testi +7 ignored, clippy -D, rustfmt, tsc, vite build). Sıra: X1→X2→X3→Y1→Y2→Y3→X4
+> →v0.0.2. Kök-neden bulguları: N1 backend'deymiş (read_rows 0 satırda sütun vermiyor
+> → describe fallback); N2 iki katman (N4 render + peek-shift yarışı → tek-tık peek
+> debounce). **Henüz main'e merge EDİLMEDİ, canlı duman testi YAPILMADI** (kullanıcı
+> ekran başında değildi) — §5'teki zorunlu elle test listesi bir sonraki adımdır.
 
 ## 1. Projenin güncel durumu (2026-07-04, v0.0.1)
 
@@ -348,6 +354,7 @@ sözleşmesi, design/13 ve bu belgeye durum işlenir.
 
 | Ne | Neden | Ne zaman |
 |---|---|---|
+| Hücre görüntüleyicide 8KB üstü değerin sunucudan yeniden çekilmesi | X4 görüntüleyici grid değerini gösterir (<8KB tam); >8KB kesik değeri DB'den yeniden çekmek ayrı iş (design 05 §4 M5) | Talep olursa |
 | ctid tabanlı düzenleme (PK'sız tablo) | Kırılgan; yanlış satır riski | Gerekirse, açık uyarıyla |
 | Toplu/çok-hücre düzenleme, satır ekleme/silme | v1 tek-hücre yeter | Talep olursa |
 | İlk snapshot fetch gecikmesi (N4'ün ayrı bir yüzü değil; N4 render bug'ıdır) | — | — |

@@ -144,6 +144,14 @@ interface CompletionItem {
 |---|---|---|
 | `list_activity` | `{ connection_id }` | `ActivityRow[]` — `{ pid, datname?, usename?, application_name, client_addr?, state?, wait_event?, backend_start?, query_start?, duration_ms?, query, is_self, is_app }`; `pg_stat_activity` client backend'leri, cluster-geneli, cache dışı |
 | `signal_backend` | `{ connection_id, pid, mode: "cancel" \| "terminate" }` | `bool` — pg_cancel/terminate_backend; yetki hatası SQLSTATE ile normal hata yolundan akar |
+| `db_stats` | `{ connection_id }` | `DbStats` — `{ active_connections, max_connections?, cache_hit_ratio?, db_size_bytes? }`; tek SELECT, cache dışı; StatusBar şeridi 30 sn poll (design 20 §P1-Y3 M5). CPU/RAM YOK (host metriği düz SQL ile alınamaz) |
+
+### Veri düzenleme (detay: 19 §P1-X4) — DATA-WRITE
+
+| Command | Request | Response |
+|---|---|---|
+| `get_primary_key` | `{ connection_id, schema, table }` | `string[]` — PK kolonları sıralı (yoksa boş); `pg_constraint` + `to_regclass`. Frontend hücre düzenleme koşulu |
+| `update_cell` | `{ connection_id, schema, table, pk: {column, value}[], column, new_value: string \| null }` | `{ updated }` — tek hücre UPDATE. `BEGIN; UPDATE "s"."t" SET "col"=$1::<type> WHERE "pk"::text=$n …; rowcount==1 ? COMMIT : ROLLBACK`. `new_value` null → SET NULL. 1-satır guard çoğul/yanlış yazımı önler; RO profilde bağlantı read-only → 25006 ile reddedilir. ctid fallback YOK |
 
 Native dosya diyaloğu `@tauri-apps/plugin-dialog` ile (capability `dialog:default`);
 okuma/yazma yukarıdaki kendi komutlarımızla — bilinçli olarak `tauri-plugin-fs`
