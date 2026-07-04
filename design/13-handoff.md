@@ -11,7 +11,8 @@
 - Kapanış kapısı **yeşil**: 39 Rust unit testi (3 canlı-DB testi `--ignored`), `cargo clippy --all-targets -- -D warnings` temiz, `cargo fmt --check` temiz, `tsc --noEmit` temiz, `npm run build` (vite) geçiyor.
 - `phase0-refactor` branch'i merge sonrası **silinebilir** (`git branch -d phase0-refactor`).
 - Yüksek-efor kod incelemesi yapıldı; 4 gerçek bug bulunup düzeltildi (cursor-yolu marker offset, tab-kapatmada başarısız commit, bayat grid, refresh-bayrağı panik sızıntısı) — commit `fix(review): …`.
-- **Elle doğrulanmadı:** bu milestone `npm run tauri dev` içinde iki canlı Postgres bağlantısıyla henüz gözle test edilmedi (otonom oturumda canlı DB yoktu) — sıradaki oturumda öncelik.
+- **Elle doğrulandı (kısmen):** `npm run tauri dev` ile canlı bir Postgres'e (Railway, `.env`'deki `TEST_DB_URL`) bağlanıp connect/schema-refresh/run_query akışı gözle test edildi, sorunsuz. Bu sırada `cargo test -- --ignored` da gerçek DB'ye karşı koşturuldu ve H2-sonrası hâlâ eski sözleşmeyi bekleyen bir test (`cancel_long_query`) bulunup düzeltildi (commit `fix(test): …`) — P1-M1 ile ilgisiz, bağımsız bug.
+- **GUI testinden çıkan bulgular design/14'e yazıldı** (ham backlog, henüz planlanmadı). **Önemli:** design/14 §2, P1-M1'in `ConnectionMenu.bindActiveTab` davranışıyla (üstten bağlantı seçince aktif tab'ı da rebind etme) kullanıcı beklentisinin ÇELİŞTİĞİNİ not ediyor — sonraki derin planlamada öncelikli gözden geçirilmeli.
 
 **Kodun güncel şekli** (design/11'den sonra):
 - Rust: `lib.rs`(`ariadne_lib`)+ince `main.rs`; `db/` = pool+types+classify+rows+exec; `complete/` = mod+lexer+context+candidates; `cache/` = mod+catalog+snapshot; `logging.rs`; komutlar ince.
@@ -28,10 +29,11 @@
 
 Kullanıcı önceliğiyle sıralı (Q&A 2026-07-04). Her milestone "çalışan uygulama bırakır".
 
-1. ~~**P1-M1 — Multi-connection eşzamanlı + hızlı geçiş**~~ ✅ **tamamlandı** (yukarı bakın). Elle doğrulama (iki canlı bağlantıyla gözle test) hâlâ beklemede.
-2. **P1-M2 — Yerel SQLite depo + cache disk persist** (design 12 §P1-M2). **Buradan başla.** `rusqlite` + `store/` modülü; cache build-girdilerini `postcard` ile diske yaz, `connect`'te load-then-refresh. Bu depo M4 history'nin de altyapısı.
-3. **P1-M3 — Okunaklı EXPLAIN (ANALYZE)** (design 12 §P1-M3). `classify` zaten `ExplainStmt` görüyor; `StatementResult::Explain{plan_json}` + ağaç UI; DML'de ANALYZE otomatik `BEGIN…ROLLBACK` sarmalı.
-4. **P1-M4 — Query history + snippets**, **P1-M5 — konfor paketi** (force kill, tam CSV export, hücre tam-değer, frequency ranking, açık tema).
+1. ~~**P1-M1 — Multi-connection eşzamanlı + hızlı geçiş**~~ ✅ **tamamlandı**, elle test edildi (yukarı bakın).
+2. **P1-M1.5 (yeni) — design/14'teki GUI backlog'unun derin planlaması.** **Buradan başla** — kullanıcı bir sonraki oturumda önce bu listenin design/12-tarzı analiz+milestone planını istiyor, sonra uygulama. Öne çıkan: tab↔connection izolasyon düzeltmesi (§2), editör seçili-metin çalıştırma + stale marker bug'ı (§1), Explorer tık davranışı + peek zenginleştirme (§4), filtreleme (§5), fonksiyon "modify" akışı (§6), ayarlar/dosya-I/O/users&roles (§7).
+3. **P1-M2 — Yerel SQLite depo + cache disk persist** (design 12 §P1-M2). `rusqlite` + `store/` modülü; cache build-girdilerini `postcard` ile diske yaz, `connect`'te load-then-refresh. Bu depo M4 history'nin de altyapısı.
+4. **P1-M3 — Okunaklı EXPLAIN (ANALYZE)** (design 12 §P1-M3). `classify` zaten `ExplainStmt` görüyor; `StatementResult::Explain{plan_json}` + ağaç UI; DML'de ANALYZE otomatik `BEGIN…ROLLBACK` sarmalı.
+5. **P1-M4 — Query history + snippets**, **P1-M5 — konfor paketi** (force kill, tam CSV export, hücre tam-değer, frequency ranking, açık tema).
 
 Sözleşme değişiklikleri (02'ye işlenecek) özeti design/12 §4'te.
 
@@ -44,9 +46,9 @@ Sözleşme değişiklikleri (02'ye işlenecek) özeti design/12 §4'te.
 
 ## 5. Yeni oturum "start here"
 
-> "design/13'ü oku; P1-M1 tamamlandı ama iki canlı bağlantıyla elle doğrulanmadı —
-> önce `npm run tauri dev` ile gözle test et (iki profile bağlan, iki tab'da
-> eşzamanlı sorgu, birini disconnect edip diğerinin etkilenmediğini doğrula),
-> sonra Faz 1 P1-M2'ye (yerel SQLite depo, design/12 §P1-M2) geç."
+> "design/13'ü ve design/14'ü oku; design/14'teki GUI backlog'u için design/12
+> tarzında derin bir analiz + milestone planı yap (önce PLANI ONAYLAT, sonra
+> uygula) — özellikle §2'deki tab↔connection izolasyon çelişkisini çöz. Sonra
+> sırayla uygula, sonra Faz 1 P1-M2'ye (yerel SQLite depo, design/12 §P1-M2) geç."
 
 Memory: `m0-status.md` güncel durumu tutuyor.
