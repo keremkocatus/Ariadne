@@ -6,8 +6,8 @@ import type { ColumnMeta } from "@/lib/api";
 
 const ROW_H = 24;
 const COL_W = 168;
-// Bu satır sayısının üstünde JSON/Markdown üretimi UI thread'ini kilitleyebilir
-// (design 17 §P1-V2); o kalemler devre dışı bırakılır, CSV/TSV yolu açık kalır.
+// Above this row count, generating JSON/Markdown could block the UI thread; those
+// items are disabled while the CSV/TSV path stays open.
 const HEAVY_FORMAT_LIMIT = 50_000;
 
 interface Props {
@@ -20,11 +20,11 @@ interface Props {
   estimatedTotal?: number | null;
   elapsedMs: number;
   onFetchMore: () => void;
-  /// Hücreye çift-tık → görüntüle/düzenle popup (design 19 §P1-X4). ResultArea yönetir.
+  /// Double-click a cell → the view/edit popup. Managed by ResultArea.
   onCellActivate?: (rowIndex: number, colIndex: number) => void;
 }
 
-/// Satır-granülü seçim (design 17 §P1-V2): seçili satırlar + odak hücre (kolon).
+/// Row-granular selection: the selected rows + the focused cell (column).
 interface Sel {
   rows: Set<number>;
   anchor: number;
@@ -45,16 +45,16 @@ export function ResultGrid({
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [sel, setSel] = useState<Sel | null>(null);
-  // `up`: footer "Copy ▾" menüsü butona tutturulup YUKARI açılır (design 19 N6);
-  // sağ-tık menüsü imleç konumunda aşağı açılır (up yok).
+  // `up`: the footer "Copy ▾" menu is anchored to the button and opens UPWARD; the
+  // right-click menu opens downward at the cursor (no `up`).
   const [menu, setMenu] = useState<{ x: number; y: number; up?: boolean } | null>(null);
-  // Sütun genişlikleri (design 20 M1): oturumluk, kalıcılık YOK. Boş = varsayılan
-  // COL_W. Yeni sorguda sıfırlanır (aşağıdaki [columns] effect). estimateSize buradan
-  // okur; değişince colV.measure() ile offsetler yenilenir.
+  // Column widths: session-only, NOT persisted. Empty = the default COL_W. Reset on a
+  // new query (the [columns] effect below). estimateSize reads from here; when it
+  // changes, colV.measure() refreshes the offsets.
   const [colWidths, setColWidths] = useState<number[]>([]);
 
-  // Yeni sorgu (kolon referansı değişti) → seçim + menü + sütun genişlikleri sıfırlanır.
-  // Sayfa ekleme (fetchMore) kolonları değiştirmez, bu yüzden bunlar sayfalar arası korunur.
+  // New query (columns reference changed) → reset selection + menu + column widths.
+  // Paging (fetchMore) doesn't change columns, so these persist across pages.
   useEffect(() => {
     setSel(null);
     setMenu(null);
@@ -74,8 +74,8 @@ export function ResultGrid({
     estimateSize: (i) => colWidths[i] ?? COL_W,
     overscan: 3,
   });
-  // Sütun genişliği değişince sanallaştırıcı offset/size cache'ini yenile (aksi
-  // halde başlık genişler ama gövde hizası bayat kalır).
+  // When a column width changes, refresh the virtualizer's offset/size cache
+  // (otherwise the header widens but the body alignment stays stale).
   useEffect(() => {
     colV.measure();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -106,7 +106,7 @@ export function ResultGrid({
     window.addEventListener("mouseup", onUp);
   };
 
-  // Sonsuz scroll: sona yaklaşınca sonraki sayfayı çek (design 05 §2).
+  // Infinite scroll: fetch the next page as we approach the end.
   const virtualRows = rowV.getVirtualItems();
   useEffect(() => {
     const last = virtualRows[virtualRows.length - 1];
@@ -138,11 +138,11 @@ export function ResultGrid({
 
   const openContextMenu = (e: React.MouseEvent) => {
     const cell = (e.target as HTMLElement).closest<HTMLElement>("[data-cell]");
-    if (!cell) return; // header/boşluk: tarayıcı menüsü kalsın
+    if (!cell) return; // header/empty space: let the browser menu stay
     e.preventDefault();
     const r = Number(cell.dataset.row);
     const c = Number(cell.dataset.col);
-    // Seçim dışına sağ-tık seçimi o hücreye daraltır; içine sağ-tık seçimi korur.
+    // Right-click outside the selection narrows it to that cell; inside, it keeps the selection.
     setSel((prev) => (prev && prev.rows.has(r) ? { ...prev, col: c } : { rows: new Set([r]), anchor: r, col: c }));
     setMenu({ x: e.clientX, y: e.clientY });
   };
@@ -179,7 +179,7 @@ export function ResultGrid({
                 >
                   <span className="truncate">{col.name}</span>
                   <span className="truncate text-fg-muted">{col.type_name}</span>
-                  {/* Sağ kenar sürükleme tutamağı (design 20 M1) */}
+                  {/* Right-edge drag handle */}
                   <div
                     onMouseDown={(e) => startColResize(e, c.index)}
                     onClick={(e) => e.stopPropagation()}
@@ -248,7 +248,7 @@ export function ResultGrid({
           className="ml-auto hover:text-fg"
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
-            // Menüyü butonun ÜST kenarına tuttur, yukarı doğru büyüsün (N6).
+            // Anchor the menu to the button's TOP edge so it grows upward.
             setMenu({ x: r.right, y: r.top, up: true });
           }}
           title="Copy…"
@@ -272,9 +272,9 @@ export function ResultGrid({
   );
 }
 
-/// Kopyalama menüsü: sağ-tık hücresinden ya da footer "Copy ▾"den açılır. Sağ-tık
-/// açıldıysa `sel` odak hücre + seçili satırları taşır; footer'dan açıldıysa sel
-/// null olabilir → yalnız "tüm satır" kalemleri anlamlı olur (design 17 §P1-V2).
+/// The copy menu: opened from a right-clicked cell or the footer "Copy ▾". If opened
+/// via right-click, `sel` carries the focused cell + selected rows; from the footer,
+/// sel may be null → only the "all rows" items are meaningful.
 function CopyMenu({
   x,
   y,
@@ -294,7 +294,7 @@ function CopyMenu({
 }) {
   const headers = columns.map((c) => c.name);
   const selRows = sel && sel.rows.size > 0 ? [...sel.rows].sort((a, b) => a - b) : null;
-  const targetRows = selRows ?? rows.map((_, i) => i); // seçim yoksa tüm satırlar
+  const targetRows = selRows ?? rows.map((_, i) => i); // no selection → all rows
   const targetMatrix = targetRows.map((i) => rows[i]);
   const rowsLabel = selRows ? `${selRows.length} row${selRows.length > 1 ? "s" : ""}` : "all rows";
   const heavy = targetRows.length > HEAVY_FORMAT_LIMIT;
@@ -316,8 +316,8 @@ function CopyMenu({
     >
       <div
         className="absolute w-56 rounded-md border border-border bg-bg-elev p-1 text-xs shadow-2xl"
-        // Footer (up): sağ-alt köşeyi butonun sağ-üstüne sabitle → menü yukarı/sola
-        // doğru büyür, yükseklik bilmeye gerek yok. Sağ-tık: imleç konumundan aşağı.
+        // Footer (up): pin the bottom-right corner to the button's top-right → the menu
+        // grows up/left, no need to know its height. Right-click: downward from the cursor.
         style={
           up
             ? { right: window.innerWidth - x, bottom: window.innerHeight - y + 4 }

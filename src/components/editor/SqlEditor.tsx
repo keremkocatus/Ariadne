@@ -7,9 +7,9 @@ import { formatSql } from "@/lib/format";
 import { toast } from "sonner";
 import { getObjectInfo, type ObjectInfo } from "@/lib/api";
 
-/// Editörde SQL formatla (design 20 §P1-Y2 M3): seçim varsa yalnız onu, yoksa tüm
-/// metni. `executeEdits` ile uygulanır → tek Ctrl+Z geri alır. Değişiklik yoksa
-/// (zaten formatlı) dokunulmaz; bozuk SQL'de metin korunur + toast.
+/// Format SQL in the editor: the selection if there is one, otherwise the whole
+/// document. Applied via `executeEdits` → a single Ctrl+Z reverts it. If nothing
+/// changes (already formatted) it's left alone; on invalid SQL the text is preserved + a toast.
 function formatInEditor(ed: editor.IStandaloneCodeEditor) {
   const model = ed.getModel();
   if (!model) return;
@@ -24,7 +24,7 @@ function formatInEditor(ed: editor.IStandaloneCodeEditor) {
     toast.error("Couldn't format — invalid SQL");
     return;
   }
-  if (formatted.trimEnd() === src.trimEnd()) return; // zaten formatlı
+  if (formatted.trimEnd() === src.trimEnd()) return; // already formatted
   ed.executeEdits("ariadne-format", [{ range, text: formatted, forceMoveMarkers: true }]);
   ed.pushUndoStop();
 }
@@ -32,16 +32,16 @@ function formatInEditor(ed: editor.IStandaloneCodeEditor) {
 interface SqlEditorProps {
   value: string;
   onChange: (value: string) => void;
-  /** Bu editör örneğinin bağlı olduğu bağlantı (design 12 §P1-M1) — tab'dan gelir,
-   * global aktif bağlantıdan DEĞİL (completion/peek/signature-help hep bunu kullanır). */
+  /** The connection this editor instance is bound to — comes from the tab, NOT the
+   * global active connection (completion/peek/signature-help all use this). */
   connectionId: string | null;
-  /** Ctrl+Enter / Ctrl+E / F5 ile tetiklenir (design 07 §3, SSMS tarzı). */
+  /** Triggered by Ctrl+Enter / Ctrl+E / F5 (SSMS-style). */
   onRun: () => void;
-  /** Alt+F1 nesne bilgisi (null = imleçteki identifier çözülemedi). */
+  /** Alt+F1 object info (null = the identifier at the cursor couldn't be resolved). */
   onPeek?: (info: ObjectInfo | null) => void;
-  /** SQL hata marker'ı (design 05 hata sunumu): byte offset + mesaj. */
+  /** SQL error marker: byte offset + message. */
   marker?: { offset: number; message: string } | null;
-  /** Editör font boyutu (ayarlardan, design 15 §P1-U4). */
+  /** Editor font size (from settings). */
   fontSize?: number;
 }
 
@@ -55,14 +55,14 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
   const edRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
 
-  // Bu editör örneği görünürken Monaco provider'larının hangi bağlantıyı
-  // kullanacağını bildirir (provider'lar dil-seviyesinde global; App bir seferde
-  // yalnız aktif tab'ın editörünü render eder — bkz. lib/monaco/providers.ts).
+  // Tell the Monaco providers which connection to use while this editor is visible
+  // (the providers are global at the language level; App renders only the active
+  // tab's editor at a time — see lib/monaco/providers.ts).
   useEffect(() => {
     setActiveConnection(connectionId);
   }, [connectionId]);
 
-  // Hata marker'ını modele işle (kırmızı alt çizgi + hover mesajı).
+  // Apply the error marker to the model (red underline + hover message).
   useEffect(() => {
     const ed = edRef.current;
     const monaco = monacoRef.current;
@@ -85,13 +85,13 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
     ]);
   }, [marker]);
 
-  // Font boyutu ayardan değişince canlı uygula (design 15 §P1-U4).
+  // Apply the font size live when the setting changes.
   useEffect(() => {
     edRef.current?.updateOptions({ fontSize });
   }, [fontSize]);
 
-  // Bu editör görünürken çalıştırma yolunun seçimi okuyabilmesi için getter kaydı
-  // (design 15 §P1-U2). Editör unmount olunca (tab değişince, bir sonraki mount
+  // Register a getter so the run path can read the selection while this editor is
+  // visible. On unmount (tab change), it's cleared (the next mount re-registers it
   // hemen yeniden kaydeder) temizlenir.
   useEffect(() => {
     return () => {
@@ -105,8 +105,8 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
     monacoRef.current = monaco;
     registerSqlProviders();
 
-    // SSMS semantiği: boş olmayan bir seçim varsa yalnız onu koştur (offset'iyle);
-    // yoksa null → çalıştırma tam metni kullanır.
+    // SSMS semantics: if there's a non-empty selection, run only it (with its offset);
+    // otherwise null → the run uses the full text.
     setRunSelectionGetter(() => {
       const model = ed.getModel();
       const sel = ed.getSelection();
@@ -116,7 +116,7 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
       return { sql, selectionOffset: model.getOffsetAt(sel.getStartPosition()) };
     });
 
-    // Çalıştırma: Ctrl+Enter (M0 kabul) + Ctrl+E + F5 (SSMS).
+    // Run: Ctrl+Enter + Ctrl+E + F5 (SSMS).
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runRef.current());
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyE, () => runRef.current());
     ed.addCommand(monaco.KeyCode.F5, () => runRef.current());
@@ -137,8 +137,8 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
       })();
     });
 
-    // Ctrl+D satırı aşağı kopyala (SSMS/VS); Monaco'nun "select next occurrence"ı
-    // Ctrl+Shift+D'ye taşınır (multi-cursor kaybolmaz) — design 07 §3.
+    // Ctrl+D copies the line down (SSMS/VS); Monaco's "select next occurrence" moves
+    // to Ctrl+Shift+D (multi-cursor isn't lost).
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyD, () =>
       ed.trigger("ariadne", "editor.action.copyLinesDownAction", null),
     );
@@ -146,13 +146,13 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
       ed.trigger("ariadne", "editor.action.addSelectionToNextFindMatch", null),
     );
 
-    // Ctrl+K: SQL formatla (design 20 §P1-Y2 M3). Editör odaklıyken Monaco'ya bırakılan
-    // Ctrl+K burada formatlamaya bağlanır; editör DIŞINDA global Ctrl+K palette olarak
-    // kalır (shortcuts.ts inEditor() → return). Seçim varsa yalnız onu, yoksa tüm metni
-    // biçimlendirir; executeEdits ile tek Ctrl+Z'de geri alınır. Bozuk SQL'de metne
-    // dokunmadan uyarır.
+    // Ctrl+K: format SQL. When the editor is focused, Ctrl+K (deferred to Monaco by
+    // shortcuts.ts's inEditor() → return) is bound to formatting here; OUTSIDE the
+    // editor, global Ctrl+K stays the palette. Formats the selection if there is one,
+    // otherwise the whole document; revertible with a single Ctrl+Z; on invalid SQL it
+    // warns without touching the text.
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => formatInEditor(ed));
-    // Palette "Format SQL" erişimi için (editör-içi Ctrl+K zaten doğrudan çalışır).
+    // For the palette's "Format SQL" access (in-editor Ctrl+K already works directly).
     setFormatAction(() => formatInEditor(ed));
 
     ed.focus();
@@ -170,7 +170,7 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
     padding: { top: 10, bottom: 10 },
     tabSize: 2,
     suggestSelection: "first",
-    // Öneriler Rust'tan; Monaco'nun kelime-tabanlı önerisi kapalı (design 04).
+    // Suggestions come from Rust; Monaco's word-based suggestions are disabled.
     wordBasedSuggestions: "off",
   };
 

@@ -1,6 +1,6 @@
-// Bağlantı seçim/geçiş orkestrasyonu (design 15 §P1-U1). ConnectionMenu ve
-// CommandPalette bu tek kaynaktan geçer — "üstten seçim dolu tab'ı rebind etmez"
-// kuralı burada yaşar.
+// Orchestration for choosing/switching connections. ConnectionMenu and
+// CommandPalette both go through this single source — the rule "the top menu doesn't
+// rebind a non-empty tab" lives here.
 import { toast } from "sonner";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSchemaStore } from "@/stores/schemaStore";
@@ -9,8 +9,8 @@ import { useUiStore } from "@/stores/uiStore";
 import { isAriadneError, refreshSchema } from "@/lib/api";
 import { dismissReconnectToast } from "@/lib/sessionResume";
 
-// Zaten-bağlı bir bağlantıya geçerken snapshot bu yaştan eskiyse arka planda
-// tazelenir (design 15 §P1-U1 madde 4). Eşik ayarlardan gelir (design 15 §P1-U4).
+// When switching to an already-connected connection, refresh in the background if the
+// snapshot is older than the threshold. The threshold comes from settings.
 function refreshIfStale(connectionId: string) {
   const entry = useSchemaStore.getState().byConnection[connectionId];
   const snap = entry?.snapshot;
@@ -21,10 +21,11 @@ function refreshIfStale(connectionId: string) {
 }
 
 /**
- * Üstten bağlantı seçmenin YENİ semantiği (design 15 §P1-U1): dolu bir tab'ı
- * ASLA sessizce rebind etmez. Aktif tab pristine ise (boş, sonuçsuz, idle)
- * yerinde bağlar; değilse o bağlantıya bağlı yeni bir tab açar. Her iki halde
- * "yeni tab varsayılanı" (activeConnectionId) güncellenir ve bayat şema tazelenir.
+ * The semantics of choosing a connection from the top menu: it NEVER silently
+ * rebinds a non-empty tab. If the active tab is pristine (empty, no result, idle) it
+ * rebinds in place; otherwise it opens a new tab bound to that connection. Either
+ * way the "new tab default" (activeConnectionId) is updated and a stale schema is
+ * refreshed.
  */
 export function focusConnection(connectionId: string) {
   useConnectionStore.getState().setActive(connectionId);
@@ -39,9 +40,10 @@ export function focusConnection(connectionId: string) {
 }
 
 /**
- * Profile bağlan (ya da `databaseOverride` ile aynı sunucuda başka DB'ye),
- * ilk snapshot'ı yükle, sonra `focusConnection` ile odakla. Aynı (profil, DB)
- * zaten bağlıysa yeni bağlantı açmaz — mevcut olana odaklanır (design 15 §P1-U1).
+ * Connect to a profile (or, with `databaseOverride`, to another database on the same
+ * server), load the first snapshot, then focus it via `focusConnection`. If the same
+ * (profile, database) is already connected, it doesn't open a new connection — it
+ * focuses the existing one.
  */
 export async function connectProfile(profileId: string, databaseOverride?: string) {
   const conn = useConnectionStore.getState();
@@ -57,8 +59,8 @@ export async function connectProfile(profileId: string, databaseOverride?: strin
     const id = await conn.connect(profileId, databaseOverride);
     await useSchemaStore.getState().loadSnapshot(id);
     focusConnection(id);
-    // Bu (profil, DB) için bekleyen reconnect daveti varsa söndür (design 18 §P1-W1
-    // N2) — kullanıcı menüden bağlandı, davet artık gereksiz.
+    // Dismiss any pending reconnect invite for this (profile, database) — the user
+    // just connected via the menu, so the invite is no longer needed.
     const db = useConnectionStore.getState().connections[id]?.database;
     if (db) dismissReconnectToast(profileId, db);
   } catch (e) {

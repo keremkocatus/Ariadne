@@ -1,6 +1,6 @@
-// Read-only profil rozeti (design 17 §P1-V1 Ö5). Aynı görsel dil StatusBar,
-// ConnectionMenu ve TabBar'da kullanılır — prod'a yanlışlıkla yazma sigortasının
-// (default_transaction_read_only=on, design 06 §66) görünür hali.
+// Read-only profile badge. The same visual language is used in StatusBar,
+// ConnectionMenu, and TabBar — the visible form of the accidental-write safety net
+// (default_transaction_read_only=on).
 import { cn } from "@/lib/utils";
 
 export function RoBadge({ className }: { className?: string }) {

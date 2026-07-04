@@ -1,7 +1,6 @@
-// Explorer bağlam çubuğu (design 18 §P1-W3 N6): `server ▸ database ▾`. SQL Server
-// Object Explorer'ın sığ/smooth yorumu — DB geçişini Explorer'a taşır, üstteki
-// ConnectionMenu'nün "pratikliği öldüren" DB alt-menüsünü buraya alır. Sağ-tık →
-// New query (N7).
+// The Explorer context bar: `server ▸ database ▾`. A shallow take on SQL Server's
+// Object Explorer — it moves database switching into the Explorer, out of the top
+// ConnectionMenu's clunky database submenu. Right-click → New query.
 import { useEffect, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { ChevronDown, Database, Server } from "lucide-react";
@@ -86,8 +85,8 @@ export function ContextBar({ connectionId }: { connectionId: string | null }) {
   );
 }
 
-/// DB dropdown içeriği: açılınca lazy `list_databases`; mevcut DB işaretli/disabled
-/// (design 18 §P1-W3 — default = bağlı DB). Seçince aynı sunucuda o DB'ye geçilir.
+/// The database dropdown content: lazy `list_databases` on open; the current database
+/// is marked/disabled. Selecting one switches to that database on the same server.
 function DatabaseList({
   connectionId,
   profileId,
@@ -100,7 +99,7 @@ function DatabaseList({
   const [dbs, setDbs] = useState<DatabaseInfo[] | null>(null);
   const [error, setError] = useState(false);
 
-  // Radix Content mount olunca (menü açıldı) bir kez lazy çek.
+  // Lazily fetch once when the Radix Content mounts (menu opened).
   useEffect(() => {
     let alive = true;
     listDatabases(connectionId)

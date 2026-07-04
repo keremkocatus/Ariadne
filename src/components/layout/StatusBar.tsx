@@ -5,8 +5,8 @@ import { useTabsStore } from "@/stores/tabsStore";
 import { RoBadge } from "@/components/connection/RoBadge";
 import { dbStats, type DbStats } from "@/lib/api";
 
-/// Alt durum çubuğu: aktif TAB'ın bağlantısı (profil renk şeridi + sunucu +
-/// cache tazeliği), global aktif bağlantı değil (design 12 §P1-M1).
+/// The bottom status bar: the active TAB's connection (profile color stripe + server
+/// + cache freshness), not the global active connection.
 export function StatusBar() {
   const tabConnectionId = useTabsStore((s) => s.active()?.connectionId ?? null);
   const info = useConnectionStore((s) => (tabConnectionId ? (s.connections[tabConnectionId] ?? null) : null));
@@ -47,8 +47,8 @@ export function StatusBar() {
   );
 }
 
-/// Versiyon etiketinin solundaki kompakt metrik şeridi (design 20 §P1-Y3 M5):
-/// bağlantı sayısı · cache hit · DB boyutu. CPU/RAM yok (kapsam dışı, design 20 §6).
+/// The compact metric strip to the left of the version label: connection count ·
+/// cache hit · database size. No CPU/RAM (out of scope).
 function StatsStrip({ stats }: { stats: DbStats }) {
   const conns =
     stats.max_connections != null
@@ -68,9 +68,9 @@ function StatsStrip({ stats }: { stats: DbStats }) {
   );
 }
 
-/// Aktif bağlantının DB istatistiklerini 30 sn'de bir çeker (design 20 M5). Bağlantı
-/// yok/kapalıysa null → şerit gizli. Bağlantı/tab değişince sıfırlanır ve hemen bir
-/// örnek alınır. Hata sessizce yutulur (şerit görünmez; yanıltıcı değer üretilmez).
+/// Fetches the active connection's DB stats every 30s. Null when there's no live
+/// connection → the strip is hidden. Reset when the connection/tab changes, taking a
+/// sample immediately. Errors are swallowed silently (the strip hides; no fake value).
 function useDbStats(connectionId: string | null): DbStats | null {
   const [stats, setStats] = useState<DbStats | null>(null);
   useEffect(() => {

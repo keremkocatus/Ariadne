@@ -1,5 +1,5 @@
-// Explorer ağaç modeli + saf dönüşümler (design 07 §2). JSX içermez → test
-// edilebilir düz fonksiyonlar. react-arborist bu düğümleri render eder.
+// The Explorer tree model + pure transforms. No JSX → plain, testable functions.
+// react-arborist renders these nodes.
 import type { SchemaSnapshot, SnapFn, SnapRel } from "@/lib/api";
 import type { ExplorerFilter } from "@/stores/schemaStore";
 
@@ -11,18 +11,18 @@ export interface TreeNode {
   rel?: SnapRel;
   fn?: SnapFn;
   isSystem?: boolean;
-  /// "more" düğümünün hangi kategori filtresini açacağı (design 18 §P1-W2 N4).
+  /// Which category filter a "more" node opens.
   moreWhich?: "rel" | "fn";
   children?: TreeNode[];
 }
 
-/// Kategori başına gösterilen maks nesne (design 18 §P1-W2 N4). Aşılırsa ilk
-/// CAP tanesi + "N more — filter to narrow" düğümü; 2000 tablo ağacı kastırmasın.
+/// Max objects shown per category. If exceeded, the first CAP + a "N more — filter to
+/// narrow" node; keeps a 2000-table tree from choking.
 export const CATEGORY_CAP = 200;
 
-/// Snapshot → 3 seviyeli ağaç: schema → kategori → nesne (design 07 §2).
-/// Sistem şemaları (pg_catalog/information_schema) gösterilmez — nesneleri cache'e
-/// çekilmiyor, boş düğüm olarak görünmesinler (design 18 §P1-W2 N5).
+/// Snapshot → a 3-level tree: schema → category → object. System schemas
+/// (pg_catalog/information_schema) aren't shown — their objects aren't fetched into
+/// the cache, so they shouldn't appear as empty nodes.
 export function buildTree(snap: SchemaSnapshot): TreeNode[] {
   return snap.schemas
     .filter((sc) => !sc.is_system)
@@ -89,8 +89,8 @@ export function buildTree(snap: SchemaSnapshot): TreeNode[] {
     });
 }
 
-/// Bir kategorinin çocuklarını tavana kadar üretir; aşılırsa ilk CATEGORY_CAP
-/// (ada göre sıralı) + bir "more" düğümü (design 18 §P1-W2 N4).
+/// Produces a category's children up to the cap; if exceeded, the first CATEGORY_CAP
+/// (sorted by name) + a "more" node.
 function capChildren<T extends { name: string }>(
   items: T[],
   toNode: (item: T) => TreeNode,
@@ -110,8 +110,8 @@ function capChildren<T extends { name: string }>(
   return shown;
 }
 
-/// Aramada nesting'ten kurtulmak için düz nesne listesi (design 07 §2). Sistem
-/// şemaları atlanır (zaten boşlar — design 18 §P1-W2 N5).
+/// A flat object list to drop nesting while searching. System schemas are skipped
+/// (they're empty anyway).
 export function flatten(snap: SchemaSnapshot): TreeNode[] {
   const out: TreeNode[] = [];
   for (const sc of snap.schemas) {
@@ -138,8 +138,8 @@ export function flatten(snap: SchemaSnapshot): TreeNode[] {
   return out;
 }
 
-/// Explorer filtresini snapshot'a uygular (design 15 §P1-U3): ad substring + tür.
-/// Yeni bir snapshot döndürür; buildTree/flatten bunu görür, count'lar da güncellenir.
+/// Applies the Explorer filter to a snapshot: name substring + kind. Returns a new
+/// snapshot; buildTree/flatten see it, and the counts update too.
 export function filterSnapshot(snap: SchemaSnapshot, f: ExplorerFilter): SchemaSnapshot {
   const relName = f.rel.name.trim().toLowerCase();
   const fnName = f.fn.name.trim().toLowerCase();
@@ -165,9 +165,9 @@ export function filterSnapshot(snap: SchemaSnapshot, f: ExplorerFilter): SchemaS
   };
 }
 
-/// Açılışta açık olacak düğümler: aktif şema (search_path[0] / "public" / ilk
-/// kullanıcı şeması) + onun "Tables" kategorisi (design 18 §P1-W2 N3 — public
-/// hemen görünsün). react-arborist `initialOpenState`'ine verilir.
+/// Nodes open at startup: the active schema (search_path[0] / "public" / the first
+/// user schema) + its "Tables" category (so public is visible right away). Passed to
+/// react-arborist's `initialOpenState`.
 export function defaultOpenState(snap: SchemaSnapshot): Record<string, boolean> {
   const userSchemas = snap.schemas.filter((s) => !s.is_system).map((s) => s.name);
   if (userSchemas.length === 0) return {};

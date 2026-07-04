@@ -1,6 +1,6 @@
-// Konumlandırılmış küçük eylem menüsü (design 18 §P1-W3). Explorer bağlam çubuğu
-// ve şema düğümü sağ-tıkı bunu kullanır — FilterPopover/CopyMenu ile aynı
-// hand-rolled overlay deseni (Radix context-menu yerine, kod tutarlılığı için).
+// A small positioned action menu. The Explorer context bar and a schema node's
+// right-click use it — the same hand-rolled overlay pattern as FilterPopover/CopyMenu
+// (instead of a Radix context menu, for code consistency).
 export interface QuickAction {
   label: string;
   onClick: () => void;

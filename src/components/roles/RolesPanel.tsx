@@ -1,6 +1,6 @@
-// Users & Roles görünümü (design 15 §P1-U4, salt-okunur). pg_roles listesi +
-// fuzzy arama + satır detayı. CRUD YOK — tek köprü: seçili rol için GRANT/ALTER
-// şablonunu yeni tab'da üret (koşturmaz).
+// The Users & Roles view (read-only). A pg_roles list + fuzzy search + row detail.
+// No CRUD — the one bridge is to generate a GRANT/ALTER template for the selected
+// role in a new tab (it doesn't run it).
 import { useEffect, useMemo, useState } from "react";
 import { RefreshCw, Search, Shield, User } from "lucide-react";
 import { cn } from "@/lib/utils";

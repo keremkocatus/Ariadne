@@ -1,9 +1,9 @@
 import { ArrowLeft, KeyRound } from "lucide-react";
 import type { ObjectInfo } from "@/lib/api";
 
-// Alt+F1 nesne bilgisi — artık yüzen panel değil, sonuç alanında overlay görünüm
-// (design 15 §P1-U3, sp_help mantığı). "× back to results" ile kapatılır; altındaki
-// sorgu sonucu ezilmez, geri gelir.
+// Alt+F1 object info — no longer a floating panel but an overlay in the results area
+// (sp_help-style). Closed with "× back to results"; the query result underneath isn't
+// overwritten and returns.
 export function ObjectInfoView({ info, onClose }: { info: ObjectInfo; onClose: () => void }) {
   return (
     <div className="flex h-full flex-col">

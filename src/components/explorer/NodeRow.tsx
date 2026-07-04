@@ -1,4 +1,4 @@
-// react-arborist düğüm renderer'ı: ikon + ad + satır tahmini + pin butonu.
+// react-arborist node renderer: icon + name + row estimate + pin button.
 import { type NodeRendererProps } from "react-arborist";
 import { ChevronRight, Pin } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -25,7 +25,7 @@ export function NodeRow({
   onMore: (n: TreeNode, e: React.MouseEvent) => void;
 }) {
   const d = node.data;
-  // "more" düğümü: kategori tavanı aşıldı; tık = filtre popover'ı (design 18 §P1-W2).
+  // "more" node: the category cap was exceeded; click = filter popover.
   if (d.ntype === "more") {
     return (
       <div
@@ -46,7 +46,7 @@ export function NodeRow({
         node.isSelected && "bg-bg-elev",
       )}
       onClick={() => {
-        // Tek tık: yaprakta peek, grupta aç/kapa (design 15 §P1-U3).
+        // Single click: peek on a leaf, expand/collapse on a group.
         if (isLeaf) onPeek(d);
         else node.toggle();
       }}

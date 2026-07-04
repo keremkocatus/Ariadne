@@ -1,4 +1,4 @@
-// Ağaç düğümü → lucide ikon (design 07 §4: tek renk stroke, monokrom).
+// Tree node → lucide icon (single-color stroke, monochrome).
 import { Eye, Folder, FunctionSquare, Hash, Layers, Table2 } from "lucide-react";
 import type { TreeNode } from "./tree";
 

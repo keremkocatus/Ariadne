@@ -1,7 +1,6 @@
-// Sunucu aktivite görünümü (design 17 §P1-V4). pg_stat_activity client
-// backend'leri, 5 sn'de bir tazelenir (panel mount'luyken = görünürken). Satır
-// tık → detay + Cancel/Terminate. Prod yangını personası (P2) için "kim ne
-// koşuyor → şunu öldür" akışı.
+// The server-activity view. pg_stat_activity client backends, refreshed every 5s
+// (while the panel is mounted = visible). Click a row → detail + Cancel/Terminate.
+// The "who's running what → kill that" flow for production firefighting.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, Search, Zap } from "lucide-react";
 import { toast } from "sonner";
@@ -136,7 +135,7 @@ function ActivityDetail({
   row: ActivityRow;
   onSignal: (pid: number, mode: SignalMode) => void;
 }) {
-  // Terminate iki adımlı onay ister (bağlantı kopar); satır değişince sıfırlanır.
+  // Terminate needs a two-step confirmation (it drops the connection); reset per row.
   const [confirmKill, setConfirmKill] = useState(false);
   useEffect(() => setConfirmKill(false), [row.pid]);
 
@@ -196,7 +195,7 @@ function ActivityDetail({
 }
 
 function StateDot({ row }: { row: ActivityRow }) {
-  // active=fg, idle in transaction=warn, lock bekleyen=danger, diğer=muted.
+  // active=fg, idle in transaction=warn, waiting on a lock=danger, other=muted.
   const waiting = row.wait_event?.startsWith("Lock");
   const color = waiting
     ? "bg-danger"

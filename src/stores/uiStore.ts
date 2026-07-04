@@ -1,15 +1,16 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 
-/// Kullanıcı ayarları (design 15 §P1-U4). v1 bilinçli minimal; liste büyürse
-/// P1-M2 SQLite deposuna taşınabilir. localStorage'da persist edilir.
+/// User settings. Deliberately minimal for now; could move to a local store later.
+/// Persisted in localStorage.
 export interface Settings {
-  /** Editör font boyutu (px). */
+  /** Editor font size (px). */
   editorFontSize: number;
-  /** Zaten-bağlı bağlantıya geçerken şemanın "bayat" sayıldığı eşik (dakika). */
+  /** Threshold (minutes) after which a schema is considered "stale" when switching to
+   *  an already-connected connection. */
   schemaStaleMinutes: number;
-  /** Arka plandaki tab'ın sorgusu bu süreyi (sn) aşınca bitiş toast'ı (design 17
-   *  §P1-V1 Ö7). 0 = kapalı. */
+  /** If a background tab's query exceeds this many seconds, show a finish toast.
+   *  0 = off. */
   longQueryNoticeSeconds: number;
 }
 export const DEFAULT_SETTINGS: Settings = {
@@ -18,8 +19,8 @@ export const DEFAULT_SETTINGS: Settings = {
   longQueryNoticeSeconds: 10,
 };
 
-/// Sol panel sekmesi (design 15 §P1-U4 + design 17 §P1-V4). uiStore'da tutulur ki
-/// palette "Show activity" gibi eylemler programatik sekme değiştirebilsin.
+/// The left panel's active tab. Kept in uiStore so actions like the palette's "Show
+/// activity" can switch the tab programmatically.
 export type SidebarTab = "explorer" | "roles" | "activity";
 
 interface UiState {
@@ -27,14 +28,14 @@ interface UiState {
   sidebarWidth: number;
   sidebarTab: SidebarTab;
   resultsVisible: boolean;
-  /// Sonuç panelinin yüksekliği (px, design 19 §P1-X3 N7). Editör üstte kalan alanı
-  /// (flex-1) doldurur; sonuç paneli bu sabit yükseklikte olur, aralarındaki yatay
-  /// tutamak sürüklenerek değişir. Persist edilir.
+  /// The results panel height (px). The editor fills the remaining space above it
+  /// (flex-1); the results panel has this fixed height, adjusted by dragging the
+  /// horizontal handle between them. Persisted.
   resultsHeight: number;
   paletteOpen: boolean;
   settingsOpen: boolean;
-  /// Bağlantı menüsü kontrollü açık mı (design 17 §P1-V1): boş-durum kartındaki
-  /// "Connect…" butonu bunu programatik açar; ConnectionMenu bu state'e bağlanır.
+  /// Whether the connection menu is open (controlled): the empty-state card's
+  /// "Connect…" button opens it programmatically; ConnectionMenu binds to this state.
   connectMenuOpen: boolean;
   settings: Settings;
   toggleSidebar: () => void;
@@ -62,7 +63,7 @@ export const useUiStore = create<UiState>()(
       connectMenuOpen: false,
       settings: DEFAULT_SETTINGS,
       toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
-      // Aralık 160–680 (design 20 M2): dar/geniş şema adlarına yer.
+      // Range 160–680: room for narrow/wide schema names.
       setSidebarWidth: (w) => set({ sidebarWidth: Math.max(160, Math.min(680, w)) }),
       setSidebarTab: (tab) => set({ sidebarTab: tab }),
       toggleResults: () => set((s) => ({ resultsVisible: !s.resultsVisible })),
@@ -76,7 +77,7 @@ export const useUiStore = create<UiState>()(
     {
       name: "ariadne-ui",
       storage: createJSONStorage(() => localStorage),
-      // paletteOpen/settingsOpen kalıcı değil (her açılışta kapalı başlar).
+      // paletteOpen/settingsOpen are not persisted (start closed each launch).
       partialize: (s) => ({
         sidebarVisible: s.sidebarVisible,
         sidebarWidth: s.sidebarWidth,
@@ -85,7 +86,7 @@ export const useUiStore = create<UiState>()(
         resultsHeight: s.resultsHeight,
         settings: s.settings,
       }),
-      // Eski persist'te settings yoksa varsayılanla birleştir.
+      // If an older persisted state has no settings, merge with the defaults.
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<UiState>;
         return { ...current, ...p, settings: { ...DEFAULT_SETTINGS, ...(p.settings ?? {}) } };

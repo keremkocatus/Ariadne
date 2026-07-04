@@ -1,6 +1,6 @@
 import type { AriadneError, RunResult, StatementResult } from "@/lib/api";
 
-// M1: sonuç hâlâ ham metin/tablo (<pre>). Gerçek virtualized grid M3'te (design 10).
+// A simple text/table result view (<pre>). The virtualized grid is ResultGrid.
 
 export function ResultView({
   result,

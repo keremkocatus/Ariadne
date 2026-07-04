@@ -1,8 +1,8 @@
-// AriadneError sunumu tek yerde normalize edilir (design 07 §5 kural 2, 06 §5).
-// Marker kararı App.tsx'te (position varsa), banner/başlık burada.
+// AriadneError presentation is normalized in one place. The Monaco marker decision
+// lives in App.tsx (when a position exists); the banner/title live here.
 import type { AriadneError } from "./api";
 
-// Yaygın SQLSTATE kodları → insan-dili başlık (design 06 §5, ~20 kod; gerisi ham mesaj).
+// Common SQLSTATE codes → human-readable title (~20 codes; the rest use the raw message).
 const SQLSTATE_TITLES: Record<string, string> = {
   "42P01": "Table not found",
   "42703": "Column not found",
@@ -31,8 +31,8 @@ const SQLSTATE_TITLES: Record<string, string> = {
   "0A000": "Feature not supported",
 };
 
-/// Read-only ihlali (SQLSTATE 25006) profil ayarından mı geliyor (design 17
-/// §P1-V1 Ö5b). Öyleyse hata bandına yol gösteren ek ipucu basılır.
+/// Whether a read-only violation (SQLSTATE 25006) comes from the profile setting.
+/// If so, an extra hint is shown in the error banner.
 export function readOnlyProfileHint(e: AriadneError, isReadOnlyProfile: boolean): string | null {
   if (e.sqlstate === "25006" && isReadOnlyProfile) {
     return "This profile is read-only (profile setting) — edit the profile or use BEGIN READ WRITE deliberately.";
@@ -51,7 +51,7 @@ const KIND_TITLES: Record<AriadneError["kind"], string> = {
   internal: "Unexpected error",
 };
 
-/// Kısa, insan-dili başlık: önce SQLSTATE tablosu, sonra kind fallback.
+/// Short, human-readable title: SQLSTATE table first, then a kind fallback.
 export function errorTitle(e: AriadneError): string {
   if (e.sqlstate && SQLSTATE_TITLES[e.sqlstate]) return SQLSTATE_TITLES[e.sqlstate];
   return KIND_TITLES[e.kind] ?? "Error";

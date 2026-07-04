@@ -1,5 +1,5 @@
-// Explorer alt paneli: bir ilişkinin kolonları (cache'ten anında) + indeks/trigger
-// /boyut (on-demand lazy yüklenir) — design 07 §2 + design 15 §P1-U3.
+// The Explorer bottom panel: a relation's columns (instant, from the cache) +
+// indexes/triggers/size (loaded lazily on demand).
 import { useEffect, useMemo, useState } from "react";
 import { getRelationDetails, type RelationDetails, type SnapRel } from "@/lib/api";
 
@@ -10,7 +10,7 @@ interface Props {
   onClose: () => void;
 }
 
-// Bu sayının üstünde kolonda arama kutusu gösterilir (client-side filtre — veri elimizde).
+// Above this column count, show a filter box (client-side filter — we have the data).
 const COLUMN_FILTER_THRESHOLD = 40;
 
 export function PeekPanel({ schema, rel, connectionId, onClose }: Props) {
@@ -18,7 +18,7 @@ export function PeekPanel({ schema, rel, connectionId, onClose }: Props) {
   const [detailErr, setDetailErr] = useState(false);
   const [colFilter, setColFilter] = useState("");
 
-  // schema.name değişince detayları yeniden çek (peek başka tabloya geçince).
+  // Re-fetch details when schema.name changes (peek moved to another table).
   useEffect(() => {
     setDetails(null);
     setDetailErr(false);
@@ -51,7 +51,7 @@ export function PeekPanel({ schema, rel, connectionId, onClose }: Props) {
       </div>
       {rel.comment && <p className="shrink-0 px-2 pb-1 text-[11px] text-fg-muted">{rel.comment}</p>}
 
-      {/* Boyut + satır (yüklenince) */}
+      {/* Size + rows (once loaded) */}
       {details && (
         <div className="shrink-0 px-2 pb-1 text-[10px] text-fg-muted">
           {formatBytes(details.size_bytes)}
@@ -60,7 +60,7 @@ export function PeekPanel({ schema, rel, connectionId, onClose }: Props) {
       )}
 
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-2">
-        {/* Kolonlar — cache'ten anında */}
+        {/* Columns — instant, from the cache */}
         <Section title={`Columns (${rel.columns.length})`} defaultOpen>
           {rel.columns.length > COLUMN_FILTER_THRESHOLD && (
             <input
@@ -138,7 +138,7 @@ export function PeekPanel({ schema, rel, connectionId, onClose }: Props) {
   );
 }
 
-/// Katlanabilir bölüm (accordion). Başlık sticky kalır.
+/// A collapsible section (accordion). The header stays sticky.
 function Section({
   title,
   defaultOpen,

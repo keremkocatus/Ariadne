@@ -1,14 +1,13 @@
-// Grid'den zengin kopyalama biçimlendiricileri (design 17 §P1-V2 Ö3). Saf
-// fonksiyonlar: girdi başlık dizisi + hücre matrisi, çıktı metin. ResultGrid'in
-// context menüsü ve footer'ı bu tek kaynaktan geçer. (İleride vitest gelirse ilk
-// müşteriler bunlar.)
+// Rich-copy formatters for the grid. Pure functions: input is a header array + a cell
+// matrix, output is text. The ResultGrid context menu and footer both go through this
+// single source.
 
 type Cell = string | null;
 
 function delimitedEscape(v: Cell, sep: "," | "\t"): string {
   if (v === null) return "";
-  // CSV: virgül/tırnak/yeni satır içeren değer tırnaklanır, iç tırnak ikizlenir.
-  // TSV'de tırnaklama yoktur (Excel/Sheets tab'ı ayraç, tırnağı literal alır).
+  // CSV: a value containing comma/quote/newline is quoted, with inner quotes doubled.
+  // TSV has no quoting (Excel/Sheets treat tab as the separator and quotes as literal).
   if (sep === "," && /[",\r\n]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
   return v;
 }
@@ -20,8 +19,8 @@ export function toDelimited(headers: string[], rows: Cell[][], sep: "," | "\t"):
 }
 
 export function toJson(headers: string[], rows: Cell[][]): string {
-  // Not: hücreler string|null; sayılar da string kalır (backend tip bilgisi
-  // grid'e taşınmıyor — design 17 §P1-V2 bilinçli kabul).
+  // Note: cells are string|null; numbers stay as strings too (the backend type info
+  // isn't carried to the grid — a deliberate tradeoff).
   return JSON.stringify(
     rows.map((r) => Object.fromEntries(headers.map((h, i) => [h, r[i] ?? null]))),
     null,
@@ -38,7 +37,7 @@ export function toMarkdown(headers: string[], rows: Cell[][]): string {
 }
 
 export async function copyText(text: string, okLabel: string): Promise<void> {
-  // toast import'u burada tutulur (formatlayıcılar saf kalsın).
+  // Import toast here so the formatters stay pure.
   const { toast } = await import("sonner");
   try {
     await navigator.clipboard.writeText(text);

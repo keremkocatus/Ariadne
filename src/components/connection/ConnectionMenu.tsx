@@ -12,13 +12,13 @@ import { RoBadge } from "./RoBadge";
 
 export function ConnectionMenu() {
   const { profiles, connections, loadProfiles, disconnect } = useConnectionStore();
-  // Buton/etiket/vurgulama aktif TAB'ın GERÇEKTEN bağlı olduğu bağlantıyı gösterir,
-  // global activeConnectionId'yi değil (design 12 §P1-M1) — StatusBar'la aynı kaynak.
+  // The button/label/highlight reflect the connection the active TAB is actually
+  // bound to, not the global activeConnectionId — the same source as StatusBar.
   const tabConnectionId = useTabsStore((s) => s.active()?.connectionId ?? null);
   const tabInfo = tabConnectionId ? (connections[tabConnectionId] ?? null) : null;
 
-  // Açık durumu uiStore'da (design 17 §P1-V1): boş-durum kartındaki "Connect…"
-  // butonu menüyü programatik açabilsin.
+  // The open state is in uiStore so the empty-state card's "Connect…" button can open
+  // the menu programmatically.
   const menuOpen = useUiStore((s) => s.connectMenuOpen);
   const setMenuOpen = useUiStore((s) => s.setConnectMenuOpen);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -28,8 +28,8 @@ export function ConnectionMenu() {
     void loadProfiles();
   }, [loadProfiles]);
 
-  // Üstten seçim artık dolu tab'ı rebind ETMEZ (design 15 §P1-U1): pristine ise
-  // yerinde bağlar, değilse yeni tab açar — hepsi focusConnection/connectProfile'da.
+  // Choosing from the top menu no longer rebinds a non-empty tab: if pristine it binds
+  // in place, otherwise it opens a new tab — all handled in focusConnection/connectProfile.
   const pick = (fn: () => void) => {
     fn();
     setMenuOpen(false);
@@ -87,8 +87,8 @@ export function ConnectionMenu() {
                         className="rounded p-0.5 text-fg-muted hover:text-danger"
                         onClick={() => {
                           void disconnect(c.connection_id);
-                          // Bağlı tab'ların tx/running durumunu serbest bırak (aksi
-                          // halde açık tx'li bir tab sonsuza dek kilitli kalır).
+                          // Release the tx/running state of the attached tabs
+                          // (otherwise a tab with an open tx stays locked forever).
                           useTabsStore.getState().releaseTabsForConnection(c.connection_id);
                         }}
                       >
@@ -152,9 +152,9 @@ export function ConnectionMenu() {
   );
 }
 
-/// Bir bağlı bağlantının "Databases ▸" alt menüsü: liste açılınca lazy çekilir,
-/// seçilen DB için aynı sunucuda yeni bir bağlantı açılır (ya da varsa ona
-/// odaklanılır) ve yeni tab'ında koşulur (design 15 §P1-U1).
+/// A connected connection's "Databases ▸" submenu: the list is fetched lazily when
+/// opened; selecting a database opens a new connection to it on the same server (or
+/// focuses an existing one) and runs in its new tab.
 function DatabasesSubmenu({ conn, onPick }: { conn: ConnectionInfo; onPick: (open: boolean) => void }) {
   const [dbs, setDbs] = useState<DatabaseInfo[] | null>(null);
   const [error, setError] = useState(false);

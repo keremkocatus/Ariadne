@@ -1,28 +1,28 @@
-// Açılışta "dünkü çalışma alanını geri getir" daveti (design 17 §P1-V3 Ö2).
-// Restore edilmiş tab'lar ölü connectionId taşır; bunları lastSession eşlemesiyle
-// (profil, DB) çiftlerine çözer, hâlâ var olan profillere filtreler ve her çift
-// için kalıcı bir "Reconnect" toast'ı gösterir. OTOMATİK bağlanma YOK (VPN'siz
-// açılışta hata seli olmasın — design/16 kararı); tek tıklık davet.
+// The startup "bring back yesterday's workspace" invite. Restored tabs carry dead
+// connectionIds; this resolves them via the lastSession mapping into (profile,
+// database) pairs, filters to profiles that still exist, and shows a persistent
+// "Reconnect" toast for each pair. There is NO automatic reconnect (so an offline
+// startup doesn't flood with errors); it's a one-click invite.
 import { toast } from "sonner";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSchemaStore } from "@/stores/schemaStore";
 import { useTabsStore } from "@/stores/tabsStore";
 import { isAriadneError, type ConnectionProfile } from "@/lib/api";
 
-// Aynı açılışta ikinci kez davet üretmeyi engeller (StrictMode / tekrar çağrı).
+// Prevents offering a second time in the same startup (StrictMode / repeat calls).
 let offered = false;
 
-// Davet toast'ı bu kadar durur (design 18 §P1-W1 N2 — eskiden Infinity, takılıyordu).
+// How long the invite toast stays up (was Infinity, which got stuck).
 const RECONNECT_TOAST_MS = 30_000;
 
-/// Bir (profil, DB) davet toast'ının stabil id'si — üst üste yığılmasın + başka
-/// yoldan bağlanınca söndürülebilsin (design 18 §P1-W1).
+/// A stable id for a (profile, database) invite toast — so they don't stack, and so
+/// it can be dismissed when the user connects another way.
 export function reconnectToastId(profileId: string, database: string): string {
   return `reconnect:${profileId}:${database}`;
 }
 
-/// O (profil, DB) için bekleyen reconnect davetini söndürür — kullanıcı menüden
-/// bağlandığında connectProfile bunu çağırır (design 18 §P1-W1 N2).
+/// Dismisses the pending reconnect invite for that (profile, database) — connectProfile
+/// calls this when the user connects via the menu.
 export function dismissReconnectToast(profileId: string, database: string): void {
   toast.dismiss(reconnectToastId(profileId, database));
 }
@@ -33,7 +33,7 @@ interface Invite {
   oldIds: Set<string>;
 }
 
-/// Restore edilmiş, ölü bağlantılı tab'lardan distinct (profil, DB) davetleri çıkarır.
+/// Extracts distinct (profile, database) invites from restored tabs with dead connections.
 function collectInvites(): Invite[] {
   const conn = useConnectionStore.getState();
   const tabs = useTabsStore.getState().tabs;
@@ -41,11 +41,11 @@ function collectInvites(): Invite[] {
   for (const t of tabs) {
     const cid = t.connectionId;
     if (!cid) continue;
-    if (conn.connections[cid]) continue; // zaten canlı (açılışta olmaz ama garanti)
+    if (conn.connections[cid]) continue; // already live (shouldn't happen at startup, but be safe)
     const rec = conn.lastSession[cid];
     if (!rec) continue;
     const profile = conn.profiles.find((p) => p.id === rec.profileId);
-    if (!profile) continue; // profil silinmiş
+    if (!profile) continue; // profile was deleted
     const key = `${rec.profileId}::${rec.database}`;
     const inv = byPair.get(key) ?? { profile, database: rec.database, oldIds: new Set() };
     inv.oldIds.add(cid);
@@ -54,8 +54,9 @@ function collectInvites(): Invite[] {
   return [...byPair.values()];
 }
 
-/// Reconnect eylemi: bağlan (ya da varsa mevcut bağlantıyı bul), snapshot yükle,
-/// eski id'li tab'ları yeni bağlantıya taşı, tüketilen oturum kayıtlarını unut.
+/// The reconnect action: connect (or find the existing connection), load the
+/// snapshot, move the old-id tabs onto the new connection, forget the consumed
+/// session records.
 async function reconnectAndRemap(inv: Invite): Promise<void> {
   const conn = useConnectionStore.getState();
   try {
@@ -75,16 +76,16 @@ async function reconnectAndRemap(inv: Invite): Promise<void> {
   }
 }
 
-/// App mount'unda (profiller yüklendikten sonra) bir kez çağrılır. En fazla 3
-/// davet (gürültü sınırı). Eşleşen tab yoksa sessiz kalır.
+/// Called once at App mount (after profiles load). At most 3 invites (noise limit).
+/// Stays silent if there are no matching tabs.
 export function offerReconnect(): void {
   if (offered) return;
   offered = true;
   const invites = collectInvites().slice(0, 3);
   for (const inv of invites) {
     const p = inv.profile;
-    // Etiket: profil adı + sunucu/DB (design 18 §P1-W1 N1) — aynı DB adının iki
-    // sunucudaki hali host ile ayrışsın.
+    // Label: profile name + server/database — so the same database name on two
+    // servers is disambiguated by host.
     toast(`Reconnect to ${p.name}?`, {
       id: reconnectToastId(p.id, inv.database),
       description: `${p.user}@${p.host}:${p.port} · ${inv.database}`,

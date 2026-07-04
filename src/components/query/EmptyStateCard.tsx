@@ -1,8 +1,7 @@
-// Boş-durum başlangıç kartı (design 17 §P1-V1 Ö1). Bağlantısız + hiç
-// dokunulmamış (pristine) aktif tab'da editörün üzerine hafif bir davet çizer:
-// Connect / Open .sql + kısayol listesi. Overlay tıklamayı geçirir
-// (pointer-events-none), yalnız butonlar tıklanır; ilk karakterle tab pristine
-// olmaktan çıkar ve kart kendiliğinden kaybolur.
+// Empty-state welcome card. On a disconnected + untouched (pristine) active tab it
+// draws a light invite over the editor: Connect / Open .sql + a shortcut list. The
+// overlay passes clicks through (pointer-events-none); only the buttons are clickable.
+// The first keystroke makes the tab non-pristine and the card disappears on its own.
 import { Plug, FolderOpen } from "lucide-react";
 import { useTabsStore, isPristine } from "@/stores/tabsStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -20,7 +19,7 @@ export function EmptyStateCard() {
   const active = useTabsStore((s) => s.active());
   const setConnectMenuOpen = useUiStore((s) => s.setConnectMenuOpen);
 
-  // Yalnız bağlantısız + pristine tab'da görünür; aksi halde hiç render etme.
+  // Visible only on a disconnected + pristine tab; otherwise render nothing.
   if (!active || active.connectionId || !isPristine(active)) return null;
 
   return (

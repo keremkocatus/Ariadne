@@ -10,12 +10,12 @@ export function TabBar() {
   const { tabs, activeTabId, setActive, addTab, closeTab, renameTab } = useTabsStore();
   const connections = useConnectionStore((s) => s.connections);
   const profiles = useConnectionStore((s) => s.profiles);
-  // Çift-tık ile yeniden adlandırma (design 15 §P1-U2): düzenlenen tab id + taslak.
+  // Double-click to rename: the tab id being edited + the draft.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  // Escape ile iptalde, input unmount olurken tetiklenen blur'ün yine de commit
-  // etmesini engeller (aksi halde Escape değişikliği kaydederdi).
+  // On Escape-cancel, prevents the blur (fired as the input unmounts) from committing
+  // anyway (otherwise Escape would save the change).
   const cancelRef = useRef(false);
 
   useEffect(() => {
@@ -44,8 +44,8 @@ export function TabBar() {
     <div className="flex h-8 shrink-0 items-center border-b border-border bg-bg">
       <div className="flex flex-1 items-center overflow-x-auto">
         {tabs.map((t) => {
-          // Bağlantı renk şeridi + tooltip (design 12 §P1-M1) + metin etiketi
-          // (design 15 §P1-U2): "Query 3 · raildb" — hangi bağlantı olduğu tab'da görünür.
+          // Connection color stripe + tooltip + text label ("Query 3 · raildb") —
+          // which connection the tab uses is visible on the tab.
           const info = t.connectionId ? connections[t.connectionId] : null;
           const closed = !!t.connectionId && !info;
           const connProfile = info ? profiles.find((p) => p.id === info.profile_id) : null;
@@ -109,7 +109,7 @@ export function TabBar() {
             </div>
           );
         })}
-        {/* "+" klasik tarayıcı deseni: son tab'ın hemen sağında, şeritle akar. */}
+        {/* "+" follows the classic browser pattern: right after the last tab, scrolls with the strip. */}
         <button
           onClick={() => addTab("")}
           className="shrink-0 px-2 text-fg-muted hover:text-fg"

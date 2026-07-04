@@ -1,8 +1,8 @@
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useUiStore } from "@/stores/uiStore";
 
-// Ayarlar modalı (design 15 §P1-U4). v1 bilinçli minimal — amaç ayar altyapısı
-// (modal + store + palette "Open settings"); liste büyürse P1-M2 deposuna taşınır.
+// The settings modal. Deliberately minimal — the point is the settings infrastructure
+// (modal + store + palette "Open settings"); it can move to a local store if the list grows.
 export function SettingsDialog() {
   const open = useUiStore((s) => s.settingsOpen);
   const setOpen = useUiStore((s) => s.setSettingsOpen);

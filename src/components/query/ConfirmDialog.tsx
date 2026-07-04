@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import type { Confirmation } from "@/lib/api";
 
-// Destructive guard modal (design 05 §8, 07 §3). "Bu oturumda sorma" YOK — pazarlıksız.
+// Destructive guard modal. There is no "don't ask again this session" — non-negotiable.
 export function ConfirmDialog({
   conf,
   onConfirm,

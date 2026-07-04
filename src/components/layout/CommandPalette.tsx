@@ -11,8 +11,9 @@ import { openSqlFile, saveSqlFile } from "@/lib/fileActions";
 import { runFormatActive } from "@/lib/editorRun";
 import { refreshSchema } from "@/lib/api";
 
-// "Bind this tab to …" AÇIK/bilinçli eski davranış (design 15 §P1-U1): aktif tab'ı
-// verilen bağlantıya rebind eder — çalışan sorgu/açık tx/bekleyen sayfa varsa reddedilir.
+// "Bind this tab to …" is the explicit, deliberate old behavior: rebind the active
+// tab to the given connection — rejected if a query is running, a tx is open, or a
+// page is pending.
 function bindTab(connectionId: string) {
   const tabId = useTabsStore.getState().activeTabId;
   if (tabId && !useTabsStore.getState().setConnection(tabId, connectionId)) {
@@ -22,14 +23,14 @@ function bindTab(connectionId: string) {
   }
 }
 
-// Ctrl+K command palette (design 07 §3): komutlar + bağlantı geçişi + tablo açma.
-// cmdk kendi fuzzy filtresini uygular; item'lar `value`'ları üzerinden aranır.
+// The Ctrl+K command palette: commands + connection switching + opening tables. cmdk
+// applies its own fuzzy filter; items are searched by their `value`.
 export function CommandPalette() {
   const open = useUiStore((s) => s.paletteOpen);
   const setOpen = useUiStore((s) => s.setPaletteOpen);
 
-  // "Switch connection" aktif TAB'ı bağlar, global aktif bağlantıyı değil
-  // (design 12 §P1-M1) — Explorer/completion/Tables grubu hep tab'ı takip eder.
+  // "Switch connection" binds the active TAB, not the global active connection —
+  // Explorer/completion/the Tables group always follow the tab.
   const tabConnectionId = useTabsStore((s) => s.active()?.connectionId ?? null);
   const connections = useConnectionStore((s) => s.connections);
   const profiles = useConnectionStore((s) => s.profiles);
@@ -37,7 +38,7 @@ export function CommandPalette() {
     tabConnectionId ? s.byConnection[tabConnectionId] : undefined,
   );
 
-  // Aktif bağlantının tabloları (schema.name) — palette'ten hızlı açmak için.
+  // The active connection's tables (schema.name) — for opening quickly from the palette.
   const tables = useMemo(() => {
     const snap = snapshotEntry?.snapshot;
     if (!snap) return [];
@@ -55,7 +56,7 @@ export function CommandPalette() {
   };
 
   const openTable = (schema: string, name: string) => {
-    // sourceTable işaretlenir → hücre düzenleme (design 19 §P1-X4) etkinleşebilir.
+    // sourceTable is set → cell editing can be enabled.
     const id = useTabsStore
       .getState()
       .addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`, tabConnectionId, { schema, name });

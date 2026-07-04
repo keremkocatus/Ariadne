@@ -1,8 +1,7 @@
-// Monaco SQL provider'ları (design 04 §6, 07 §5). React ağacının DIŞINDA yaşar;
-// dil-seviyesinde tek sefer kayıt olur, hangi bağlantıyı kullanacağını global
-// store'dan DEĞİL `setActiveConnection`'la bildirilen değerden okur — App bir
-// seferde yalnız aktif tab'ın SqlEditor'ünü render ettiği için bu, o tab'ın
-// bağlantısına karşılık gelir (design 12 §P1-M1: completion/peek tab'a bağlı).
+// Monaco SQL providers. They live OUTSIDE the React tree, registered once at the
+// language level, and read which connection to use from the value set by
+// `setActiveConnection` (not from a global store) — since App renders only the
+// active tab's SqlEditor at a time, that corresponds to that tab's connection.
 import * as monaco from "monaco-editor";
 import { getCompletions, getSignatureHelp, type CompletionKind } from "@/lib/api";
 
@@ -50,7 +49,7 @@ export function registerSqlProviders() {
             ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
             : undefined,
           detail: it.detail ?? undefined,
-          // Sıra Rust'tan gelir; Monaco'nun kendi sort'u sortText ile sabitlenir.
+          // Order comes from Rust; Monaco's own sort is pinned via sortText.
           sortText: it.sort_key,
           range,
         })),

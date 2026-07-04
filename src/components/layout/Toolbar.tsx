@@ -7,24 +7,24 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { getRunSelection } from "@/lib/editorRun";
 import { openSqlFile, saveSqlFile } from "@/lib/fileActions";
 
-// Cancel bu süre içinde sorguyu bitirmezse "Force kill" belirir (design 17 §P1-V4).
+// If Cancel doesn't end the query within this window, "Force kill" appears.
 const FORCE_KILL_ARM_MS = 5000;
 
-/// Üst araç çubuğu: sidebar toggle, bağlantı seçici, Run/Cancel, tx kontrol
-/// butonları (design 07 §2). Durumu store'lardan okur — App'e prop bağı yoktur.
+/// The top toolbar: sidebar toggle, connection picker, Run/Cancel, and tx-control
+/// buttons. Reads its state from the stores — no prop coupling to App.
 export function Toolbar() {
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   const active = useTabsStore((s) => s.active());
   const { run, cancel, forceKill, txControl } = useTabsStore();
   const connections = useConnectionStore((s) => s.connections);
   const q = active?.query;
-  // connectionId olması yetmez — o bağlantı kapanmış olabilir (design 12 §P1-M1),
-  // Run'ı kapalı bağlantıyla tıklanabilir bırakmak kafa karıştırıcı bir gecikmeli
-  // hataya yol açar; banner zaten nedeni açıklıyor.
+  // A connectionId isn't enough — that connection may have closed. Leaving Run
+  // clickable on a closed connection causes a confusing delayed error; the banner
+  // already explains why.
   const canRun = !!active?.connectionId && !!connections[active.connectionId];
 
-  // Force kill: Cancel'dan 5 sn sonra hâlâ koşan sorgu için (design 17 §P1-V4).
-  // `armed` = force-kill'in gösterileceği queryId. Sorgu bitince sıfırlanır.
+  // Force kill: for a query still running 5s after Cancel. `armed` = the queryId for
+  // which force-kill is shown. Reset when the query ends.
   const [armed, setArmed] = useState<string | null>(null);
   const armTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -74,7 +74,7 @@ export function Toolbar() {
       <button
         className="rounded p-1 text-fg-muted hover:bg-bg-elev hover:text-fg"
         onClick={() => {
-          // Sidebar'ı Activity sekmesine getir; gizliyse aç (design 20 §P1-Y3 M4).
+          // Switch the sidebar to the Activity tab; open it if hidden.
           const ui = useUiStore.getState();
           if (!ui.sidebarVisible) ui.toggleSidebar();
           ui.setSidebarTab("activity");

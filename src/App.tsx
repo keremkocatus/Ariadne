@@ -36,13 +36,13 @@ export default function App() {
   const dirtyTab = useTabsStore((s) => s.tabs.find((t) => t.id === s.dirtyCloseRequest) ?? null);
   const { addTab, setSql, run, fetchMore, dismissConfirmation, resolveClose, renameTab, setInfoResult } =
     useTabsStore();
-  // Explorer aktif *tab'ın* bağlantısını gösterir, global aktif bağlantıyı değil
-  // (design 12 §P1-M1) — tab değişince şema de değişir.
+  // Explorer follows the active *tab's* connection, not the global active connection
+  // — switching tabs also switches the schema shown.
   const tabConnectionId = active?.connectionId ?? null;
   const tabConnectionInfo = tabConnectionId ? (connections[tabConnectionId] ?? null) : null;
   const tabConnectionClosed = !!tabConnectionId && !tabConnectionInfo;
 
-  // Alt+F1 nesne bilgisi sonuç alanına akar (design 15 §P1-U3); panel gizliyse aç.
+  // Alt+F1 object info flows into the results area; open the panel if it's hidden.
   const showObjectInfo = useCallback(
     (info: ObjectInfo | null) => {
       if (!active || !info) return;
@@ -57,13 +57,13 @@ export default function App() {
     return () => void p.then((un) => un());
   }, []);
 
-  // Açılışta bir tab garanti et.
+  // Guarantee one tab at startup.
   useEffect(() => {
     if (useTabsStore.getState().tabs.length === 0) addTab();
   }, [addTab]);
 
-  // Profiller yüklenince açılış reconnect daveti (design 17 §P1-V3). offerReconnect
-  // kendi içinde tek-sefer korumalı; restore edilmiş eşleşen tab yoksa sessiz.
+  // Startup reconnect invite once profiles load. offerReconnect is once-guarded
+  // internally; silent if there are no matching restored tabs.
   useEffect(() => {
     void useConnectionStore.getState().loadProfiles().then(offerReconnect);
   }, []);
@@ -71,15 +71,15 @@ export default function App() {
   useGlobalShortcuts();
 
   const runActive = useCallback(() => {
-    // Seçim varsa yalnız onu koştur (design 15 §P1-U2); yoksa tam metin.
+    // If there's a selection, run only it; otherwise the full text.
     if (active) void run(active.id, getRunSelection() ?? undefined);
   }, [active, run]);
 
   const openRelation = useCallback(
     (schema: string, name: string) => {
-      // Yeni tab, Explorer'ın gösterdiği (aktif tab'ın) bağlantısına bağlanır —
-      // global aktif bağlantı farklı olabilir (design 12 §P1-M1).
-      // sourceTable işaretlenir → hücre düzenleme (design 19 §P1-X4) etkinleşebilir.
+      // The new tab binds to the connection the Explorer shows (the active tab's) —
+      // the global active connection may differ. sourceTable is set → cell editing
+      // can be enabled.
       const id = addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`, tabConnectionId, {
         schema,
         name,
@@ -89,7 +89,7 @@ export default function App() {
     [addTab, run, tabConnectionId],
   );
 
-  // Fonksiyona çift tık → kaynağını yeni düzenlenebilir tab'da aç (design 15 §P1-U3).
+  // Double-click a function → open its source in a new editable tab.
   const openFunction = useCallback(
     async (fn: SnapFn) => {
       if (!tabConnectionId) return;
@@ -107,8 +107,8 @@ export default function App() {
   );
 
   const q = active?.query;
-  // Marker: seçim koşulduysa offset tam metne kaydırılır; SQL düzenlenince
-  // (markerStale) marker gizlenir ama hata bandı kalır (design 15 §P1-U2).
+  // Marker: if a selection ran, shift the offset into the full text; when the SQL is
+  // edited (markerStale) the marker is hidden but the error banner stays.
   const errorMarker =
     q?.error && q.error.position != null && !q.markerStale
       ? { offset: q.error.position - 1 + q.selectionOffset, message: q.error.message }
@@ -118,7 +118,7 @@ export default function App() {
     <div className="flex h-full flex-col bg-bg text-fg">
       <Toolbar />
 
-      {/* Gövde */}
+      {/* Body */}
       <div className="flex min-h-0 flex-1">
         {sidebarVisible && (
           <>
@@ -156,7 +156,7 @@ export default function App() {
               </div>
               {resultsVisible && (
                 <>
-                  {/* Editör/sonuç arası dikey resize tutamağı (design 19 §P1-X3 N7). */}
+                  {/* Vertical resize handle between the editor and results. */}
                   <HResizeHandle height={resultsHeight} onResize={setResultsHeight} />
                   <div style={{ height: resultsHeight }} className="min-h-0 shrink-0 overflow-hidden bg-bg">
                     <ResultArea tabId={active.id} onFetchMore={() => fetchMore(active.id)} />
@@ -176,7 +176,7 @@ export default function App() {
         <ConfirmDialog
           conf={q.needsConfirmation}
           onConfirm={() => {
-            // Onaylanan run AYNI opts ile koşulmalı (seçimse seçim) — pendingRun.
+            // The confirmed run must use the SAME opts (a selection if it was one) — pendingRun.
             const opts = { ...(q.pendingRun ?? {}), confirmed: true };
             dismissConfirmation(active.id);
             void run(active.id, opts);

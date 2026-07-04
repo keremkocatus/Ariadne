@@ -1,14 +1,13 @@
-// Aktif editörün seçim durumunu çalıştırma yoluna taşıyan ince köprü (design 15
-// §P1-U2 "seçili çalıştırma"). SqlEditor mount olunca bir getter kaydeder;
-// Toolbar ve App çalıştırırken buradan seçimi okur. Monaco provider'larındaki
-// `setActiveConnection` deseninin aynısı — App bir seferde yalnız aktif tab'ın
-// editörünü render eder, o yüzden tek getter yeter.
+// A thin bridge that carries the active editor's selection state to the run path
+// ("run selection"). SqlEditor registers a getter on mount; the Toolbar and App read
+// the selection from here when running. Same pattern as `setActiveConnection` in the
+// Monaco providers — App renders only the active tab's editor at a time, so one
+// getter is enough.
 
 export interface RunSelection {
-  /** Seçili metin (SSMS: seçim varsa yalnız o koşar). */
+  /** The selected text (if there's a selection, only it runs). */
   sql: string;
-  /** Seçimin tam metindeki başlangıç byte offset'i (hata marker'ını doğru
-   *  konumlamak için — design 15 §P1-U2 riski: yanlış offset'li marker). */
+  /** The selection's start offset in the full text (to place the error marker correctly). */
   selectionOffset: number;
 }
 
@@ -18,21 +17,21 @@ export function setRunSelectionGetter(fn: (() => RunSelection | null) | null) {
   getter = fn;
 }
 
-/** Aktif editörde boş olmayan bir seçim varsa onu, yoksa null döndürür. */
+/** Returns the active editor's non-empty selection, or null. */
 export function getRunSelection(): RunSelection | null {
   return getter ? getter() : null;
 }
 
-// Aktif editörde SQL formatlama (design 20 §P1-Y2 M3). SqlEditor mount olunca
-// eylemini kaydeder; palette "Format SQL" buradan tetikler. Editör-içi Ctrl+K
-// doğrudan Monaco komutuyla çalışır; bu köprü yalnız palette erişimi içindir.
+// SQL formatting in the active editor. SqlEditor registers the action on mount; the
+// palette's "Format SQL" triggers it from here. In-editor Ctrl+K runs the Monaco
+// command directly; this bridge is only for palette access.
 let formatAction: (() => void) | null = null;
 
 export function setFormatAction(fn: (() => void) | null) {
   formatAction = fn;
 }
 
-/** Aktif editörde formatlamayı çalıştırır (kayıtlıysa). */
+/** Runs formatting in the active editor (if registered). */
 export function runFormatActive(): void {
   formatAction?.();
 }

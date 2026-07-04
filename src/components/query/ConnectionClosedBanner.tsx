@@ -6,9 +6,9 @@ interface Props {
   tabId: string;
 }
 
-/// Tab'ın bağlı olduğu bağlantı kapandığında gösterilir (kullanıcı disconnect'i ya
-/// da connection:lost event'i) — sonuçlar salt-okunur kalır (design 12 §P1-M1 item 5).
-/// Yeniden çalıştırmadan önce tab başka bir bağlantıya bağlanmalı.
+/// Shown when a tab's connection closes (user disconnect or a connection:lost event)
+/// — results stay read-only. The tab must be bound to another connection before it
+/// can run again.
 export function ConnectionClosedBanner({ tabId }: Props) {
   const connections = useConnectionStore((s) => s.connections);
   const setConnection = useTabsStore((s) => s.setConnection);

@@ -1,5 +1,5 @@
-// Tauri event köprüsü (design 07 §1): event'ler tek yerde store'lara bağlanır;
-// component'ler event bilmez, sadece store'a abone olur.
+// Tauri event bridge: events are wired to stores in one place, so components don't
+// know about events — they just subscribe to the store.
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useSchemaStore } from "@/stores/schemaStore";
@@ -19,7 +19,7 @@ interface FrozenPayload {
   tab_id: string;
 }
 
-/** Uygulama açılışında bir kez çağrılır; unlisten fonksiyonlarını döndürür. */
+/** Called once at app startup; returns a function that unregisters all listeners. */
 export async function registerEventBridge(): Promise<() => void> {
   const unlisteners = await Promise.all([
     listen<ConnPayload>("schema:refresh_started", (e) => {
@@ -31,9 +31,9 @@ export async function registerEventBridge(): Promise<() => void> {
     listen<LostPayload>("connection:lost", (e) => {
       toast.error("Connection lost", { description: e.payload.error?.message });
       void useConnectionStore.getState().disconnect(e.payload.connection_id);
-      // Bağlı tab'ların tx/running durumunu serbest bırak — aksi halde sunucuda
-      // zaten ölmüş bir tx yüzünden o tab'lar sonsuza dek kilitli kalır (design 12
-      // §P1-M1: kapalı bağlantı bandındaki "switch" hiçbir zaman izin vermez).
+      // Release the tx/running state of the attached tabs — otherwise a transaction
+      // that's already dead server-side leaves those tabs locked forever (the "switch"
+      // on the closed-connection banner would never be allowed).
       useTabsStore.getState().releaseTabsForConnection(e.payload.connection_id);
     }),
     listen<FrozenPayload>("result:frozen", (e) => {

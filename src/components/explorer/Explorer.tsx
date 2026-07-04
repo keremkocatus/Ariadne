@@ -36,18 +36,18 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
   const entry = useSchemaStore((s) => (connectionId ? s.byConnection[connectionId] : undefined));
   const search = useSchemaStore((s) => s.search);
   const setSearch = useSchemaStore((s) => s.setSearch);
-  // Selector'dan yeni [] döndürmek yasak (zustand v5/useSyncExternalStore sonsuz
-  // döngü uyarısı); pins objesini seçip stabil sabitle default'la.
+  // Returning a fresh [] from a selector is forbidden (zustand v5/useSyncExternalStore
+  // infinite-loop warning); select the pins object and default to a stable constant.
   const pinsMap = useSchemaStore((s) => s.pins);
   const pins = (profileId ? pinsMap[profileId] : undefined) ?? EMPTY_PINS;
   const togglePin = useSchemaStore((s) => s.togglePin);
-  // Explorer grup filtresi (design 15 §P1-U3): sağ-tık ile ad/tür filtresi.
+  // The Explorer group filter: name/kind filter via right-click.
   const filter = useSchemaStore((s) => (connectionId ? s.filters[connectionId] : undefined)) ?? EMPTY_FILTER;
   const [filterMenu, setFilterMenu] = useState<{ which: "rel" | "fn"; x: number; y: number } | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
   const [peek, setPeek] = useState<PeekTarget | null>(null);
-  // Şema düğümü sağ-tık → "New query here" menüsü (design 18 §P1-W3 N7).
+  // Right-click a schema node → "New query here" menu.
   const [schemaMenu, setSchemaMenu] = useState<{ schema: string; x: number; y: number } | null>(null);
   const { ref: sizeRef, height } = useSize();
 
@@ -56,12 +56,12 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
     () => (snapshot ? buildTree(filterSnapshot(snapshot, filter)) : []),
     [snapshot, filter],
   );
-  // Açılışta aktif şema + Tables açık (design 18 §P1-W2 N3). key={connectionId}
-  // bağlantı değişince yeniden uygular.
+  // The active schema + its Tables are open initially. key={connectionId} re-applies
+  // this when the connection changes.
   const initialOpen = useMemo(() => (snapshot ? defaultOpenState(snapshot) : {}), [snapshot]);
 
   const which = (node: TreeNode): "rel" | "fn" => (node.name.startsWith("Functions") ? "fn" : "rel");
-  // Sağ-tık: kategori → filtre popover'ı; şema → "New query here" (design 18 §P1-W3).
+  // Right-click: category → filter popover; schema → "New query here".
   const openFilterMenu = (node: TreeNode, e: React.MouseEvent) => {
     if (node.ntype === "category") {
       e.preventDefault();
@@ -71,14 +71,14 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
       setSchemaMenu({ schema: node.name, x: e.clientX, y: e.clientY });
     }
   };
-  // "more" düğümüne tık → o kategorinin filtre popover'ını aç (design 18 §P1-W2 N4).
+  // Click the "more" node → open that category's filter popover.
   const openMoreFilter = (node: TreeNode, e: React.MouseEvent) => {
     setFilterMenu({ which: node.moreWhich ?? "rel", x: e.clientX, y: e.clientY });
   };
   const isCatFiltered = (node: TreeNode) =>
     node.ntype === "category" && isCategoryActive(filter[which(node)]);
 
-  // Aramada düz liste (nesting'ten kurtul, design 07 §2).
+  // A flat list while searching (drop the nesting).
   const flat = useMemo(() => (snapshot ? flatten(snapshot) : []), [snapshot]);
   const results = useMemo(() => {
     if (!search.trim()) return null;
@@ -101,12 +101,12 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Tek tık = peek (zararsız, sadece bilgi); çift tık = aç (design 15 §P1-U3).
-  // Tek-tık peek DEBOUNCE edilir (design 19 N2): peek paneli akış-içi bir flex
-  // çocuğu (max-h-42%), açılınca ağaç alanını küçültüp satırları kaydırır; bu
-  // kayma çift-tık'ın iki tıklamasını farklı satırlara düşürüp `dblclick`'in hiç
-  // ateşlenmemesine yol açıyordu. Peek'i geciktirince çift-tık aradaki timer'ı
-  // iptal eder → peek AÇILMAZ, kayma OLMAZ, activate hemen çalışır.
+  // Single click = peek (harmless, info only); double click = open. The single-click
+  // peek is DEBOUNCED: the peek panel is an in-flow flex child (max-h-42%), and
+  // opening it shrinks the tree area and shifts the rows; that shift landed the two
+  // clicks of a double-click on different rows, so `dblclick` never fired. Delaying
+  // the peek lets a double-click cancel the pending timer → the peek does NOT open,
+  // there's no shift, and activate runs immediately.
   const clickTimer = useRef<number | null>(null);
   const cancelPendingPeek = () => {
     if (clickTimer.current != null) {
@@ -128,7 +128,7 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
     }, 220);
   };
   const activateNode = (node: TreeNode) => {
-    cancelPendingPeek(); // çift-tık: bekleyen peek'i iptal et (kayma olmasın)
+    cancelPendingPeek(); // double-click: cancel the pending peek (avoid the shift)
     if (node.ntype === "relation" && node.rel && node.schema) {
       onOpenRelation(node.schema, node.rel.name);
     } else if (node.ntype === "function" && node.fn) {
@@ -159,16 +159,16 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
   return (
     <div
       className="flex h-full flex-col"
-      // Explorer'da webview'in kendi sağ-tık menüsü (Geri/Yenile/Yazdır/İncele)
-      // hiçbir düğümde istenmiyor (design 19 N3). Kategori/şema kendi menülerini
-      // openFilterMenu içinde açar; buradaki bastırma yaprak/boşluk/pinned için
-      // varsayılan menüyü keser. Arama kutusunda paste menüsü korunur (dar kapsam).
+      // The webview's own right-click menu (Back/Reload/Print/Inspect) isn't wanted on
+      // any Explorer node. Category/schema nodes open their own menus in
+      // openFilterMenu; this suppression cuts the default menu for leaves/empty
+      // space/pinned rows. The paste menu is preserved over the search box (narrow scope).
       onContextMenu={(e) => {
         if ((e.target as HTMLElement).closest("input, textarea")) return;
         e.preventDefault();
       }}
     >
-      {/* Server ▸ database bağlam çubuğu (design 18 §P1-W3) */}
+      {/* Server ▸ database context bar */}
       <ContextBar connectionId={connectionId} />
 
       {/* Arama + refresh */}
@@ -315,7 +315,7 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
   );
 }
 
-// ---- Sağ-tık filtre popover'ı (design 15 §P1-U3) ----
+// ---- Right-click filter popover ----
 
 const REL_KINDS: [string, string][] = [
   ["table", "Table"],
@@ -359,7 +359,7 @@ function FilterPopover({
   };
 
   return (
-    // Tam ekran örtü: dışına tık ya da Escape kapatır.
+    // Full-screen overlay: clicking outside or Escape closes it.
     <div
       className="fixed inset-0 z-40"
       onClick={onClose}
@@ -412,7 +412,7 @@ function FilterPopover({
   );
 }
 
-// ---- Küçük yerel sunum yardımcıları (yalnız bu dosyada kullanılır) ----
+// ---- Small local presentation helpers (used only in this file) ----
 
 function Row({
   icon,
@@ -465,12 +465,13 @@ function Empty({ text }: { text: string }) {
   return <div className="p-3 text-xs text-fg-muted">{text}</div>;
 }
 
-// Container boyutunu ölçüp react-arborist'e height verir. **Callback ref** kullanır
-// (design 19 N4): ölçülen div yalnız snapshot HAZIR dalında render edilir; mount-anı
-// `useEffect([])` ile kurulan bir observer, div henüz yokken (Loading) çalışıp `null`
-// görür ve bir daha kurulmazdı → snapshot gelince height 0'da kalıp ağaç boş çizilirdi
-// (sekme gidip gelince remount ile "düzeliyordu"). Callback ref düğüm mount olunca
-// kurar, deps sorunu yaşamaz → yeni bağlantıda ağaç HEMEN gelir.
+// Measures the container size and gives react-arborist a height. Uses a **callback
+// ref**: the measured div is rendered only in the snapshot-READY branch; an observer
+// set up in a mount-time `useEffect([])` would run while the div is still absent
+// (Loading), see `null`, and never attach again → when the snapshot arrived, height
+// stayed 0 and the tree drew empty (a tab-switch remount accidentally "fixed" it). A
+// callback ref attaches the moment the node mounts, with no deps race → the tree
+// appears IMMEDIATELY on a new connection.
 function useSize() {
   const [height, setHeight] = useState(0);
   const roRef = useRef<ResizeObserver | null>(null);

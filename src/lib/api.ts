@@ -1,5 +1,5 @@
-// Frontend ↔ Rust sözleşmesi (design 02). Tipler Rust'taki serde tipleriyle
-// birebir tutulur. Component'ler çıplak invoke ÇAĞIRMAZ; hep buradan geçer (07 §5).
+// The frontend ↔ Rust contract. These types mirror the serde types in Rust
+// one-to-one. Components never call `invoke` directly; everything goes through here.
 import { invoke } from "@tauri-apps/api/core";
 
 // ---- Hata modeli (design 02 §2) ----
@@ -88,7 +88,7 @@ export function disconnect(connectionId: string): Promise<void> {
   return invoke("disconnect", { connectionId });
 }
 
-// ---- Veritabanı listesi (design 15 §P1-U1 "Databases ▸") ----
+// ---- Database list (for the "Databases ▸" switcher) ----
 export interface DatabaseInfo {
   name: string;
   is_current: boolean;
@@ -97,7 +97,7 @@ export function listDatabases(connectionId: string): Promise<DatabaseInfo[]> {
   return invoke("list_databases", { connectionId });
 }
 
-// ---- Şema (design 03) ----
+// ---- Schema ----
 export type RelKind = "table" | "view" | "mat_view" | "foreign" | "partitioned" | "sequence";
 export type FnKind = "function" | "procedure" | "aggregate" | "window";
 
@@ -119,7 +119,7 @@ export interface SnapFn {
   name: string;
   signature: string;
   kind: FnKind;
-  /** Dönüş tipi `trigger` mı — Explorer "trigger function" filtresi (design 15 §P1-U3). */
+  /** Whether the return type is `trigger` — for the explorer's "trigger function" filter. */
   is_trigger: boolean;
   comment?: string | null;
 }
@@ -143,7 +143,7 @@ export function refreshSchema(connectionId: string): Promise<void> {
   return invoke("refresh_schema", { connectionId });
 }
 
-// ---- İlişki detayı + fonksiyon kaynağı (on-demand, design 15 §P1-U3) ----
+// ---- Relation detail + function source (on-demand) ----
 export interface IndexInfo {
   name: string;
   definition: string;
@@ -201,7 +201,7 @@ export function signalBackend(
   return invoke("signal_backend", { connectionId, pid, mode });
 }
 
-// ---- DB istatistik şeridi (design 20 §P1-Y3 M5) ----
+// ---- DB stats strip ----
 export interface DbStats {
   active_connections: number;
   max_connections?: number | null;
@@ -212,7 +212,7 @@ export function dbStats(connectionId: string): Promise<DbStats> {
   return invoke("db_stats", { connectionId });
 }
 
-// ---- Tek-hücre düzenleme (design 19 §P1-X4 N8, DATA-WRITE) ----
+// ---- Single-cell editing (DATA-WRITE) ----
 export interface PkPredicate {
   column: string;
   value: string;
@@ -286,8 +286,8 @@ export interface RunResult {
   statements: StatementResult[];
   tx_status: TxStatus;
   needs_confirmation?: Confirmation | null;
-  // Kısmi sonuç: bir statement patladıysa önceki statements + hata birlikte döner
-  // (design 05 §1 / 11 §H2).
+  // Partial results: if a statement failed, the earlier statements and the error are
+  // returned together.
   error?: AriadneError | null;
   error_statement_index?: number | null;
 }
@@ -308,7 +308,7 @@ export function fetchPage(connectionId: string, queryId: string): Promise<Page> 
 export function cancelQuery(connectionId: string, queryId: string): Promise<void> {
   return invoke("cancel_query", { connectionId, queryId });
 }
-/// Donmuş sorgunun backend'ini öldürür (design 17 §P1-V4). Dönen bool: sinyallendi mi.
+/// Kills the backend of a stuck query. The returned bool is whether it was signaled.
 export function forceKillQuery(connectionId: string, queryId: string): Promise<boolean> {
   return invoke("force_kill_query", { connectionId, queryId });
 }

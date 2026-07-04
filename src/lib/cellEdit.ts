@@ -1,15 +1,15 @@
-// Tek-hücre düzenleme yardımcıları (design 19 §P1-X4 N8). Bir sonuç hücresinin
-// düzenlenebilir olup olmadığını belirler ve PK kolonlarını (on-demand, memoized)
-// çözer. Düzenleme yalnız ÜÇ koşul birden sağlanınca açık: (a) tab bir tablodan
-// açılmış (sourceTable), (b) tablonun PK'sı çözülür, (c) PK kolonları sonuçta var
-// ve değerleri null değil (WHERE kurulabilsin). Aksi halde salt-görüntüleyici.
+// Helpers for single-cell editing. Decides whether a result cell is editable and
+// resolves the primary-key columns (on-demand, memoized). Editing is enabled only
+// when THREE conditions all hold: (a) the tab was opened from a table (sourceTable),
+// (b) the table's PK resolves, (c) the PK columns are present in the result with
+// non-null values (so a WHERE can be built). Otherwise it's a read-only viewer.
 
 import { getPrimaryKey, type ColumnMeta, type PkPredicate } from "@/lib/api";
 
 const pkCache = new Map<string, Promise<string[]>>();
 
-/// Bir tablonun PK kolonlarını çözer (memoized). Başarısızlık önbelleğe ALINMAZ →
-/// sonraki denemede tekrar sorulur.
+/// Resolves a table's PK columns (memoized). Failures are NOT cached → the next
+/// attempt asks again.
 export async function resolvePrimaryKey(
   connectionId: string,
   schema: string,
@@ -32,7 +32,8 @@ export type Editability =
   | { editable: true; pk: PkPredicate[] }
   | { editable: false; reason: string };
 
-/// Sonuç satırında PK kolonlarından WHERE yüklemini kurar; kuramıyorsa nedeni döner.
+/// Builds the WHERE predicate from the PK columns in the result row; if it can't,
+/// returns the reason.
 export function buildEditability(
   pkColumns: string[],
   columns: ColumnMeta[],

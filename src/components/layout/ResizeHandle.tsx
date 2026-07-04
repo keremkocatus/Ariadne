@@ -1,6 +1,6 @@
 import { useRef } from "react";
 
-/// Sürükleme boyunca metin seçimini engelle (aksi halde imleç metni seçer).
+/// Suppress text selection during a drag (otherwise the cursor selects text).
 function withDragGuard(onMove: (ev: MouseEvent) => void) {
   const prevSelect = document.body.style.userSelect;
   document.body.style.userSelect = "none";
@@ -13,7 +13,7 @@ function withDragGuard(onMove: (ev: MouseEvent) => void) {
   window.addEventListener("mouseup", onUp);
 }
 
-/// Sidebar genişliğini sürükleyerek ayarlayan ince tutamak (design 07 §2).
+/// A thin handle that adjusts the sidebar width by dragging.
 export function ResizeHandle({
   width,
   onResize,
@@ -28,8 +28,8 @@ export function ResizeHandle({
     startW.current = width;
     withDragGuard((ev) => onResize(startW.current + (ev.clientX - startX.current)));
   };
-  // Hit alanı geniş (8px, kolay yakalanır) ama görsel çizgi ince (2px); hover'da
-  // belirginleşir (design 20 M2 — keşfedilebilirlik + kavranabilirlik).
+  // Wide hit area (8px, easy to grab) but a thin (2px) visual line; brightens on
+  // hover (discoverability + grabbability).
   return (
     <div
       onMouseDown={onDown}
@@ -40,10 +40,10 @@ export function ResizeHandle({
   );
 }
 
-/// Sonuç panelinin yüksekliğini ayarlayan yatay tutamak (design 19 §P1-X3 N7).
-/// Editör üstte, sonuç altta; tutamağı YUKARI sürüklemek sonucu büyütür. Yükseklik
-/// [80, ana-alan − 160] aralığına kısılır (editöre yer kalsın). Monaco automaticLayout
-/// açık olduğundan editör yeniden boyutlandığında kendini relayout eder.
+/// A horizontal handle that adjusts the results panel height. Editor on top, results
+/// below; dragging the handle UP grows the results. The height is clamped to
+/// [80, main height − 160] (to leave room for the editor). Since Monaco's
+/// automaticLayout is on, the editor relayouts itself when resized.
 export function HResizeHandle({
   height,
   onResize,

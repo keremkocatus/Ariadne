@@ -2,7 +2,7 @@ import { AlertTriangle } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 
-// Açık transaction'lı tab kapatılırken Commit / Rollback / Cancel onayı (design 05 §7).
+// Commit / Rollback / Cancel confirmation when closing a tab with an open transaction.
 export function CloseTabDialog({
   onCommit,
   onRollback,

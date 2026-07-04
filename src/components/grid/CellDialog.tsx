@@ -15,10 +15,10 @@ export interface CellEditContext {
   colIndex: number;
 }
 
-/// Hücre görüntüleme/düzenleme popup'ı (design 19 §P1-X4 N8). Her hücrede TAM değeri
-/// gösterir (görüntüleyici, her zaman güvenli). Düzenleme yalnız tab bir tablodan
-/// açıldıysa + PK çözülürse + PK değerleri satırda varsa açılır (buildEditability);
-/// aksi halde salt-okunur bir not gösterilir. UPDATE tam-1-satır guard'lı (backend).
+/// The cell view/edit popup. Shows the FULL value of any cell (a viewer, always
+/// safe). Editing is enabled only when the tab was opened from a table + the PK
+/// resolves + the PK values are in the row (buildEditability); otherwise it shows a
+/// read-only note. The UPDATE has a single-row guard (backend).
 export function CellDialog({
   ctx,
   onClose,
@@ -31,7 +31,7 @@ export function CellDialog({
   const col = ctx.columns[ctx.colIndex];
   const original = ctx.row[ctx.colIndex];
 
-  // Düzenlenebilirlik: "resolving" → PK çözülürken; sonra editable | {reason}.
+  // Editability: "resolving" → while resolving the PK; then editable | {reason}.
   const [edit, setEdit] = useState<Editability | { editable: "resolving" }>({
     editable: "resolving",
   });
@@ -61,7 +61,7 @@ export function CellDialog({
     return () => {
       cancelled = true;
     };
-    // Stabil alanlara bağlı (ctx objesi her render'da yeni; alanlar q'dan stabil ref).
+    // Keyed on stable fields (the ctx object is new each render; the fields are stable refs from q).
   }, [connectionId, sourceTable, readOnly, columns, row]);
 
   const canEdit = edit.editable === true;
@@ -71,7 +71,7 @@ export function CellDialog({
     if (!canEdit || !ctx.sourceTable) return;
     const newValue = isNull ? null : text;
     if (newValue === original) {
-      onClose(); // değişiklik yok
+      onClose(); // no change
       return;
     }
     setSaving(true);
@@ -167,7 +167,7 @@ function ReadOnlyValue({ value, pretty }: { value: string | null; pretty: string
   );
 }
 
-/// JSON gibi görünen değeri güzel bas (obje/dizi); değilse null (ham gösterilir).
+/// Pretty-print a value that looks like JSON (object/array); otherwise null (shown raw).
 function prettyJson(value: string | null): string | null {
   if (value === null) return null;
   const t = value.trimStart();

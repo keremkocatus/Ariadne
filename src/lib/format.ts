@@ -1,10 +1,10 @@
 import { format } from "sql-formatter";
 
-/// SQL'i okunaklı biçimde yeniden yazar (design 20 §P1-Y2 M3). PostgreSQL diyalekti,
-/// anahtar kelimeler BÜYÜK, 2 boşluk girinti. Saf fonksiyon (test edilebilir).
+/// Rewrites SQL in a readable form. PostgreSQL dialect, UPPERCASE keywords, 2-space
+/// indent. A pure, testable function.
 ///
-/// sql-formatter bazı Postgres'e özgü sözdiziminde (dollar-quoted gövde, egzotik
-/// operatörler) hata atabilir → çağıran taraf try/catch ile metni korumalı.
+/// sql-formatter can throw on some Postgres-specific syntax (dollar-quoted bodies,
+/// exotic operators) → the caller must guard with try/catch and preserve the text.
 export function formatSql(sql: string): string {
   return format(sql, {
     language: "postgresql",

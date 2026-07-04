@@ -3,19 +3,19 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import * as api from "@/lib/api";
 import type { ConnectionInfo, ConnectionProfile, ProfileInput } from "@/lib/api";
 
-/// Son oturumda hangi connectionId'nin hangi (profil, DB)'ye çözüldüğü (design 17
-/// §P1-V3). Canlı bağlantılar persist EDİLMEZ; yalnız bu eşleme kalır, böylece
-/// açılışta ölü connectionId taşıyan restore edilmiş tab'lar için "reconnect"
-/// daveti üretilebilir. Budama: 50 kayıt (ekleme sırasına göre eskiler atılır).
+/// Which connectionId resolved to which (profile, database) in the last session.
+/// Live connections are NOT persisted; only this mapping survives, so at startup a
+/// "reconnect" invite can be produced for restored tabs that carry dead connectionIds.
+/// Pruned to 50 entries (oldest by insertion order are dropped).
 type SessionMap = Record<string, { profileId: string; database: string }>;
 const SESSION_LIMIT = 50;
 
 interface ConnectionState {
   profiles: ConnectionProfile[];
-  /** connection_id → aktif bağlantı bilgisi */
+  /** connection_id → active connection info */
   connections: Record<string, ConnectionInfo>;
   activeConnectionId: string | null;
-  /** connection_id → (profil, DB) — sadece bu alan persist edilir (bkz. yukarı). */
+  /** connection_id → (profile, database) — only this field is persisted (see above). */
   lastSession: SessionMap;
 
   loadProfiles: () => Promise<void>;
@@ -25,15 +25,15 @@ interface ConnectionState {
   connect: (profileId: string, databaseOverride?: string) => Promise<string>;
   disconnect: (connectionId: string) => Promise<void>;
   setActive: (connectionId: string | null) => void;
-  /// Reconnect + remap sonrası tüketilen eski oturum kayıtlarını unutur (design 17 §P1-V3).
+  /// Forgets the consumed old-session records after reconnect + remap.
   forgetSession: (connectionIds: string[]) => void;
 
   activeInfo: () => ConnectionInfo | null;
-  /// (profil, DB) çiftine zaten bağlı bir bağlantı varsa id'sini döndürür (design
-  /// 15 §P1-U1 — aynı DB'ye ikinci pool açmamak için).
+  /// If a connection to this (profile, database) pair already exists, returns its id
+  /// (to avoid opening a second pool to the same database).
   findConnection: (profileId: string, database: string) => string | null;
-  /// Bağlantının profili read-only mi (design 17 §P1-V1 Ö5). Profil silinmişse
-  /// false — rozet kaybolur, zarar yok.
+  /// Whether the connection's profile is read-only. False if the profile was deleted
+  /// — the badge disappears, no harm done.
   isReadOnly: (connectionId: string | null) => boolean;
 }
 
@@ -125,8 +125,8 @@ export const useConnectionStore = create<ConnectionState>()(
       },
     }),
     {
-      // Canlı kaynaklar (connections/activeConnectionId/profiles) ASLA persist
-      // edilmez — yalnız oturum eşlemesi (design 17 §P1-V3).
+      // Live resources (connections/activeConnectionId/profiles) are NEVER persisted
+      // — only the session mapping.
       name: "ariadne-connections",
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({ lastSession: s.lastSession }),

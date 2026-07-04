@@ -1,11 +1,10 @@
-// Monaco'yu CDN'den DEĞİL, bundle'dan yükle (local-first prensibi, design 00 §5).
-// @monaco-editor/react varsayılan olarak monaco'yu CDN'den çeker; loader.config ile
-// npm paketindeki monaco'ya yönlendiriyoruz.
+// Load Monaco from the bundle, NOT from a CDN (local-first). @monaco-editor/react
+// pulls Monaco from a CDN by default; loader.config points it at the npm package.
 import * as monaco from "monaco-editor";
 import { loader } from "@monaco-editor/react";
 
-// Sadece temel editör worker'ı gerekiyor (M0'da dil servisi/completion yok).
-// Vite'ın ?worker import'u worker'ı ayrı bir bundle olarak üretir.
+// Only the base editor worker is needed. Vite's ?worker import emits the worker as a
+// separate bundle.
 import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 
 self.MonacoEnvironment = {

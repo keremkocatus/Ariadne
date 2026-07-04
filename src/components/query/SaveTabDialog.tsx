@@ -2,8 +2,8 @@ import { AlertTriangle } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 
-// Kaydedilmemiş .sql tab'ı kapatılırken Save / Don't save / Cancel (design 15 §P1-U4).
-// Açık tx onayından bağımsız ve sonra gelir (tx önce çözülür).
+// Save / Don't save / Cancel when closing an unsaved .sql tab. Independent of and
+// after the open-tx confirmation (the tx is resolved first).
 export function SaveTabDialog({
   fileName,
   onSave,

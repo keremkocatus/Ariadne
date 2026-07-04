@@ -7,23 +7,23 @@ import type { AriadneError, StatementResult } from "@/lib/api";
 import { useTabsStore } from "@/stores/tabsStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 
-/// Aktif tab'ın sonuç bölgesi. Kısmi sonuçta (design 11 §H2) hata bandı ÜSTTE,
-/// o ana kadar biriken sonuçlar ALTTA birlikte gösterilir. Alt+F1 nesne bilgisi
-/// bir overlay olarak sonucu geçici olarak örter (design 15 §P1-U3).
+/// The active tab's results area. On a partial result the error banner is shown at
+/// the TOP with the accumulated results BELOW it. Alt+F1 object info temporarily
+/// covers the result as an overlay.
 export function ResultArea({ tabId, onFetchMore }: { tabId: string; onFetchMore: () => void }) {
   const tab = useTabsStore((s) => s.tabs.find((t) => t.id === tabId));
   const setInfoResult = useTabsStore((s) => s.setInfoResult);
   const patchCell = useTabsStore((s) => s.patchCell);
   const isReadOnly = useConnectionStore((s) => s.isReadOnly(tab?.connectionId ?? null));
-  // Hücre görüntüle/düzenle popup'ı için seçili hücre (design 19 §P1-X4).
+  // The selected cell for the view/edit popup.
   const [cell, setCell] = useState<{ rowIndex: number; colIndex: number } | null>(null);
-  // Yeni sorgu (kolon referansı değişti) ya da tab değişince açık dialog'u kapat —
-  // aksi halde eski satır/kolon indeksleri yeni sonuca uygulanabilir (bayat).
+  // Close the open dialog on a new query (columns reference changed) or a tab change
+  // — otherwise stale row/column indexes could apply to the new result.
   useEffect(() => setCell(null), [tab?.id, tab?.query.columns]);
   const q = tab?.query;
   if (!q) return null;
 
-  // Object-info overlay: sonuç state'i EZİLMEZ, kapatınca geri gelir.
+  // Object-info overlay: the result state is NOT overwritten; it returns on close.
   if (q.infoResult) {
     return <ObjectInfoView info={q.infoResult} onClose={() => setInfoResult(tabId, null)} />;
   }

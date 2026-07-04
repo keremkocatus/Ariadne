@@ -10,8 +10,8 @@ interface SchemaEntry {
   snapshot?: SchemaSnapshot;
 }
 
-/// Explorer grup filtresi (design 15 §P1-U3): ad substring + tür seçimi.
-/// `kinds` boşsa tüm türler. Tables/Functions için ayrı tutulur.
+/// Explorer group filter: name substring + kind selection. Empty `kinds` means all
+/// kinds. Kept separately for Tables and Functions.
 export interface CategoryFilter {
   name: string;
   kinds: string[];
@@ -30,10 +30,10 @@ export function isCategoryActive(f: CategoryFilter): boolean {
 
 interface SchemaState {
   byConnection: Record<string, SchemaEntry>;
-  /** profil bazında pin'ler: profileId → ["public.users", ...] (kalıcı) */
+  /** Pins per profile: profileId → ["public.users", ...] (persisted) */
   pins: Record<string, string[]>;
   search: string;
-  /** connection bazında Explorer filtresi (oturumluk, persist edilmez) */
+  /** Explorer filter per connection (session-only, not persisted) */
   filters: Record<string, ExplorerFilter>;
 
   loadSnapshot: (connectionId: string) => Promise<void>;
@@ -147,7 +147,7 @@ export const useSchemaStore = create<SchemaState>()(
     {
       name: "ariadne-schema",
       storage: createJSONStorage(() => localStorage),
-      // Sadece pin'ler kalıcı; snapshot'lar/aramalar oturumluk.
+      // Only pins are persisted; snapshots/searches are session-only.
       partialize: (s) => ({ pins: s.pins }) as SchemaState,
     },
   ),

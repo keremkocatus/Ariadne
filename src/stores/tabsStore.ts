@@ -13,7 +13,7 @@ import type {
 import { useConnectionStore } from "./connectionStore";
 import { useUiStore } from "./uiStore";
 
-// Tab başına UI'da tutulan maks satır (design 05 §2 — kazara SELECT * sigortası).
+// Max rows held per tab in the UI (a safety net against an accidental SELECT *).
 const MAX_ROWS = 100_000;
 
 export interface QueryState {
@@ -23,35 +23,35 @@ export interface QueryState {
   hasMore: boolean;
   fetchedTotal: number;
   elapsedMs: number;
-  extra: StatementResult[]; // rows olmayan sonuçlar (affected/empty)
+  extra: StatementResult[]; // non-rows results (affected/empty)
   running: boolean;
   fetchingMore: boolean;
   error?: AriadneError | null;
   txStatus: TxStatus;
   needsConfirmation?: Confirmation | null;
   capped: boolean;
-  /// Idle cursor sunucu tarafında kapatıldı (design 11 §H7) → sonuç donduruldu.
+  /// The idle cursor was closed server-side → the result is frozen.
   frozen: boolean;
-  /// Son run bir seçim mi koştu (design 15 §P1-U2) — ResultArea "ran selection" rozeti.
+  /// Whether the last run executed a selection — drives the "ran selection" badge.
   ranSelection: boolean;
-  /// Son run'ın seçim başlangıç offset'i; hata marker'ını tam metne konumlarken
-  /// `error.position`'a eklenir (tam metin run'ında 0).
+  /// The last run's selection start offset; added to `error.position` when placing
+  /// the error marker in the full text (0 for a full-text run).
   selectionOffset: number;
-  /// SQL düzenlenince hata marker'ı bayatladı → editör marker'ı gizlenir, hata
-  /// bandı yeni run'a kadar kalır (design 15 §P1-U2 madde 2).
+  /// The error marker went stale when the SQL was edited → the editor marker is
+  /// hidden but the error banner stays until the next run.
   markerStale: boolean;
-  /// Onay bekleyen run'ın opts'u (design 15 §P1-U2 riski): confirm sonrası AYNI
-  /// seçim/SQL ile koşulmalı — aksi halde onaylanan seçimken tüm metin koşar.
+  /// The opts of the run awaiting confirmation: after confirm it must run with the
+  /// SAME selection/SQL — otherwise a confirmed selection would run the whole text.
   pendingRun: RunOpts | null;
-  /// Alt+F1 nesne bilgisi sonuç alanında overlay olarak gösterilir (design 15
-  /// §P1-U3). Kapatılınca (null) altındaki sorgu sonucu geri gelir — sonuç EZİLMEZ.
+  /// Alt+F1 object info is shown as an overlay in the results area. Closing it (null)
+  /// restores the query result underneath — the result is NOT overwritten.
   infoResult: ObjectInfo | null;
-  /// Arka plandaki (aktif olmayan) tab'da sorgu bittiğinde işaretlenir (design 17
-  /// §P1-V1 Ö7): TabBar başlığında nokta gösterilir; setActive görülünce temizler.
+  /// Marked when a query finishes in a background (non-active) tab: a dot is shown on
+  /// the TabBar title; setActive clears it once the tab is seen.
   finishedUnseen: boolean;
 }
 
-/// run() opsiyonları (design 15 §P1-U2). `sql` verilirse seçim koşulur.
+/// Options for run(). If `sql` is given, a selection is run.
 export interface RunOpts {
   confirmed?: boolean;
   sql?: string;
@@ -62,27 +62,27 @@ export interface Tab {
   id: string;
   title: string;
   sql: string;
-  /// Tab'ın kalıcı olarak bağlı olduğu bağlantı (design 12 §P1-M1). Tab açılırken
-  /// o anki aktif bağlantıdan devralınır; sonrasında yalnız `setConnection` ile
-  /// (kullanıcı eylemiyle) değişir — çalıştırma anında yeniden okunmaz.
+  /// The connection the tab is permanently bound to. Inherited from the active
+  /// connection when the tab opens; afterward it only changes via `setConnection` (a
+  /// user action) — it's not re-read at run time.
   connectionId: string | null;
-  /// Bir .sql dosyasına bağlıysa yolu (design 15 §P1-U4); yoksa null (bellek tab'ı).
+  /// The path if bound to a .sql file; null for an in-memory tab.
   filePath: string | null;
-  /// Dosyanın son kaydedilen/açılan içeriği — dirty = `sql !== savedSql`.
+  /// The file's last saved/opened content — dirty = `sql !== savedSql`.
   savedSql: string | null;
-  /// Tab bir tablodan mı açıldı (Explorer çift-tık / palette "open table" —
-  /// design 19 §P1-X4). Set ise hücre düzenleme koşullarından biri sağlanır (diğerleri:
-  /// PK çözülür + PK değerleri satırda). Rastgele/JOIN sorgularında null → salt-görüntüleme.
+  /// Whether the tab was opened from a table (explorer double-click / palette "open
+  /// table"). If set, one of the cell-editing conditions is met (the others: PK
+  /// resolves + PK values are in the row). null for arbitrary/JOIN queries → view-only.
   sourceTable: { schema: string; name: string } | null;
   query: QueryState;
 }
 
-/// Dosya-bağlı bir tab'da kaydedilmemiş değişiklik var mı (design 15 §P1-U4).
+/// Whether a file-backed tab has unsaved changes.
 export function isDirty(tab: Tab): boolean {
   return tab.filePath != null && tab.sql !== tab.savedSql;
 }
 
-/// Dosya yolundan başlık (dosya adı) — Windows/POSIX ayraçları.
+/// Title (file name) from a path — handles Windows/POSIX separators.
 function baseName(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
@@ -126,9 +126,9 @@ function newTab(
   };
 }
 
-/// Tab "pristine" mi: hiç dokunulmamış (boş SQL) + sonuç yok + idle tx + bekleyen
-/// sayfa/çalışan sorgu yok (design 15 §P1-U1). Üstten bağlantı seçimi pristine
-/// tab'ı yerinde rebind eder (gürültü olmasın); değilse yeni tab açar.
+/// Whether a tab is "pristine": untouched (empty SQL) + no result + idle tx + no
+/// pending page/running query. Choosing a connection from the top menu rebinds a
+/// pristine tab in place (to avoid noise); otherwise it opens a new tab.
 export function isPristine(tab: Tab): boolean {
   const q = tab.query;
   return (
@@ -146,13 +146,13 @@ export function isPristine(tab: Tab): boolean {
 interface TabsState {
   tabs: Tab[];
   activeTabId: string | null;
-  /// Açık tx'li olduğu için kapatılması onay bekleyen tab (design 05 §7 / 11 §H4).
+  /// A tab awaiting close confirmation because it has an open tx.
   closeRequest: string | null;
-  /// Kaydedilmemiş dosya değişikliği olduğu için kapatılması onay bekleyen tab
-  /// (design 15 §P1-U4). tx onayı önce gelir; bu ondan bağımsız bir sonraki adım.
+  /// A tab awaiting close confirmation because of unsaved file changes. The tx
+  /// confirmation comes first; this is an independent next step.
   dirtyCloseRequest: string | null;
-  /// Bir sonraki tab için sıra numarası (design 15 §P1-U2): "Query 1/2/3…". Tab
-  /// kapatınca geri sarmaz (isim çakışması olmasın). Persist edilir.
+  /// The sequence number for the next tab ("Query 1/2/3…"). Doesn't rewind on close
+  /// (so names don't collide). Persisted.
   nextTabNumber: number;
 
   addTab: (
@@ -160,50 +160,50 @@ interface TabsState {
     connectionId?: string | null,
     sourceTable?: { schema: string; name: string } | null,
   ) => string;
-  /// Sonuç grid'inde tek bir hücreyi yerinde günceller (design 19 §P1-X4): başarılı
-  /// UPDATE sonrası yeniden sorgu KOŞMADAN grid'i tazeler.
+  /// Updates a single cell of the result grid in place: after a successful UPDATE it
+  /// refreshes the grid WITHOUT re-running the query.
   patchCell: (id: string, rowIndex: number, colIndex: number, value: string | null) => void;
   closeTab: (id: string) => void;
   resolveClose: (action: "commit" | "rollback" | "cancel") => Promise<void>;
   setActive: (id: string) => void;
   setSql: (id: string, sql: string) => void;
-  /// Tab başlığını elle değiştirir (çift-tık ile yeniden adlandırma, design 15 §P1-U2).
+  /// Renames a tab manually (double-click to rename).
   renameTab: (id: string, title: string) => void;
-  /// Bir .sql dosyasını yeni tab'da açar (içerik + yol + başlık), döndürür id.
+  /// Opens a .sql file in a new tab (content + path + title); returns the id.
   openFileTab: (sql: string, filePath: string, connectionId: string | null) => string;
-  /// Kaydetme sonrası dosya meta'sını işler (yol + savedSql + başlık).
+  /// Records file metadata after a save (path + savedSql + title).
   markSaved: (id: string, filePath: string, savedSql: string) => void;
-  /// Kaydedilmemiş dosya tab'ını zorla kapatır (save/discard sonrası).
+  /// Force-closes an unsaved file tab (after save/discard).
   forceCloseTab: (id: string) => void;
-  /// Dirty-close onayını iptal eder.
+  /// Cancels the dirty-close confirmation.
   cancelDirtyClose: () => void;
-  /// Tab'ın bağlantısını değiştirir (Ctrl+K "switch connection" veya kapalı
-  /// bağlantı bandındaki seçim). Çalışan sorgu ya da açık tx varken reddedilir
-  /// (o kaynak eski bağlantıya ait — design 12 §P1-M1 riski).
+  /// Changes a tab's connection (Ctrl+K "switch connection" or the closed-connection
+  /// banner). Rejected while a query is running or a tx is open (that resource belongs
+  /// to the old connection).
   setConnection: (id: string, connectionId: string | null) => boolean;
-  /// Bağlantı kapandığında o bağlantıya bağlı tab'ların çalışan/tx durumunu
-  /// temizler (design 12 §P1-M1 item 5) — bkz. setConnection'daki not.
+  /// When a connection closes, clears the running/tx state of its tabs — see the note
+  /// in setConnection.
   releaseTabsForConnection: (connectionId: string) => void;
-  /// Açılışta reconnect sonrası: eski (ölü) bağlantı id'lerine bağlı restore
-  /// edilmiş tab'ları yeni bağlantıya taşır (design 17 §P1-V3). Restore edilen
-  /// tab'lar idle (emptyQuery) olduğundan doğrudan yeniden atanır.
+  /// After a startup reconnect: moves restored tabs bound to old (dead) connection
+  /// ids onto the new connection. Restored tabs are idle (emptyQuery), so they're
+  /// reassigned directly.
   remapConnection: (oldConnectionIds: string[], newConnectionId: string) => void;
 
   run: (id: string, opts?: RunOpts) => Promise<void>;
   fetchMore: (id: string) => Promise<void>;
   cancel: (id: string) => Promise<void>;
-  /// Donmuş sorgunun backend'ini öldürür (design 17 §P1-V4): cancel etki etmezse.
+  /// Kills a stuck query's backend when cancel has no effect.
   forceKill: (id: string) => Promise<void>;
   txControl: (id: string, sql: "COMMIT" | "ROLLBACK") => Promise<void>;
   dismissConfirmation: (id: string) => void;
   markFrozen: (tabId: string) => void;
-  /// Alt+F1 nesne bilgisini sonuç alanı overlay'ine koyar (null = kapat).
+  /// Puts Alt+F1 object info into the results-area overlay (null = close).
   setInfoResult: (tabId: string, info: ObjectInfo | null) => void;
 
   active: () => Tab | null;
 }
 
-/// Tab'ı gerçekten kapatır: backend cursor/tx kaynağını bırakır, tab'ı listeden siler.
+/// Actually closes a tab: releases the backend cursor/tx resource and removes the tab.
 function rawCloseTab(
   set: StoreApi<TabsState>["setState"],
   get: () => TabsState,
@@ -215,9 +215,9 @@ function rawCloseTab(
   set((s) => {
     let tabs = s.tabs.filter((t) => t.id !== id);
     let nextTabNumber = s.nextTabNumber;
-    // En az bir tab garantisi (design 12 §P1-M1): boş tab listesi Explorer/
-    // StatusBar/CommandPalette'i "no connection" gösterir, canlı bir bağlantı
-    // olsa bile — kapanan tab'ın bağlantısıyla devam eden taze bir tab açılır.
+    // Guarantee at least one tab: an empty tab list makes Explorer/StatusBar/
+    // CommandPalette show "no connection" even with a live connection — so a fresh
+    // tab carrying the closed tab's connection is opened.
     if (tabs.length === 0) {
       tabs = [{ ...newTab(undefined, connId ?? null), title: `Query ${nextTabNumber}` }];
       nextTabNumber += 1;
@@ -238,9 +238,9 @@ function patchQuery(
   }));
 }
 
-/// Bir run bittiğinde arka plan sinyali (design 17 §P1-V1 Ö7). Tab aktif değilse
-/// başlık noktası; ayrıca yeterince uzun sürdüyse (ayar eşiği) ve tab arka planda
-/// (ya da pencere gizli) ise bitiş toast'ı. `rowCount` null = yalnız süre.
+/// Background signal when a run finishes. If the tab isn't active, a title dot; and
+/// if it ran long enough (the settings threshold) and the tab is in the background
+/// (or the window is hidden), a finish toast. `rowCount` null = duration only.
 function signalFinish(
   set: StoreApi<TabsState>["setState"],
   get: () => TabsState,
@@ -294,13 +294,13 @@ export const useTabsStore = create<TabsState>()(
   },
 
   closeTab(id) {
-    // Açık tx varsa doğrudan kapatma — Commit/Rollback/Cancel onayı iste (design 05 §7).
+    // With an open tx, don't close directly — ask for Commit/Rollback/Cancel.
     const tab = get().tabs.find((t) => t.id === id);
     if (tab && tab.query.txStatus !== "idle") {
       set({ closeRequest: id });
       return;
     }
-    // Kaydedilmemiş dosya değişikliği varsa Save/Don't save/Cancel onayı (design 15 §P1-U4).
+    // With unsaved file changes, ask Save/Don't save/Cancel.
     if (tab && isDirty(tab)) {
       set({ dirtyCloseRequest: id });
       return;
@@ -317,9 +317,9 @@ export const useTabsStore = create<TabsState>()(
     }
     await get().txControl(id, action === "commit" ? "COMMIT" : "ROLLBACK");
     set({ closeRequest: null });
-    // Yalnız tx GERÇEKTEN kapandıysa tab'ı kapat. COMMIT/ROLLBACK başarısızsa
-    // (ör. bağlantı koptu) tx hâlâ açık; tab'ı kapatmak "kaydedildi" yanılgısı
-    // yaratır → tab açık kalır, hatası bandda görünür (design 11 §H4).
+    // Only close the tab if the tx actually closed. If COMMIT/ROLLBACK failed (e.g.
+    // the connection dropped) the tx is still open; closing the tab would create a
+    // false "saved" impression → the tab stays open with its error in the banner.
     const tab = get().tabs.find((t) => t.id === id);
     if (tab && tab.query.txStatus === "idle") {
       rawCloseTab(set, get, id);
@@ -327,7 +327,7 @@ export const useTabsStore = create<TabsState>()(
   },
 
   setActive(id) {
-    // Tab'a bakılınca arka plan bitiş noktası temizlenir (design 17 §P1-V1 Ö7).
+    // Viewing a tab clears its background finish dot.
     set((s) => ({
       activeTabId: id,
       tabs: s.tabs.map((t) =>
@@ -340,13 +340,13 @@ export const useTabsStore = create<TabsState>()(
     set((s) => ({
       tabs: s.tabs.map((t) => {
         if (t.id !== id) return t;
-        // Hata marker'ı düzenlemeyle bayatlar (offset artık yanlış yeri gösterir):
-        // marker gizlenir, hata bandı yeni run'a kadar kalır (design 15 §P1-U2).
+        // Editing stales the error marker (the offset now points at the wrong place):
+        // the marker is hidden, the error banner stays until the next run.
         const needStale = t.query.error?.position != null && !t.query.markerStale;
-        // Kullanıcı SQL'i düzenleyince tab artık "SELECT * FROM sourceTable" olmayabilir
-        // → hücre düzenleme YANLIŞ tabloyu güncellemesin diye sourceTable temizlenir
-        // (design 19 §P1-X4 güvenlik: bayat sourceTable). openRelation/openTable addTab
-        // ile sql'i doğrudan kurar (setSql'den geçmez) → onlarda işaret korunur.
+        // Once the user edits the SQL, the tab may no longer be "SELECT * FROM
+        // sourceTable" → clear sourceTable so cell editing can't target the WRONG
+        // table. openRelation/openTable set the sql directly via addTab (they don't go
+        // through setSql), so the marker is preserved there.
         const sourceTable = t.sourceTable != null ? null : t.sourceTable;
         return {
           ...t,
@@ -360,7 +360,7 @@ export const useTabsStore = create<TabsState>()(
 
   renameTab(id, title) {
     const trimmed = title.trim();
-    if (!trimmed) return; // boş ada izin verme
+    if (!trimmed) return; // don't allow an empty name
     set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, title: trimmed } : t)) }));
   },
 
@@ -391,20 +391,19 @@ export const useTabsStore = create<TabsState>()(
   setConnection(id, connectionId) {
     const tab = get().tabs.find((t) => t.id === id);
     if (!tab) return false;
-    // hasMore de reddedilir: açık bir sunucu-taraflı cursor (pagination) varsa o
-    // cursor ESKİ bağlantıda yaşıyor — rebind sonrası fetchMore/closeResult yanlış
-    // bağlantıya gider (yüksek-efor code review bulgusu). Kullanıcı ya tüm sayfaları
-    // çekmeli ya da sorguyu bitirmeli önce.
+    // hasMore is also rejected: an open server-side pagination cursor lives on the OLD
+    // connection — after a rebind, fetchMore/closeResult would go to the wrong
+    // connection. The user must fetch all pages or finish the query first.
     if (tab.query.running || tab.query.txStatus !== "idle" || tab.query.hasMore) return false;
     set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, connectionId } : t)) }));
     return true;
   },
 
   releaseTabsForConnection(connectionId) {
-    // Bağlantı kapandığında (disconnect ya da connection:lost) o bağlantıya bağlı
-    // tab'ların sunucu-taraflı durumu (tx/cursor) da öldü — aksi halde txStatus
-    // hiç "idle"a dönmediği için setConnection/closeTab sonsuza dek reddeder
-    // (yüksek-efor code review: "stuck tab" bulgusu). Sonuçlar salt-okunur kalır.
+    // When a connection closes (disconnect or connection:lost), the server-side state
+    // (tx/cursor) of its tabs is dead too — otherwise txStatus never returns to "idle"
+    // and setConnection/closeTab would reject forever ("stuck tab"). Results stay
+    // read-only.
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.connectionId === connectionId
@@ -437,15 +436,15 @@ export const useTabsStore = create<TabsState>()(
       });
       return;
     }
-    // Seçim varsa yalnız onu koştur (design 15 §P1-U2); offset marker'ı tam metne
-    // doğru konumlamak için saklanır. Statement-split/destructive-guard/tx davranışı
-    // değişmez — backend'e giden yalnızca daha kısa bir SQL.
+    // If there's a selection, run only it; the offset is stored to place the marker in
+    // the full text. Statement-split/destructive-guard/tx behavior is unchanged — only
+    // a shorter SQL goes to the backend.
     const ranSelection = opts?.sql != null;
     const sql = opts?.sql ?? tab.sql;
     const selectionOffset = opts?.selectionOffset ?? 0;
     const queryId = crypto.randomUUID();
-    // Wall-clock: bitiş sinyali eşiği için (design 17 §P1-V1 Ö7). first_page.elapsed_ms
-    // yalnız ilk sayfanın sunucu süresi; buradaki ölçüm round-trip'i kapsar.
+    // Wall-clock, for the finish-signal threshold. first_page.elapsed_ms is only the
+    // first page's server time; this measurement covers the round-trip.
     const startedAt = performance.now();
     patchQuery(set, id, {
       running: true,
@@ -463,8 +462,8 @@ export const useTabsStore = create<TabsState>()(
     try {
       const res = await api.runQuery(connId, sql, id, queryId, opts?.confirmed);
       if (res.needs_confirmation) {
-        // Onay sonrası AYNI opts ile koşulmalı (seçim korunur) — pendingRun'da tut.
-        // Onay bir duraklamadır, bitiş değil → sinyal yok.
+        // After confirm it must run with the SAME opts (the selection is kept) — hold
+        // it in pendingRun. A confirmation is a pause, not a finish → no signal.
         patchQuery(set, id, { running: false, needsConfirmation: res.needs_confirmation, pendingRun: opts ?? null });
         return;
       }
@@ -478,26 +477,26 @@ export const useTabsStore = create<TabsState>()(
         fetchedTotal: rowsStmt?.kind === "rows" ? rowsStmt.first_page.fetched_total : 0,
         elapsedMs: rowsStmt?.kind === "rows" ? rowsStmt.first_page.elapsed_ms : 0,
         extra: res.statements.filter((s) => s.kind !== "rows"),
-        // Kısmi sonuç: statements + (varsa) hata birlikte gösterilir (design 11 §H2).
+        // Partial result: statements + (if any) the error are shown together.
         error: res.error ?? null,
         capped: false,
       });
-      // Satır sayısı: SELECT → çekilen ilk sayfa; DML → etkilenen toplam; yoksa null.
+      // Row count: SELECT → the first page fetched; DML → total affected; else null.
       const rowCount =
         rowsStmt?.kind === "rows"
           ? rowsStmt.first_page.fetched_total
           : res.statements.some((s) => s.kind === "affected")
             ? res.statements.reduce((n, s) => n + (s.kind === "affected" ? s.row_count : 0), 0)
             : null;
-      // Kullanıcı iptali (query_cancelled) kendi bilinçli eylemi — bitiş sinyali yok.
+      // A user cancel (query_cancelled) is a deliberate action — no finish signal.
       if (res.error?.kind !== "query_cancelled") {
         signalFinish(set, get, id, performance.now() - startedAt, rowCount, res.error != null);
       }
     } catch (e) {
-      // Transport-seviyesi hata (invoke reddi, ör. connection_lost): geçerli sonuç
-      // yok → eski grid'i temizle ki hata bandı bayat satırların üstünde durmasın.
-      // (SQL hataları buraya DÜŞMEZ; onlar Ok(RunResult{error}) ile success dalından
-      //  geçer ve kısmi sonuçları korur — design 11 §H2.)
+      // A transport-level error (invoke rejected, e.g. connection_lost): there's no
+      // valid result → clear the old grid so the error banner doesn't sit on top of
+      // stale rows. (SQL errors don't land here; they come through the success path as
+      // Ok(RunResult{error}) and preserve partial results.)
       patchQuery(set, id, {
         running: false,
         columns: [],
@@ -568,7 +567,7 @@ export const useTabsStore = create<TabsState>()(
   },
 
   markFrozen(tabId) {
-    // Cursor sunucuda kapandı: yeni sayfa çekilemez, "yeniden çalıştır" bandı gösterilir.
+    // The cursor closed server-side: no more pages can be fetched, a "re-run" banner is shown.
     patchQuery(set, tabId, { frozen: true, hasMore: false });
   },
 
@@ -582,10 +581,9 @@ export const useTabsStore = create<TabsState>()(
   },
     }),
     {
-      // Son açık tab'ların SQL'i persist edilir; sonuçlar ASLA (design 07 §1 / 11 §H8).
-      // connectionId de persist edilir — uygulama yeniden açıldığında bağlantılar
-      // boş başlar, bu yüzden restore edilen tab'lar "connection closed" bandına
-      // düşer (aynı mekanizma, ekstra kod yok — design 12 §P1-M1).
+      // The SQL of the last open tabs is persisted; results NEVER are. connectionId is
+      // persisted too — on restart connections start empty, so restored tabs fall into
+      // the "connection closed" banner (same mechanism, no extra code).
       name: "ariadne-tabs",
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
@@ -601,7 +599,7 @@ export const useTabsStore = create<TabsState>()(
         activeTabId: s.activeTabId,
         nextTabNumber: s.nextTabNumber,
       }),
-      // Diskten dönen tab'lara taze boş query iliştir (çalıştırma durumu kalıcı değil).
+      // Attach a fresh empty query to tabs coming back from disk (run state isn't persisted).
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as {
           tabs?: {
@@ -628,7 +626,7 @@ export const useTabsStore = create<TabsState>()(
           ...current,
           tabs,
           activeTabId: tabs.some((t) => t.id === p.activeTabId) ? p.activeTabId! : (tabs[0]?.id ?? null),
-          // Sayaç geri sarmasın: en az (mevcut tab sayısı + 1)'den başla.
+          // Don't let the counter rewind: start at least at (current tab count + 1).
           nextTabNumber: p.nextTabNumber ?? tabs.length + 1,
         };
       },

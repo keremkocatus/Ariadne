@@ -1,5 +1,5 @@
-// Sol panel: Explorer / Roles / Activity arasında dar sekmelerle geçiş (design 15
-// §P1-U4 + design 17 §P1-V4). Sekme durumu uiStore'da (palette programatik geçebilsin).
+// The left panel: switches between Explorer / Roles / Activity via narrow tabs. The
+// tab state is in uiStore (so the palette can switch it programmatically).
 import { Table2, Users, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Explorer } from "@/components/explorer/Explorer";
