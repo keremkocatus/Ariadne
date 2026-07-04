@@ -1,4 +1,5 @@
 import { create, type StoreApi } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import * as api from "@/lib/api";
 import type {
   AriadneError,
@@ -107,7 +108,9 @@ function patchQuery(
   }));
 }
 
-export const useTabsStore = create<TabsState>((set, get) => ({
+export const useTabsStore = create<TabsState>()(
+  persist(
+    (set, get) => ({
   tabs: [],
   activeTabId: null,
   closeRequest: null,
@@ -249,4 +252,28 @@ export const useTabsStore = create<TabsState>((set, get) => ({
     const { tabs, activeTabId } = get();
     return tabs.find((t) => t.id === activeTabId) ?? null;
   },
-}));
+    }),
+    {
+      // Son açık tab'ların SQL'i persist edilir; sonuçlar ASLA (design 07 §1 / 11 §H8).
+      name: "ariadne-tabs",
+      storage: createJSONStorage(() => localStorage),
+      partialize: (s) => ({
+        tabs: s.tabs.map((t) => ({ id: t.id, title: t.title, sql: t.sql })),
+        activeTabId: s.activeTabId,
+      }),
+      // Diskten dönen tab'lara taze boş query iliştir (çalıştırma durumu kalıcı değil).
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as {
+          tabs?: { id: string; title: string; sql: string }[];
+          activeTabId?: string | null;
+        };
+        const tabs: Tab[] = (p.tabs ?? []).map((t) => ({ ...t, query: emptyQuery() }));
+        return {
+          ...current,
+          tabs,
+          activeTabId: tabs.some((t) => t.id === p.activeTabId) ? p.activeTabId! : (tabs[0]?.id ?? null),
+        };
+      },
+    },
+  ),
+);

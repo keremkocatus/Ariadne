@@ -19,7 +19,7 @@ import type { ObjectInfo } from "@/lib/api";
 export default function App() {
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const activeInfo = useConnectionStore((s) => s.activeInfo());
-  const { sidebarVisible, sidebarWidth, setSidebarWidth } = useUiStore();
+  const { sidebarVisible, sidebarWidth, setSidebarWidth, resultsVisible } = useUiStore();
 
   const tabs = useTabsStore((s) => s.tabs);
   const activeTabId = useTabsStore((s) => s.activeTabId);
@@ -93,9 +93,11 @@ export default function App() {
                 />
                 {peek && <ObjectInfoPanel info={peek} onClose={() => setPeek(null)} />}
               </div>
-              <div className="min-h-0 flex-[2] overflow-hidden bg-bg">
-                <ResultArea tabId={active.id} onFetchMore={() => fetchMore(active.id)} />
-              </div>
+              {resultsVisible && (
+                <div className="min-h-0 flex-[2] overflow-hidden bg-bg">
+                  <ResultArea tabId={active.id} onFetchMore={() => fetchMore(active.id)} />
+                </div>
+              )}
             </>
           ) : (
             <div className="flex-1" />
