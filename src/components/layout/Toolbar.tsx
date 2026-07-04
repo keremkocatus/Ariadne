@@ -6,6 +6,7 @@ import { useTabsStore } from "@/stores/tabsStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { getRunSelection } from "@/lib/editorRun";
 import { openSqlFile, saveSqlFile } from "@/lib/fileActions";
+import { openServerActivity } from "@/lib/activityQuery";
 
 // If Cancel doesn't end the query within this window, "Force kill" appears.
 const FORCE_KILL_ARM_MS = 5000;
@@ -72,16 +73,12 @@ export function Toolbar() {
         <Save size={15} />
       </button>
       <button
-        className="rounded p-1 text-fg-muted hover:bg-bg-elev hover:text-fg"
-        onClick={() => {
-          // Switch the sidebar to the Activity tab; open it if hidden.
-          const ui = useUiStore.getState();
-          if (!ui.sidebarVisible) ui.toggleSidebar();
-          ui.setSidebarTab("activity");
-        }}
-        title="Server activity — who's running what"
+        className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-fg-muted hover:bg-bg-elev hover:text-fg disabled:opacity-40"
+        onClick={() => openServerActivity(active?.connectionId ?? null)}
+        disabled={!canRun}
+        title="Server activity — open pg_stat_activity in a new query tab"
       >
-        <Activity size={15} />
+        <Activity size={15} /> Activity
       </button>
       {q?.running ? (
         <div className="flex items-center gap-1.5">

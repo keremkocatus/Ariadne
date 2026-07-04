@@ -2,7 +2,7 @@
 // one-to-one. Components never call `invoke` directly; everything goes through here.
 import { invoke } from "@tauri-apps/api/core";
 
-// ---- Hata modeli (design 02 §2) ----
+// ---- Error model ----
 export type ErrorKind =
   | "connection_failed"
   | "connection_lost"
@@ -26,7 +26,7 @@ export function isAriadneError(e: unknown): e is AriadneError {
   return typeof e === "object" && e !== null && "kind" in e && "message" in e;
 }
 
-// ---- Profiller (design 06) ----
+// ---- Connection profiles ----
 export type SslMode = "disable" | "prefer" | "require" | "verify_ca" | "verify_full";
 
 export interface ConnectionProfile {
@@ -43,7 +43,7 @@ export interface ConnectionProfile {
   options: Record<string, string>;
 }
 
-// save_profile girdisi — id yoksa yeni profil.
+// Input to save_profile — a missing id means a new profile.
 export type ProfileInput = Omit<ConnectionProfile, "id"> & { id?: string };
 
 export interface ConnectionInfo {
@@ -173,34 +173,6 @@ export function getFunctionSource(connectionId: string, fnOid: number): Promise<
   return invoke("get_function_source", { connectionId, fnOid });
 }
 
-// ---- Sunucu aktivitesi + backend sinyalleme (design 17 §P1-V4) ----
-export interface ActivityRow {
-  pid: number;
-  datname?: string | null;
-  usename?: string | null;
-  application_name: string;
-  client_addr?: string | null;
-  state?: string | null;
-  wait_event?: string | null;
-  backend_start?: string | null;
-  query_start?: string | null;
-  duration_ms?: number | null;
-  query: string;
-  is_self: boolean;
-  is_app: boolean;
-}
-export function listActivity(connectionId: string): Promise<ActivityRow[]> {
-  return invoke("list_activity", { connectionId });
-}
-export type SignalMode = "cancel" | "terminate";
-export function signalBackend(
-  connectionId: string,
-  pid: number,
-  mode: SignalMode,
-): Promise<boolean> {
-  return invoke("signal_backend", { connectionId, pid, mode });
-}
-
 // ---- DB stats strip ----
 export interface DbStats {
   active_connections: number;
@@ -235,7 +207,7 @@ export function updateCell(args: {
   return invoke("update_cell", args);
 }
 
-// ---- Roller (design 15 §P1-U4, salt-okunur) ----
+// ---- Roles (read-only) ----
 export interface RoleInfo {
   name: string;
   is_superuser: boolean;
@@ -250,7 +222,7 @@ export function listRoles(connectionId: string): Promise<RoleInfo[]> {
   return invoke("list_roles", { connectionId });
 }
 
-// ---- .sql dosya okuma/yazma (design 15 §P1-U4). Yol native diyalogdan gelir. ----
+// ---- .sql file read/write. The path comes from the native dialog. ----
 export function readTextFile(path: string): Promise<string> {
   return invoke("read_text_file", { path });
 }
@@ -258,7 +230,7 @@ export function writeTextFile(path: string, content: string): Promise<void> {
   return invoke("write_text_file", { path, content });
 }
 
-// ---- Query (design 02 §3, 05) ----
+// ---- Query ----
 export interface ColumnMeta {
   name: string;
   type_name: string;
@@ -316,7 +288,7 @@ export function closeResult(connectionId: string, tabId: string): Promise<void> 
   return invoke("close_result", { connectionId, tabId });
 }
 
-// ---- Completion (design 02 §3, 04) ----
+// ---- Completion ----
 export type CompletionKind =
   | "table"
   | "view"

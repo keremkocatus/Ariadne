@@ -1,10 +1,10 @@
-// The left panel: switches between Explorer / Roles / Activity via narrow tabs. The
+// The left panel: switches between Explorer / Roles / History via narrow tabs. The
 // tab state is in uiStore (so the palette can switch it programmatically).
-import { Table2, Users, Activity } from "lucide-react";
+import { Table2, Users, History } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Explorer } from "@/components/explorer/Explorer";
 import { RolesPanel } from "@/components/roles/RolesPanel";
-import { ActivityPanel } from "@/components/activity/ActivityPanel";
+import { QueryHistory } from "@/components/history/QueryHistory";
 import { useUiStore } from "@/stores/uiStore";
 import type { SnapFn } from "@/lib/api";
 
@@ -28,8 +28,8 @@ export function Sidebar({ connectionId, profileId, onOpenRelation, onOpenFunctio
         <TabButton active={tab === "roles"} onClick={() => setTab("roles")} icon={<Users size={12} />}>
           Roles
         </TabButton>
-        <TabButton active={tab === "activity"} onClick={() => setTab("activity")} icon={<Activity size={12} />}>
-          Activity
+        <TabButton active={tab === "history"} onClick={() => setTab("history")} icon={<History size={12} />}>
+          History
         </TabButton>
       </div>
       <div className="min-h-0 flex-1">
@@ -43,7 +43,7 @@ export function Sidebar({ connectionId, profileId, onOpenRelation, onOpenFunctio
         ) : tab === "roles" ? (
           <RolesPanel connectionId={connectionId} />
         ) : (
-          <ActivityPanel connectionId={connectionId} />
+          <QueryHistory connectionId={connectionId} />
         )}
       </div>
     </div>

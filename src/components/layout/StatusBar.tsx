@@ -3,6 +3,7 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { useSchemaStore } from "@/stores/schemaStore";
 import { useTabsStore } from "@/stores/tabsStore";
 import { RoBadge } from "@/components/connection/RoBadge";
+import { formatBytes } from "@/lib/format";
 import { dbStats, type DbStats } from "@/lib/api";
 
 /// The bottom status bar: the active TAB's connection (profile color stripe + server
@@ -93,14 +94,6 @@ function useDbStats(connectionId: string | null): DbStats | null {
     };
   }, [connectionId]);
   return stats;
-}
-
-function formatBytes(n: number): string {
-  if (n >= 1024 ** 4) return `${(n / 1024 ** 4).toFixed(1)} TB`;
-  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`;
-  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
-  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${n} B`;
 }
 
 function relTime(iso: string): string {

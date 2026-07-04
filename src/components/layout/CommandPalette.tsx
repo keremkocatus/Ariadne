@@ -8,6 +8,7 @@ import { useSchemaStore } from "@/stores/schemaStore";
 import { useTabsStore } from "@/stores/tabsStore";
 import { connectProfile, focusConnection } from "@/lib/connectionActions";
 import { openSqlFile, saveSqlFile } from "@/lib/fileActions";
+import { openServerActivity } from "@/lib/activityQuery";
 import { runFormatActive } from "@/lib/editorRun";
 import { refreshSchema } from "@/lib/api";
 
@@ -107,17 +108,11 @@ export function CommandPalette() {
               <Item onSelect={() => run(() => useUiStore.getState().toggleResults())}>
                 Toggle results panel
               </Item>
-              <Item
-                onSelect={() =>
-                  run(() => {
-                    const ui = useUiStore.getState();
-                    if (!ui.sidebarVisible) ui.toggleSidebar();
-                    ui.setSidebarTab("activity");
-                  })
-                }
-              >
-                Show server activity
-              </Item>
+              {tabConnectionId && (
+                <Item onSelect={() => run(() => openServerActivity(tabConnectionId))}>
+                  Show server activity
+                </Item>
+              )}
               <Item onSelect={() => run(() => useUiStore.getState().setSettingsOpen(true))}>
                 Open settings
               </Item>

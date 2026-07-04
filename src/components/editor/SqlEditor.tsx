@@ -121,18 +121,32 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyE, () => runRef.current());
     ed.addCommand(monaco.KeyCode.F5, () => runRef.current());
 
-    // Alt+F1: nesne bilgisi (design 07 §3). Cache'ten, DB round-trip yok.
+    // Alt+F1: object info for the table/view at the cursor. The identifier is resolved
+    // from the schema cache; the panel then fetches index details lazily.
     ed.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.F1, () => {
       void (async () => {
         const connId = connIdRef.current;
         const model = ed.getModel();
+        if (!connId || !model) return;
+        // With a selection, probe its END offset — it lands on the last identifier
+        // (so a qualified "schema.table" still resolves the table, with the schema as
+        // qualifier) and works regardless of the selection's direction, which is the
+        // original bug: getPosition() returns the anchor end, empty for a backwards drag.
+        const sel = ed.getSelection();
         const pos = ed.getPosition();
-        if (!connId || !model || !pos) return;
+        let offset: number | null = null;
+        if (sel && !sel.isEmpty()) {
+          offset = model.getOffsetAt(sel.getEndPosition());
+        } else if (pos) {
+          offset = model.getOffsetAt(pos);
+        }
+        if (offset == null) return;
         try {
-          const info = await getObjectInfo(connId, model.getValue(), model.getOffsetAt(pos));
-          peekRef.current?.(info);
+          const info = await getObjectInfo(connId, model.getValue(), offset);
+          if (info) peekRef.current?.(info);
+          else toast.message("No table or view found at the cursor");
         } catch {
-          peekRef.current?.(null);
+          toast.error("Couldn't load object info");
         }
       })();
     });

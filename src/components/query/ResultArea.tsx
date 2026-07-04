@@ -25,7 +25,13 @@ export function ResultArea({ tabId, onFetchMore }: { tabId: string; onFetchMore:
 
   // Object-info overlay: the result state is NOT overwritten; it returns on close.
   if (q.infoResult) {
-    return <ObjectInfoView info={q.infoResult} onClose={() => setInfoResult(tabId, null)} />;
+    return (
+      <ObjectInfoView
+        info={q.infoResult}
+        connectionId={tab?.connectionId ?? null}
+        onClose={() => setInfoResult(tabId, null)}
+      />
+    );
   }
 
   const cancelled = q.error?.kind === "query_cancelled";

@@ -36,8 +36,10 @@ bar, palette) follows the *active tab's* connection rather than a single global 
   `SELECT`. The context bar above it switches databases on the same server.
 - **`layout/`** — the toolbar, status bar (with the DB stats strip), resize handles, the
   command palette (cmdk), and the settings dialog.
-- **`activity/ActivityPanel`** — a `pg_stat_activity` view with cancel/terminate, for
-  production firefighting.
+- **`history/QueryHistory`** — a session-only log of executed queries (never persisted);
+  clicking an entry reopens its SQL in a new tab. Server activity isn't a panel: the
+  toolbar's Activity button opens a new tab, writes the `pg_stat_activity` query, and runs
+  it so the result shows in the normal grid.
 
 ## Editor semantics worth knowing
 

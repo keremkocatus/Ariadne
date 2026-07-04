@@ -19,9 +19,9 @@ export const DEFAULT_SETTINGS: Settings = {
   longQueryNoticeSeconds: 10,
 };
 
-/// The left panel's active tab. Kept in uiStore so actions like the palette's "Show
-/// activity" can switch the tab programmatically.
-export type SidebarTab = "explorer" | "roles" | "activity";
+/// The left panel's active tab. Kept in uiStore so the palette can switch it
+/// programmatically.
+export type SidebarTab = "explorer" | "roles" | "history";
 
 interface UiState {
   sidebarVisible: boolean;
@@ -89,7 +89,17 @@ export const useUiStore = create<UiState>()(
       // If an older persisted state has no settings, merge with the defaults.
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<UiState>;
-        return { ...current, ...p, settings: { ...DEFAULT_SETTINGS, ...(p.settings ?? {}) } };
+        // A pre-rename persisted value ("activity") is no longer a valid tab → fall back.
+        const validTabs: SidebarTab[] = ["explorer", "roles", "history"];
+        const sidebarTab = validTabs.includes(p.sidebarTab as SidebarTab)
+          ? (p.sidebarTab as SidebarTab)
+          : "explorer";
+        return {
+          ...current,
+          ...p,
+          sidebarTab,
+          settings: { ...DEFAULT_SETTINGS, ...(p.settings ?? {}) },
+        };
       },
     },
   ),

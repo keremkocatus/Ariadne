@@ -31,9 +31,9 @@ pub struct TriggerInfo {
 pub struct RelationDetails {
     pub indexes: Vec<IndexInfo>,
     pub triggers: Vec<TriggerInfo>,
-    /// pg_total_relation_size (tablo + indeksler + toast). Görünümlerde 0.
+    /// pg_total_relation_size (table + indexes + toast). 0 for views.
     pub size_bytes: i64,
-    /// pg_class.reltuples (tahmin). Hiç analiz edilmemişse -1.
+    /// pg_class.reltuples (an estimate). -1 if never analyzed.
     pub live_rows: i64,
 }
 

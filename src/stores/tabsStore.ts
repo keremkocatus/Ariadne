@@ -12,6 +12,7 @@ import type {
 } from "@/lib/api";
 import { useConnectionStore } from "./connectionStore";
 import { useUiStore } from "./uiStore";
+import { useHistoryStore } from "./historyStore";
 
 // Max rows held per tab in the UI (a safety net against an accidental SELECT *).
 const MAX_ROWS = 100_000;
@@ -87,6 +88,26 @@ function baseName(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
 
+/// The number N of an auto-named "Query N" tab title, or null for a renamed/file tab.
+function parseQueryNumber(title: string): number | null {
+  const m = /^Query (\d+)$/.exec(title);
+  return m ? Number(m[1]) : null;
+}
+
+/// Allocates the next "Query N" number: the smallest `n >= from` not already used by an
+/// existing tab title. Keeps numbering monotonic within a session (closed numbers aren't
+/// reused) while skipping numbers held by tabs restored from a previous session — the
+/// counter resets to 1 each launch, so this prevents a new tab from duplicating a
+/// restored "Query N".
+function allocTabNumber(tabs: Tab[], from: number): { number: number; next: number } {
+  const used = new Set(
+    tabs.map((t) => parseQueryNumber(t.title)).filter((n): n is number => n != null),
+  );
+  let n = from;
+  while (used.has(n)) n += 1;
+  return { number: n, next: n + 1 };
+}
+
 function emptyQuery(): QueryState {
   return {
     columns: [],
@@ -152,7 +173,8 @@ interface TabsState {
   /// confirmation comes first; this is an independent next step.
   dirtyCloseRequest: string | null;
   /// The sequence number for the next tab ("Query 1/2/3…"). Doesn't rewind on close
-  /// (so names don't collide). Persisted.
+  /// within a session (so names don't collide), but is NOT persisted: it resets to 1
+  /// each launch and the allocator skips numbers held by restored tabs.
   nextTabNumber: number;
 
   addTab: (
@@ -219,8 +241,9 @@ function rawCloseTab(
     // CommandPalette show "no connection" even with a live connection — so a fresh
     // tab carrying the closed tab's connection is opened.
     if (tabs.length === 0) {
-      tabs = [{ ...newTab(undefined, connId ?? null), title: `Query ${nextTabNumber}` }];
-      nextTabNumber += 1;
+      const alloc = allocTabNumber(tabs, nextTabNumber);
+      tabs = [{ ...newTab(undefined, connId ?? null), title: `Query ${alloc.number}` }];
+      nextTabNumber = alloc.next;
     }
     const activeTabId =
       s.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : s.activeTabId;
@@ -265,6 +288,15 @@ function signalFinish(
   }
 }
 
+/// Resolves a connection id to a human label for the history log — the profile name,
+/// falling back to the database name.
+function connectionLabel(connId: string): string {
+  const cs = useConnectionStore.getState();
+  const info = cs.connections[connId];
+  const profile = info ? cs.profiles.find((p) => p.id === info.profile_id) : null;
+  return profile?.name ?? info?.database ?? "—";
+}
+
 export const useTabsStore = create<TabsState>()(
   persist(
     (set, get) => ({
@@ -276,8 +308,9 @@ export const useTabsStore = create<TabsState>()(
 
   addTab(sql, connectionId, sourceTable) {
     const connId = connectionId ?? useConnectionStore.getState().activeConnectionId;
-    const t = { ...newTab(sql, connId, sourceTable ?? null), title: `Query ${get().nextTabNumber}` };
-    set((s) => ({ tabs: [...s.tabs, t], activeTabId: t.id, nextTabNumber: s.nextTabNumber + 1 }));
+    const { number, next } = allocTabNumber(get().tabs, get().nextTabNumber);
+    const t = { ...newTab(sql, connId, sourceTable ?? null), title: `Query ${number}` };
+    set((s) => ({ tabs: [...s.tabs, t], activeTabId: t.id, nextTabNumber: next }));
     return t.id;
   },
 
@@ -488,6 +521,15 @@ export const useTabsStore = create<TabsState>()(
           : res.statements.some((s) => s.kind === "affected")
             ? res.statements.reduce((n, s) => n + (s.kind === "affected" ? s.row_count : 0), 0)
             : null;
+      useHistoryStore.getState().add({
+        sql,
+        connectionLabel: connectionLabel(connId),
+        at: Date.now(),
+        status: res.error ? "error" : "ok",
+        rowCount,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        errorMessage: res.error?.message,
+      });
       // A user cancel (query_cancelled) is a deliberate action — no finish signal.
       if (res.error?.kind !== "query_cancelled") {
         signalFinish(set, get, id, performance.now() - startedAt, rowCount, res.error != null);
@@ -505,6 +547,15 @@ export const useTabsStore = create<TabsState>()(
         hasMore: false,
         fetchedTotal: 0,
         error: api.isAriadneError(e) ? e : { kind: "internal", message: String(e) },
+      });
+      useHistoryStore.getState().add({
+        sql,
+        connectionLabel: connectionLabel(connId),
+        at: Date.now(),
+        status: "error",
+        rowCount: null,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        errorMessage: api.isAriadneError(e) ? e.message : String(e),
       });
       signalFinish(set, get, id, performance.now() - startedAt, null, true);
     }
@@ -597,7 +648,6 @@ export const useTabsStore = create<TabsState>()(
           sourceTable: t.sourceTable,
         })),
         activeTabId: s.activeTabId,
-        nextTabNumber: s.nextTabNumber,
       }),
       // Attach a fresh empty query to tabs coming back from disk (run state isn't persisted).
       merge: (persisted, current) => {
@@ -612,7 +662,6 @@ export const useTabsStore = create<TabsState>()(
             sourceTable?: { schema: string; name: string } | null;
           }[];
           activeTabId?: string | null;
-          nextTabNumber?: number;
         };
         const tabs: Tab[] = (p.tabs ?? []).map((t) => ({
           ...t,
@@ -626,8 +675,9 @@ export const useTabsStore = create<TabsState>()(
           ...current,
           tabs,
           activeTabId: tabs.some((t) => t.id === p.activeTabId) ? p.activeTabId! : (tabs[0]?.id ?? null),
-          // Don't let the counter rewind: start at least at (current tab count + 1).
-          nextTabNumber: p.nextTabNumber ?? tabs.length + 1,
+          // Reset the counter each launch; the allocator skips numbers held by restored
+          // "Query N" tabs so a new tab never duplicates one.
+          nextTabNumber: 1,
         };
       },
     },
