@@ -6,9 +6,10 @@ use arc_swap::ArcSwap;
 use sqlx::Row;
 use tauri::{AppHandle, State};
 
+use crate::db::build_pool;
 use crate::error::{AriadneError, ErrorKind};
 use crate::profiles::{self};
-use crate::state::{build_pool, ActiveConnection, AppState, ConnectionInfo};
+use crate::state::{ActiveConnection, AppState, ConnectionInfo};
 
 use super::schema::{empty_cache, spawn_cache_refresh};
 

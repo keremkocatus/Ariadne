@@ -7,8 +7,9 @@
 
 use tauri::{AppHandle, State};
 
-use crate::db::exec::{self, Page, RunArgs, RunResult, PAGE_SIZE};
+use crate::db::exec::{self, RunArgs, PAGE_SIZE};
 use crate::db::touches_schema;
+use crate::db::types::{Page, RunResult};
 use crate::error::AriadneError;
 use crate::state::AppState;
 
