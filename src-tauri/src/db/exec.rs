@@ -65,6 +65,41 @@ impl ExecRegistry {
             .or_insert_with(|| Arc::new(Mutex::new(TabState::new())))
             .clone()
     }
+
+    /// Disconnect'te çağrılır (design 11 §H3): çalışan sorguları iptal eder, açık
+    /// cursor/tx'leri kapatır, registry'yi boşaltır. Kilit beklemez (`try_lock`) —
+    /// hâlâ çalışan bir sorgunun bağlantısı, o sorgu (iptalle) bitince pool'a döner;
+    /// pool kapanışı da sunucu tarafında açık tx'leri rollback eder (leak yok).
+    pub async fn shutdown(&self, pool: &PgPool) {
+        // 1) Çalışan sorguları ayrı bir bağlantıdan iptal et → run_query 57014 ile unwind eder.
+        let pids: Vec<i32> = self.running.iter().map(|e| e.value().1).collect();
+        for pid in pids {
+            if let Ok(mut c) = pool.acquire().await {
+                let _ = sqlx::query("SELECT pg_cancel_backend($1)")
+                    .bind(pid)
+                    .execute(&mut *c)
+                    .await;
+            }
+        }
+        self.running.clear();
+
+        // 2) Tab Arc'larını topla + map'i boşalt (DashMap guard'ı await boyunca tutma).
+        let tabs: Vec<Arc<Mutex<TabState>>> = self.tabs.iter().map(|e| e.value().clone()).collect();
+        self.tabs.clear();
+        for tab in tabs {
+            // Çalışan sorgu kilidi tutuyorsa atla; conn o sorgu bitince zaten bırakılır.
+            if let Ok(mut st) = tab.try_lock() {
+                close_cursor(&mut st).await;
+                if st.tx != TxStatus::Idle {
+                    if let Some(c) = st.conn.as_mut() {
+                        let _ = sqlx::query("ROLLBACK").execute(&mut **c).await;
+                    }
+                    st.tx = TxStatus::Idle;
+                }
+                st.conn = None;
+            }
+        }
+    }
 }
 
 // ---- run_query ----

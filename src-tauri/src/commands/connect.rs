@@ -64,7 +64,8 @@ pub async fn connect(
     Ok(info)
 }
 
-/// Bağlantıyı kapat: pool kapatılır, map'ten silinir. (Çalışan sorgu iptali M3.)
+/// Bağlantıyı kapat: çalışan sorgular iptal edilir, açık cursor/tx'ler kapatılır,
+/// sonra pool kapatılır ve map'ten silinir (design 11 §H3).
 #[tauri::command]
 pub async fn disconnect(
     connection_id: String,
@@ -72,6 +73,8 @@ pub async fn disconnect(
 ) -> Result<(), AriadneError> {
     let conn = state.connections.write().unwrap().remove(&connection_id);
     if let Some(conn) = conn {
+        // Pool'u kapatmadan önce cursor/tx/çalışan sorguları temizle.
+        conn.exec.shutdown(&conn.pool).await;
         conn.pool.close().await;
     }
     Ok(())
