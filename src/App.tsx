@@ -10,7 +10,7 @@ import { EmptyStateCard } from "@/components/query/EmptyStateCard";
 import { SaveTabDialog } from "@/components/query/SaveTabDialog";
 import { Toolbar } from "@/components/layout/Toolbar";
 import { StatusBar } from "@/components/layout/StatusBar";
-import { ResizeHandle } from "@/components/layout/ResizeHandle";
+import { ResizeHandle, HResizeHandle } from "@/components/layout/ResizeHandle";
 import { CommandPalette } from "@/components/layout/CommandPalette";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { saveSqlFile } from "@/lib/fileActions";
@@ -26,7 +26,8 @@ import { getFunctionSource, isAriadneError, type ObjectInfo, type SnapFn } from 
 
 export default function App() {
   const connections = useConnectionStore((s) => s.connections);
-  const { sidebarVisible, sidebarWidth, setSidebarWidth, resultsVisible, setResultsVisible } = useUiStore();
+  const { sidebarVisible, sidebarWidth, setSidebarWidth, resultsVisible, setResultsVisible, resultsHeight, setResultsHeight } =
+    useUiStore();
   const editorFontSize = useUiStore((s) => s.settings.editorFontSize);
 
   const active = useTabsStore((s) => s.active());
@@ -133,7 +134,7 @@ export default function App() {
           <TabBar />
           {active ? (
             <>
-              <div className="relative flex min-h-0 flex-[3] flex-col border-b border-border">
+              <div className="relative flex min-h-0 flex-1 flex-col border-b border-border">
                 {tabConnectionClosed && <ConnectionClosedBanner tabId={active.id} />}
                 <div className="relative min-h-0 flex-1">
                   <SqlEditor
@@ -150,9 +151,13 @@ export default function App() {
                 </div>
               </div>
               {resultsVisible && (
-                <div className="min-h-0 flex-[2] overflow-hidden bg-bg">
-                  <ResultArea tabId={active.id} onFetchMore={() => fetchMore(active.id)} />
-                </div>
+                <>
+                  {/* Editör/sonuç arası dikey resize tutamağı (design 19 §P1-X3 N7). */}
+                  <HResizeHandle height={resultsHeight} onResize={setResultsHeight} />
+                  <div style={{ height: resultsHeight }} className="min-h-0 shrink-0 overflow-hidden bg-bg">
+                    <ResultArea tabId={active.id} onFetchMore={() => fetchMore(active.id)} />
+                  </div>
+                </>
               )}
             </>
           ) : (

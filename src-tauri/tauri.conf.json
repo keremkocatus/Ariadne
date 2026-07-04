@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Ariadne",
+        "title": "Ariadne — PostgreSQL IDE",
         "width": 1200,
         "height": 800,
         "minWidth": 720,

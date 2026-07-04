@@ -27,6 +27,10 @@ interface UiState {
   sidebarWidth: number;
   sidebarTab: SidebarTab;
   resultsVisible: boolean;
+  /// Sonuç panelinin yüksekliği (px, design 19 §P1-X3 N7). Editör üstte kalan alanı
+  /// (flex-1) doldurur; sonuç paneli bu sabit yükseklikte olur, aralarındaki yatay
+  /// tutamak sürüklenerek değişir. Persist edilir.
+  resultsHeight: number;
   paletteOpen: boolean;
   settingsOpen: boolean;
   /// Bağlantı menüsü kontrollü açık mı (design 17 §P1-V1): boş-durum kartındaki
@@ -38,6 +42,7 @@ interface UiState {
   setSidebarTab: (tab: SidebarTab) => void;
   toggleResults: () => void;
   setResultsVisible: (v: boolean) => void;
+  setResultsHeight: (h: number) => void;
   setPaletteOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setConnectMenuOpen: (open: boolean) => void;
@@ -51,6 +56,7 @@ export const useUiStore = create<UiState>()(
       sidebarWidth: 260,
       sidebarTab: "explorer",
       resultsVisible: true,
+      resultsHeight: 280,
       paletteOpen: false,
       settingsOpen: false,
       connectMenuOpen: false,
@@ -60,6 +66,7 @@ export const useUiStore = create<UiState>()(
       setSidebarTab: (tab) => set({ sidebarTab: tab }),
       toggleResults: () => set((s) => ({ resultsVisible: !s.resultsVisible })),
       setResultsVisible: (v) => set({ resultsVisible: v }),
+      setResultsHeight: (h) => set({ resultsHeight: Math.max(80, h) }),
       setPaletteOpen: (open) => set({ paletteOpen: open }),
       setSettingsOpen: (open) => set({ settingsOpen: open }),
       setConnectMenuOpen: (open) => set({ connectMenuOpen: open }),
@@ -74,6 +81,7 @@ export const useUiStore = create<UiState>()(
         sidebarWidth: s.sidebarWidth,
         sidebarTab: s.sidebarTab,
         resultsVisible: s.resultsVisible,
+        resultsHeight: s.resultsHeight,
         settings: s.settings,
       }),
       // Eski persist'te settings yoksa varsayılanla birleştir.
