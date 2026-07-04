@@ -78,11 +78,23 @@ export function testConnection(
 ): Promise<TestResult> {
   return invoke("test_connection", { profile, password });
 }
-export function connect(profileId: string): Promise<ConnectionInfo> {
-  return invoke("connect", { profileId });
+export function connect(
+  profileId: string,
+  databaseOverride?: string,
+): Promise<ConnectionInfo> {
+  return invoke("connect", { profileId, databaseOverride });
 }
 export function disconnect(connectionId: string): Promise<void> {
   return invoke("disconnect", { connectionId });
+}
+
+// ---- Veritabanı listesi (design 15 §P1-U1 "Databases ▸") ----
+export interface DatabaseInfo {
+  name: string;
+  is_current: boolean;
+}
+export function listDatabases(connectionId: string): Promise<DatabaseInfo[]> {
+  return invoke("list_databases", { connectionId });
 }
 
 // ---- Şema (design 03) ----

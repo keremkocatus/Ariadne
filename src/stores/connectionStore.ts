@@ -12,11 +12,14 @@ interface ConnectionState {
   saveProfile: (p: ProfileInput, password?: string) => Promise<ConnectionProfile>;
   deleteProfile: (id: string) => Promise<void>;
 
-  connect: (profileId: string) => Promise<string>;
+  connect: (profileId: string, databaseOverride?: string) => Promise<string>;
   disconnect: (connectionId: string) => Promise<void>;
   setActive: (connectionId: string | null) => void;
 
   activeInfo: () => ConnectionInfo | null;
+  /// (profil, DB) çiftine zaten bağlı bir bağlantı varsa id'sini döndürür (design
+  /// 15 §P1-U1 — aynı DB'ye ikinci pool açmamak için).
+  findConnection: (profileId: string, database: string) => string | null;
 }
 
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
@@ -39,8 +42,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     await get().loadProfiles();
   },
 
-  async connect(profileId) {
-    const info = await api.connect(profileId);
+  async connect(profileId, databaseOverride) {
+    const info = await api.connect(profileId, databaseOverride);
     set((s) => ({
       connections: { ...s.connections, [info.connection_id]: info },
       activeConnectionId: info.connection_id,
@@ -68,5 +71,12 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   activeInfo() {
     const { activeConnectionId, connections } = get();
     return activeConnectionId ? (connections[activeConnectionId] ?? null) : null;
+  },
+
+  findConnection(profileId, database) {
+    const found = Object.values(get().connections).find(
+      (c) => c.profile_id === profileId && c.database === database,
+    );
+    return found?.connection_id ?? null;
   },
 }));

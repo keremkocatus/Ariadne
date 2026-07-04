@@ -58,8 +58,25 @@ function emptyQuery(): QueryState {
   };
 }
 
-function newTab(sql = "SELECT version();", connectionId: string | null = null): Tab {
+function newTab(sql = "", connectionId: string | null = null): Tab {
   return { id: crypto.randomUUID(), title: "Query", sql, connectionId, query: emptyQuery() };
+}
+
+/// Tab "pristine" mi: hiç dokunulmamış (boş SQL) + sonuç yok + idle tx + bekleyen
+/// sayfa/çalışan sorgu yok (design 15 §P1-U1). Üstten bağlantı seçimi pristine
+/// tab'ı yerinde rebind eder (gürültü olmasın); değilse yeni tab açar.
+export function isPristine(tab: Tab): boolean {
+  const q = tab.query;
+  return (
+    tab.sql.trim() === "" &&
+    !q.running &&
+    q.txStatus === "idle" &&
+    !q.hasMore &&
+    q.columns.length === 0 &&
+    q.rows.length === 0 &&
+    q.extra.length === 0 &&
+    !q.error
+  );
 }
 
 interface TabsState {

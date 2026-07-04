@@ -51,7 +51,7 @@ pub async fn test_connection(
 ) -> Result<TestResult, AriadneError> {
     let temp = profile.into_profile_temp();
     let started = Instant::now();
-    let pool = build_pool(&temp, password.as_deref()).await?;
+    let pool = build_pool(&temp, password.as_deref(), None).await?;
     let server_version: String = sqlx::query("SHOW server_version")
         .fetch_one(&pool)
         .await?

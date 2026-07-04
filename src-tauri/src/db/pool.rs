@@ -18,14 +18,18 @@ fn map_ssl(mode: SslMode) -> PgSslMode {
     }
 }
 
+/// `database_override`: verilirse profildeki DB yerine bu DB'ye bağlanır (design 15
+/// §P1-U1 "aynı sunucuda başka DB'ye geç"). Postgres'te DB değiştirmek yeni bir
+/// bağlantı gerektirir; bu yüzden bu bir "ikinci pool açma" yoludur, mutasyon değil.
 pub async fn build_pool(
     profile: &ConnectionProfile,
     password: Option<&str>,
+    database_override: Option<&str>,
 ) -> Result<PgPool, AriadneError> {
     let mut opts = PgConnectOptions::new()
         .host(&profile.host)
         .port(profile.port)
-        .database(&profile.database)
+        .database(database_override.unwrap_or(&profile.database))
         .username(&profile.user)
         .ssl_mode(map_ssl(profile.ssl_mode))
         .application_name("ariadne");

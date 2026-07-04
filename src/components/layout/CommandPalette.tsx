@@ -6,15 +6,15 @@ import { useUiStore } from "@/stores/uiStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSchemaStore } from "@/stores/schemaStore";
 import { useTabsStore } from "@/stores/tabsStore";
+import { connectProfile, focusConnection } from "@/lib/connectionActions";
 import { refreshSchema } from "@/lib/api";
 
-// Aktif tab'ı verilen bağlantıya bağlar — getState() ile TIKLAMA ANINDA okur
-// (destructure edilmiş activeTabId değil), çünkü "Connect: profile" async connect()
-// sonrası .then() içinde çağrılır; o sırada kullanıcı başka bir tab'a geçmiş olabilir.
+// "Bind this tab to …" AÇIK/bilinçli eski davranış (design 15 §P1-U1): aktif tab'ı
+// verilen bağlantıya rebind eder — çalışan sorgu/açık tx/bekleyen sayfa varsa reddedilir.
 function bindTab(connectionId: string) {
   const tabId = useTabsStore.getState().activeTabId;
   if (tabId && !useTabsStore.getState().setConnection(tabId, connectionId)) {
-    toast.error("Can't switch this tab's connection", {
+    toast.error("Can't rebind this tab's connection", {
       description: "Finish the running query, open transaction, or pending results first.",
     });
   }
@@ -90,28 +90,32 @@ export function CommandPalette() {
               <Command.Group heading="Connections" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-fg-muted">
                 {Object.values(connections).map((c) => (
                   <Item
-                    key={`conn-${c.connection_id}`}
-                    value={`switch ${c.database} ${c.user}`}
-                    onSelect={() => run(() => bindTab(c.connection_id))}
+                    key={`open-${c.connection_id}`}
+                    value={`open tab on ${c.database} ${c.user}`}
+                    onSelect={() => run(() => focusConnection(c.connection_id))}
                   >
-                    Switch to {c.database}
+                    Open tab on {c.database}
                     {c.connection_id === tabConnectionId ? " (active)" : ""}
                   </Item>
                 ))}
+                {Object.values(connections)
+                  .filter((c) => c.connection_id !== tabConnectionId)
+                  .map((c) => (
+                    <Item
+                      key={`bind-${c.connection_id}`}
+                      value={`bind this tab to ${c.database} ${c.user}`}
+                      onSelect={() => run(() => bindTab(c.connection_id))}
+                    >
+                      Bind this tab to {c.database}
+                    </Item>
+                  ))}
                 {profiles
                   .filter((p) => !Object.values(connections).some((c) => c.profile_id === p.id))
                   .map((p) => (
                     <Item
                       key={`profile-${p.id}`}
                       value={`connect ${p.name} ${p.database}`}
-                      onSelect={() =>
-                        run(() => {
-                          void useConnectionStore
-                            .getState()
-                            .connect(p.id)
-                            .then((id) => bindTab(id));
-                        })
-                      }
+                      onSelect={() => run(() => void connectProfile(p.id))}
                     >
                       Connect: {p.name}
                     </Item>

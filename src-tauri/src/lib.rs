@@ -55,6 +55,7 @@ pub fn run() {
             commands::profile::test_connection,
             commands::connect::connect,
             commands::connect::disconnect,
+            commands::connect::list_databases,
             commands::schema::get_schema_snapshot,
             commands::schema::refresh_schema,
             commands::query::run_query,

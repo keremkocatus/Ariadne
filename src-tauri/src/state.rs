@@ -50,8 +50,8 @@ pub struct ActiveConnection {
     pub profile_id: ProfileId,
     pub pool: PgPool,
     pub schema_cache: ArcSwap<SchemaCache>,
-    /// connect anındaki sunucu bilgisi; şimdilik frontend'e ayrıca döner.
-    #[allow(dead_code)]
+    /// connect anındaki sunucu bilgisi (database/user/color) — `list_databases`
+    /// gibi komutlar bağlantının hangi DB'de olduğunu buradan okur.
     pub info: ConnectionInfo,
     /// Cursor'lar, tab session'ları, iptal için PID'ler (design 05).
     pub exec: crate::db::exec::ExecRegistry,
