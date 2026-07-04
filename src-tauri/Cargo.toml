@@ -1,6 +1,6 @@
 [package]
 name = "ariadne"
-version = "0.0.0"
+version = "0.0.1"
 description = "Local-first PostgreSQL IDE"
 authors = ["Kerem"]
 edition = "2021"

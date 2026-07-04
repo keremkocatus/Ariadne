@@ -36,7 +36,7 @@ export function StatusBar() {
       ) : (
         <span>no connection</span>
       )}
-      <span className="ml-auto">v0.0.0</span>
+      <span className="ml-auto">v0.0.1</span>
     </footer>
   );
 }

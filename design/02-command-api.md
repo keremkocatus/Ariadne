@@ -81,9 +81,9 @@ interface ConnectionInfo {
 |---|---|---|
 | `run_query` | `{ connection_id, sql, tab_id, max_rows_per_page?: number, confirmed?: boolean }` | `RunResult` |
 | `fetch_page` | `{ query_id }` | `Page` — cursor'dan sonraki sayfa |
-| `cancel_query` | `{ query_id }` | `void` — pg_cancel_backend yolu, bkz. 05 |
-| `kill_query` | `{ query_id }` | `void` — pg_terminate_backend; cancel etki etmezse (Faz 1, bkz. 05 §9) |
-| `close_result` | `{ query_id }` | `void` — cursor + tx kapatılır (tab kapanınca çağrılır) |
+| `cancel_query` | `{ connection_id, query_id }` | `void` — pg_cancel_backend yolu, bkz. 05 |
+| `force_kill_query` | `{ connection_id, query_id }` | `bool` — pg_terminate_backend; cancel etki etmezse (design 17 §P1-V4; pid `query_id`'den sunucuda çözülür — planlanan `kill_query`'nin uygulanmış hali) |
+| `close_result` | `{ connection_id, tab_id }` | `void` — cursor + tx kapatılır (tab kapanınca çağrılır) |
 | `export_result_csv` | `{ connection_id, sql, file_path, format: "csv" \| "tsv" }` | `{ rows_written }` — `COPY (sql) TO STDOUT` server-side stream, tam sonuç (Faz 1; Faz 0'da export frontend'de fetch edilmiş satırlardan, bkz. 07) |
 
 ```ts
@@ -137,6 +137,13 @@ interface CompletionItem {
 | `list_roles` | `{ connection_id }` | `RoleInfo[]` — `{ name, is_superuser, can_login, create_db, create_role, replication, valid_until?, member_of[] }`; `pg_roles` + `pg_auth_members`, salt-okunur, cache dışı |
 | `read_text_file` | `{ path }` | `string` — .sql aç. `path` yalnız native diyalogdan gelir (full-fs izni yok) |
 | `write_text_file` | `{ path, content }` | `void` — .sql kaydet. Aynı kısıt |
+
+### Sunucu aktivitesi (detay: 17 §P1-V4)
+
+| Command | Request | Response |
+|---|---|---|
+| `list_activity` | `{ connection_id }` | `ActivityRow[]` — `{ pid, datname?, usename?, application_name, client_addr?, state?, wait_event?, backend_start?, query_start?, duration_ms?, query, is_self, is_app }`; `pg_stat_activity` client backend'leri, cluster-geneli, cache dışı |
+| `signal_backend` | `{ connection_id, pid, mode: "cancel" \| "terminate" }` | `bool` — pg_cancel/terminate_backend; yetki hatası SQLSTATE ile normal hata yolundan akar |
 
 Native dosya diyaloğu `@tauri-apps/plugin-dialog` ile (capability `dialog:default`);
 okuma/yazma yukarıdaki kendi komutlarımızla — bilinçli olarak `tauri-plugin-fs`

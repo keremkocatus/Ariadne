@@ -1,5 +1,15 @@
 # 17 — Senaryo-Türevi Öneriler Derin Planı (design/16 Ö1–Ö8 → P1-V milestone'ları)
 
+> **DURUM (2026-07-04): P1-V1…V4'ün HEPSİ tamamlandı ve `p1-u-gui-backlog` dalına
+> commit'lendi** — bu sürümle uygulama **v0.0.1**'e yükseltildi. Commit'ler:
+> V1 (RO rozeti + boş-durum kartı + bitiş sinyali), V2 (grid zengin kopyalama),
+> V3 (açılış reconnect daveti + tab remap), V4 (Activity paneli + signal_backend
+> + tab force-kill). Her commit gate'i geçti (40 rust testi, clippy -D warnings,
+> fmt, tsc, vite build). Sözleşme değişiklikleri design/02'ye işlendi.
+> **Canlı DB elle testi henüz yapılmadı** (kullanıcı ekran başında değildi); ilk
+> fırsatta duman testi yapılmalı (V4 için iki bağlantıdan pg_sleep + cancel/kill).
+> Ö6/Ö8 §6'da ertelendi (bilinçli).
+
 > Tarih: 2026-07-04. Girdi: design/16'nın Ö1–Ö8 önerileri. Bağlam: design/16 §4
 > "Hemen" sınıfını (Ö1/Ö5/Ö7) U-milestone'larına iliştirmeyi öngörmüştü, ama
 > **P1-U1…U4 bu ekler olmadan tamamlandı** — Ö'lerin tamamı hâlâ açık. Bu dosya

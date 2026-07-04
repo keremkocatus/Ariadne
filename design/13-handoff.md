@@ -6,6 +6,10 @@
 
 ## 1. Şu anki durum (main branch)
 
+> **v0.0.1 (2026-07-04):** P1-M1 + GUI backlog (P1-U1…U4) + senaryo-türevi paket
+> (P1-V1…V4) `p1-u-gui-backlog` dalında tamam. Ayrıntı §3. Aşağısı P1-M1 dönemine
+> ait tarihsel not; en güncel "sırada ne var" için §3'e bakın.
+
 - **Faz 0 (M0–M3) tamamlandı** ve **design/11 refactor + sertleştirme main'e merge edildi** (merge commit `Merge phase0-refactor: …`).
 - **Faz 1, P1-M1 (multi-connection eşzamanlı + hızlı geçiş) tamamlandı** (2026-07-04, commit `feat(P1-M1): …`). Tab artık kalıcı `connectionId` taşıyor; Explorer/StatusBar/CommandPalette/ConnectionMenu/Toolbar/TabBar/Monaco completion+peek hepsi aktif *tab'ın* bağlantısını takip ediyor (global `activeConnectionId` yalnız "yeni tab" varsayılanı). Yeni `ConnectionClosedBanner` + Ctrl+K/menü "switch connection" ile disconnect sonrası tab yeniden bağlanabiliyor. Yüksek-efor 5-açılı paralel kod incelemesi 8 gerçek bulgu çıkardı ve hepsi düzeltildi — en ciddisi: bağlantı bir açık tx ortasında koparsa tab'ın sonsuza dek kilitlenmesi (`releaseTabsForConnection` ile çözüldü) ve `setConnection`'ın açık bir sunucu-cursor'u (hasMore) görmezden gelip çapraz-bağlantı fetchMore/closeResult'a yol açması.
 - Kapanış kapısı **yeşil**: 39 Rust unit testi (3 canlı-DB testi `--ignored`), `cargo clippy --all-targets -- -D warnings` temiz, `cargo fmt --check` temiz, `tsc --noEmit` temiz, `npm run build` (vite) geçiyor.
@@ -32,12 +36,14 @@ Kullanıcı önceliğiyle sıralı (Q&A 2026-07-04). Her milestone "çalışan u
 1. ~~**P1-M1 — Multi-connection eşzamanlı + hızlı geçiş**~~ ✅ **tamamlandı**, elle test edildi (yukarı bakın).
 2. ~~**P1-M1.5 — design/14'teki GUI backlog'unun derin planlaması.**~~ ✅ **Plan design/15**, senaryolar design/16.
    ~~**P1-U1…U4 — GUI backlog uygulaması.**~~ ✅ **HEPSİ tamamlandı (2026-07-04)**, `p1-u-gui-backlog` dalında 6 commit (U1, U2, U3a, U3b, U4a, U4b). Gate her commit'te yeşil. **Kalan iş: dalı main'e merge et + canlı DB duman testi** (`npm run tauri dev`) — U1 iki-DB akışı, seçim-run + marker, peek index/trigger, Alt+F1 overlay, sağ-tık filtre, roller, .sql aç/kaydet+dirty. Ö1/Ö6 (boş-durum kartı, yeni-tab başlangıç içeriği) ve Ö2/Ö3/Ö4/Ö7/Ö8 uygulanmadı — **derin teknik planı design/17'de (P1-V1…V4; Ö6/Ö8 orada ertelenmiş)**.
-3. **P1-V1…V3 — senaryo-türevi hızlı kazanımlar** (design/17): V1 görünürlük paketi (RO rozeti + boş-durum kartı + bitiş sinyali, frontend-only), V2 grid zengin kopyalama, V3 açılışta tek-tık reconnect + tab remap. Toplam 2–3 küçük oturum; M2'ye bağımlılıkları yok.
-4. **P1-M2 — Yerel SQLite depo + cache disk persist** (design 12 §P1-M2). `rusqlite` + `store/` modülü; cache build-girdilerini `postcard` ile diske yaz, `connect`'te load-then-refresh. Bu depo M4 history'nin de altyapısı. Not: U4 ayarları şimdilik localStorage'da; liste büyürse bu depoya taşınır.
+3. ~~**P1-V1…V4 — senaryo-türevi kazanımlar** (design/17)~~ ✅ **HEPSİ tamamlandı (2026-07-04)**, `p1-u-gui-backlog` dalında 4 commit (V1 görünürlük paketi, V2 grid zengin kopyalama, V3 açılış reconnect daveti + remap, V4 Activity paneli + signal_backend + tab force-kill). Gate her commit'te yeşil (40 rust testi). **Bu sürümle uygulama v0.0.1'e yükseltildi.** Kalan iş: dalı main'e merge + canlı DB duman testi (özellikle V4: iki bağlantıdan pg_sleep, cancel→force-kill, Activity terminate). Ö6/Ö8 design/17 §6'da ertelendi.
+4. **P1-M2 — Yerel SQLite depo + cache disk persist** (design 12 §P1-M2). **Buradan devam et.** `rusqlite` + `store/` modülü; cache build-girdilerini `postcard` ile diske yaz, `connect`'te load-then-refresh. Bu depo M4 history'nin de altyapısı. Not: U4 ayarları + V3 lastSession eşlemesi şimdilik localStorage'da (`ariadne-ui`, `ariadne-connections`); liste büyürse bu depoya taşınabilir.
 5. **P1-M3 — Okunaklı EXPLAIN (ANALYZE)** (design 12 §P1-M3). `classify` zaten `ExplainStmt` görüyor; `StatementResult::Explain{plan_json}` + ağaç UI; DML'de ANALYZE otomatik `BEGIN…ROLLBACK` sarmalı.
-6. **P1-V4 — Activity paneli + cancel/kill backend'i** (design/17 §P1-V4) — design/12 M5'in "force kill" kalemini de üstlenir. **P1-M4 — Query history + snippets**, **P1-M5 — kalan konfor paketi** (tam CSV export, hücre tam-değer, frequency ranking, açık tema).
+6. **P1-M4 — Query history + snippets**, **P1-M5 — kalan konfor paketi** (tam CSV export, hücre tam-değer, frequency ranking, açık tema; force-kill ARTIK V4'te uygulandı → M5'ten düşülebilir).
 
-Sözleşme değişiklikleri (02'ye işlenecek) özeti design/12 §4'te.
+Sözleşme değişiklikleri (02'ye işlendi): V4 `list_activity`/`signal_backend`/
+`force_kill_query`, V3 `ariadne-connections` localStorage anahtarı, V1
+`longQueryNoticeSeconds` ayarı. Kalan M-track özeti design/12 §4'te.
 
 ## 4. Açık kararlar / dikkat edilecekler
 
@@ -48,11 +54,11 @@ Sözleşme değişiklikleri (02'ye işlenecek) özeti design/12 §4'te.
 
 ## 5. Yeni oturum "start here"
 
-> "design/13'ü oku; `p1-u-gui-backlog` dalını (P1-U1…U4 tamam) main'e merge et ve
-> `npm run tauri dev` ile canlı DB duman testi yap (iki-DB switch, seçim-run+marker,
-> peek index/trigger, Alt+F1 overlay, sağ-tık filtre, roller, .sql aç/kaydet).
-> Sonra **design/17'deki P1-V1'den başla** (V1 görünürlük paketi → V2 grid
-> kopyalama → V3 reconnect daveti), ardından Faz 1 **P1-M2**'ye (yerel SQLite
-> depo, design/12 §P1-M2) geç. V4 (Activity + kill) M3 sonrasına planlı."
+> "design/13'ü oku; `p1-u-gui-backlog` dalını (P1-U1…U4 + P1-V1…V4 tamam, v0.0.1)
+> main'e merge et ve `npm run tauri dev` ile canlı DB duman testi yap: U-track
+> (iki-DB switch, seçim-run+marker, peek, Alt+F1, filtreler, roller, .sql) + V-track
+> (RO rozeti, boş-durum kartı, arka-plan bitiş toast'ı, grid sağ-tık kopyalama,
+> kapat-aç→reconnect daveti, Activity paneli + terminate, Cancel→Force kill).
+> Sonra Faz 1 **P1-M2**'ye (yerel SQLite depo, design/12 §P1-M2) geç."
 
 Memory: `m0-status.md` güncel durumu tutuyor.
