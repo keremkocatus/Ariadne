@@ -51,8 +51,10 @@ smallvec = "1"
 dashmap = "6"
 # fetched_at zaman damgası + "cache: 2 dk önce" göstergesi.
 chrono = { version = "0.4", features = ["serde"] }
-# OS keychain — Windows Credential Manager öncelikli (design 06 §2).
-keyring = { version = "3", features = ["windows-native"] }
+# OS keychain. One backend feature per platform is required — without it keyring
+# silently falls back to a mock in-memory store and passwords are never persisted
+# (this broke macOS builds). Features are additive and internally platform-gated.
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
 
 # Yapılandırılmış logging (design 01 §6): konsol + günlük dönen dosya (7 gün).
 # Şifre/connection string HİÇBİR seviyede loglanmaz (design 06 §2 redaksiyon).
