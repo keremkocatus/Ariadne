@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSchemaStore } from "@/stores/schemaStore";
 import { useTabsStore } from "@/stores/tabsStore";
@@ -62,7 +63,7 @@ function StatsStrip({ stats }: { stats: DbStats }) {
   return (
     <span
       className="flex items-center gap-2 tabular-nums"
-      title="Client backends vs max_connections · shared-buffer cache hit ratio · on-disk database size (refreshed every 30s)"
+      title="Client backends vs max_connections · shared-buffer cache hit ratio · on-disk database size (refreshed every 60s while the window is focused)"
     >
       <span>⚡ {conns}</span>
       {cache && <span>· {cache}</span>}
@@ -71,9 +72,13 @@ function StatsStrip({ stats }: { stats: DbStats }) {
   );
 }
 
-/// Fetches the active connection's DB stats every 30s. Null when there's no live
-/// connection → the strip is hidden. Reset when the connection/tab changes, taking a
-/// sample immediately. Errors are swallowed silently (the strip hides; no fake value).
+/// Fetches the active connection's DB stats every 60s — but only while the window is
+/// focused AND visible. An unpaused poll is what kept one DB connection perpetually
+/// warm per open window (it always beat the pool's 5-minute idle timeout), so a
+/// backgrounded window would hold a server connection forever. Both signals are
+/// needed: visibilitychange misses an unfocused-but-visible window, focus misses a
+/// hidden one. Resuming takes a sample immediately. Errors are swallowed silently
+/// (the strip hides; no fake value).
 function useDbStats(connectionId: string | null): DbStats | null {
   const [stats, setStats] = useState<DbStats | null>(null);
   useEffect(() => {
@@ -82,17 +87,45 @@ function useDbStats(connectionId: string | null): DbStats | null {
       return;
     }
     let cancelled = false;
+    let focused = document.hasFocus();
+    let visible = !document.hidden;
+    let intervalId: number | null = null;
+
     const tick = () => {
       dbStats(connectionId)
         .then((s) => !cancelled && setStats(s))
         .catch(() => !cancelled && setStats(null));
     };
+    const start = () => {
+      if (intervalId !== null || cancelled || !focused || !visible) return;
+      tick();
+      intervalId = window.setInterval(tick, 60_000);
+    };
+    const stop = () => {
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+    const update = () => (focused && visible ? start() : stop());
+
+    const onVisibility = () => {
+      visible = !document.hidden;
+      update();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    const unlistenPromise = getCurrentWindow().onFocusChanged(({ payload }) => {
+      focused = payload;
+      update();
+    });
+
     setStats(null);
-    tick();
-    const id = window.setInterval(tick, 30_000);
+    start();
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+      void unlistenPromise.then((un) => un()).catch(() => {});
     };
   }, [connectionId]);
   return stats;

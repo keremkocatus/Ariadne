@@ -43,7 +43,10 @@ pub async fn build_pool(
     let read_only = profile.read_only;
 
     PgPoolOptions::new()
-        .max_connections(5)
+        // 3 is enough headroom for the parallel catalog queries of a schema load;
+        // every extra slot is a potential physical connection against a shared DB's
+        // max_connections budget.
+        .max_connections(3)
         .min_connections(0)
         .acquire_timeout(Duration::from_secs(10))
         .idle_timeout(Duration::from_secs(300))
