@@ -25,7 +25,12 @@ interface Props {
 
 export function ProfileDialog({ open, onOpenChange, existing, onSaved }: Props) {
   const saveProfile = useConnectionStore((s) => s.saveProfile);
+  const profiles = useConnectionStore((s) => s.profiles);
+  const hasLiveConnections = useConnectionStore(
+    (s) => !!existing && Object.values(s.connections).some((c) => c.profile_id === existing.id),
+  );
   const [busy, setBusy] = useState(false);
+  const [clearPassword, setClearPassword] = useState(false);
   const [f, setF] = useState(() => initialForm(existing));
 
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) =>
@@ -66,9 +71,19 @@ export function ProfileDialog({ open, onOpenChange, existing, onSaved }: Props) 
       toast.error("Host, database and user are required");
       return;
     }
+    // Same fallback as toInput(): a blank name becomes user@host.
+    const name = f.name.trim() || `${f.user}@${f.host}`;
+    if (profiles.some((p) => p.name === name && p.id !== existing?.id)) {
+      toast.error(`A profile named "${name}" already exists`);
+      return;
+    }
     setBusy(true);
     try {
-      const saved = await saveProfile(toInput(), f.password || undefined);
+      const saved = await saveProfile(
+        toInput(),
+        clearPassword ? undefined : f.password || undefined,
+        clearPassword,
+      );
       toast.success("Profile saved");
       onOpenChange(false);
       if (connectAfter) onSaved?.(saved.id);
@@ -84,6 +99,11 @@ export function ProfileDialog({ open, onOpenChange, existing, onSaved }: Props) 
       <DialogContent>
         <DialogTitle>{existing ? "Edit connection" : "New connection"}</DialogTitle>
         <DialogDescription>Password is stored in the OS keychain, never on disk.</DialogDescription>
+        {hasLiveConnections && (
+          <p className="mt-2 rounded border border-border bg-bg px-2 py-1.5 text-[11px] text-fg-muted">
+            This profile has active connections — changes apply on the next connect.
+          </p>
+        )}
 
         <div className="mt-3 grid grid-cols-2 gap-2.5">
           <Field label="Name" className="col-span-2">
@@ -104,10 +124,21 @@ export function ProfileDialog({ open, onOpenChange, existing, onSaved }: Props) 
           <Field label="Password">
             <Input
               type="password"
-              value={f.password}
+              value={clearPassword ? "" : f.password}
+              disabled={clearPassword}
               onChange={(e) => set("password", e.target.value)}
               placeholder={existing ? "(leave blank to keep)" : ""}
             />
+            {existing && (
+              <label className="mt-1 flex items-center gap-1.5 text-[11px] text-fg-muted">
+                <input
+                  type="checkbox"
+                  checked={clearPassword}
+                  onChange={(e) => setClearPassword(e.target.checked)}
+                />
+                Clear stored password
+              </label>
+            )}
           </Field>
           <Field label="SSL mode">
             <select

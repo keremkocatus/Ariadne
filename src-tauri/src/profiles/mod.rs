@@ -131,11 +131,14 @@ impl ProfileStore {
             .cloned()
     }
 
-    /// Saves the profile (create/update) and, if a password is given, writes it to the keyring.
+    /// Saves the profile (create/update). `clear_password` removes the stored keyring
+    /// entry (there is no other way to drop a saved password — an absent password
+    /// means "keep"); otherwise a given password is written to the keyring.
     pub fn save(
         &self,
         input: ProfileInput,
         password: Option<String>,
+        clear_password: bool,
     ) -> Result<ConnectionProfile, AriadneError> {
         let id = input
             .id
@@ -152,7 +155,9 @@ impl ProfileStore {
         }
         self.persist()?;
 
-        if let Some(pw) = password {
+        if clear_password {
+            delete_password(&id)?;
+        } else if let Some(pw) = password {
             set_password(&id, &pw)?;
         }
         Ok(profile)
@@ -165,8 +170,11 @@ impl ProfileStore {
             list.retain(|p| p.id != id);
         }
         self.persist()?;
-        // Not an error if there's no keyring entry.
-        let _ = delete_password(id);
+        // NoEntry is already treated as success inside delete_password; anything else
+        // (locked/unavailable keychain) leaves an orphaned credential — worth a trace.
+        if let Err(e) = delete_password(id) {
+            tracing::warn!(error = %e.message, "keyring delete failed; credential may be orphaned");
+        }
         Ok(())
     }
 
@@ -210,4 +218,78 @@ pub fn delete_password(id: &str) -> Result<(), AriadneError> {
 
 fn keyring_err(e: keyring::Error) -> AriadneError {
     AriadneError::new(ErrorKind::KeyringError, format!("keyring: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A store rooted in a unique temp dir. Passwords are never passed, so the OS
+    /// keyring is not touched (except delete on a random id, which is NoEntry → Ok).
+    fn temp_store() -> (ProfileStore, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("ariadne-test-{}", uuid::Uuid::new_v4()));
+        (ProfileStore::load(dir.clone()), dir)
+    }
+
+    fn input(id: Option<&str>, name: &str) -> ProfileInput {
+        ProfileInput {
+            id: id.map(String::from),
+            name: name.into(),
+            color: None,
+            host: "localhost".into(),
+            port: 5432,
+            database: "postgres".into(),
+            user: "postgres".into(),
+            ssl_mode: SslMode::Prefer,
+            statement_timeout_ms: None,
+            read_only: false,
+            options: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn save_new_assigns_id_and_persists() {
+        let (store, dir) = temp_store();
+        let saved = store.save(input(None, "a"), None, false).unwrap();
+        assert!(!saved.id.is_empty());
+        assert_eq!(store.list().len(), 1);
+        // Round-trip: a fresh store from the same dir sees the profile.
+        let reloaded = ProfileStore::load(dir.clone());
+        assert_eq!(reloaded.list().len(), 1);
+        assert_eq!(reloaded.get(&saved.id).unwrap().name, "a");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_with_id_updates_in_place() {
+        let (store, dir) = temp_store();
+        let saved = store.save(input(None, "a"), None, false).unwrap();
+        let updated = store
+            .save(input(Some(&saved.id), "renamed"), None, false)
+            .unwrap();
+        assert_eq!(updated.id, saved.id);
+        let list = store.list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "renamed");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn delete_removes_profile() {
+        let (store, dir) = temp_store();
+        let saved = store.save(input(None, "a"), None, false).unwrap();
+        store.delete(&saved.id).unwrap();
+        assert!(store.list().is_empty());
+        assert!(ProfileStore::load(dir.clone()).list().is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn clear_password_on_unknown_id_is_ok() {
+        let (store, dir) = temp_store();
+        // No stored credential for a fresh uuid: delete inside save must be NoEntry → Ok.
+        let saved = store.save(input(None, "a"), None, true).unwrap();
+        assert_eq!(store.get(&saved.id).unwrap().name, "a");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

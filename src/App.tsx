@@ -73,7 +73,11 @@ export default function App() {
   // Startup reconnect invite once profiles load. offerReconnect is once-guarded
   // internally; silent if there are no matching restored tabs.
   useEffect(() => {
-    void useConnectionStore.getState().loadProfiles().then(offerReconnect);
+    void useConnectionStore
+      .getState()
+      .loadProfiles()
+      .then(offerReconnect)
+      .catch(() => toast.error("Could not load connection profiles"));
     checkForUpdateOnStartup();
   }, []);
 

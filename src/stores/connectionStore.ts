@@ -19,7 +19,11 @@ interface ConnectionState {
   lastSession: SessionMap;
 
   loadProfiles: () => Promise<void>;
-  saveProfile: (p: ProfileInput, password?: string) => Promise<ConnectionProfile>;
+  saveProfile: (
+    p: ProfileInput,
+    password?: string,
+    clearPassword?: boolean,
+  ) => Promise<ConnectionProfile>;
   deleteProfile: (id: string) => Promise<void>;
 
   connect: (profileId: string, databaseOverride?: string) => Promise<string>;
@@ -49,8 +53,8 @@ export const useConnectionStore = create<ConnectionState>()(
         set({ profiles: await api.listProfiles() });
       },
 
-      async saveProfile(p, password) {
-        const saved = await api.saveProfile(p, password);
+      async saveProfile(p, password, clearPassword) {
+        const saved = await api.saveProfile(p, password, clearPassword);
         await get().loadProfiles();
         return saved;
       },

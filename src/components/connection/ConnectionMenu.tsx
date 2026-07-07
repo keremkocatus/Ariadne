@@ -1,17 +1,26 @@
 import { useEffect, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ChevronDown, ChevronRight, Database, Pencil, Plus, Plug, Unplug } from "lucide-react";
+import { ChevronDown, ChevronRight, Database, Pencil, Plus, Plug, Trash2, Unplug } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useTabsStore } from "@/stores/tabsStore";
 import { useUiStore } from "@/stores/uiStore";
-import { listDatabases, type ConnectionInfo, type ConnectionProfile, type DatabaseInfo } from "@/lib/api";
+import {
+  isAriadneError,
+  listDatabases,
+  type ConnectionInfo,
+  type ConnectionProfile,
+  type DatabaseInfo,
+} from "@/lib/api";
 import { connectProfile, focusConnection } from "@/lib/connectionActions";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { ProfileDialog } from "./ProfileDialog";
 import { RoBadge } from "./RoBadge";
 
 export function ConnectionMenu() {
-  const { profiles, connections, loadProfiles, disconnect } = useConnectionStore();
+  const { profiles, connections, loadProfiles, disconnect, deleteProfile } = useConnectionStore();
   // The button/label/highlight reflect the connection the active TAB is actually
   // bound to, not the global activeConnectionId — the same source as StatusBar.
   const tabConnectionId = useTabsStore((s) => s.active()?.connectionId ?? null);
@@ -23,6 +32,34 @@ export function ConnectionMenu() {
   const setMenuOpen = useUiStore((s) => s.setConnectMenuOpen);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ConnectionProfile | null>(null);
+  const [deleting, setDeleting] = useState<ConnectionProfile | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  // Live connections of the profile pending deletion — closed as part of delete.
+  const deletingLive = deleting
+    ? Object.values(connections).filter((c) => c.profile_id === deleting.id)
+    : [];
+
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    try {
+      for (const c of deletingLive) {
+        await disconnect(c.connection_id);
+        // Release the tx/running state of the attached tabs (same as manual disconnect).
+        useTabsStore.getState().releaseTabsForConnection(c.connection_id);
+      }
+      await deleteProfile(deleting.id);
+      toast.success(`Deleted "${deleting.name}"`);
+      setDeleting(null);
+    } catch (e) {
+      toast.error("Could not delete profile", {
+        description: isAriadneError(e) ? e.message : String(e),
+      });
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
 
   useEffect(() => {
     void loadProfiles();
@@ -115,16 +152,25 @@ export function ConnectionMenu() {
                     {p.user}@{p.host}
                   </span>
                 </button>
-                <button
-                  title="Edit"
-                  className="shrink-0 text-fg-muted hover:text-fg"
-                  onClick={() => {
-                    setEditing(p);
-                    setDialogOpen(true);
-                  }}
-                >
-                  <Pencil size={12} />
-                </button>
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    title="Edit"
+                    className="text-fg-muted hover:text-fg"
+                    onClick={() => {
+                      setEditing(p);
+                      setDialogOpen(true);
+                    }}
+                  >
+                    <Pencil size={12} />
+                  </button>
+                  <button
+                    title="Delete"
+                    className="text-fg-muted hover:text-danger"
+                    onClick={() => setDeleting(p)}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
               </div>
             ))}
 
@@ -142,12 +188,37 @@ export function ConnectionMenu() {
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
 
-      <ProfileDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        existing={editing}
-        onSaved={(id) => void connectProfile(id)}
-      />
+      {/* Mounted only while open so each open re-initializes the form from `existing`
+          (a permanently mounted dialog kept stale values across edit/new switches). */}
+      {dialogOpen && (
+        <ProfileDialog
+          open
+          onOpenChange={setDialogOpen}
+          existing={editing}
+          onSaved={(id) => void connectProfile(id)}
+        />
+      )}
+
+      {deleting && (
+        <Dialog open onOpenChange={(o) => !o && !deleteBusy && setDeleting(null)}>
+          <DialogContent className="w-[400px]">
+            <DialogTitle>Delete connection profile</DialogTitle>
+            <DialogDescription>
+              "{deleting.name}" and its stored password will be removed.
+              {deletingLive.length > 0 &&
+                ` ${deletingLive.length} active connection${deletingLive.length > 1 ? "s" : ""} to this profile will be closed.`}
+            </DialogDescription>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button onClick={() => setDeleting(null)} disabled={deleteBusy}>
+                Cancel
+              </Button>
+              <Button variant="danger" onClick={() => void confirmDelete()} disabled={deleteBusy}>
+                {deleteBusy ? "Deleting…" : "Delete"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </>
   );
 }

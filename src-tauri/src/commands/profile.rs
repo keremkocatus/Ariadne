@@ -19,14 +19,17 @@ pub async fn list_profiles(
 }
 
 /// Saves the profile (create/update); if a password is given it goes to the keyring,
-/// never to JSON.
+/// never to JSON. `clear_password` drops the stored keyring entry instead.
 #[tauri::command]
 pub async fn save_profile(
     profile: ProfileInput,
     password: Option<String>,
+    clear_password: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<ConnectionProfile, AriadneError> {
-    state.profiles.save(profile, password)
+    state
+        .profiles
+        .save(profile, password, clear_password.unwrap_or(false))
 }
 
 #[tauri::command]

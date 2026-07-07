@@ -66,8 +66,9 @@ export function listProfiles(): Promise<ConnectionProfile[]> {
 export function saveProfile(
   profile: ProfileInput,
   password?: string,
+  clearPassword?: boolean,
 ): Promise<ConnectionProfile> {
-  return invoke("save_profile", { profile, password });
+  return invoke("save_profile", { profile, password, clearPassword });
 }
 export function deleteProfile(profileId: string): Promise<void> {
   return invoke("delete_profile", { profileId });
