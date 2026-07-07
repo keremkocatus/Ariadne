@@ -40,6 +40,8 @@ export interface ConnectionProfile {
   ssl_mode: SslMode;
   statement_timeout_ms?: number | null;
   read_only: boolean;
+  /** Per-profile pool size; null → default (3). Clamped to 1-10 backend-side. */
+  max_pool_connections?: number | null;
   options: Record<string, string>;
 }
 

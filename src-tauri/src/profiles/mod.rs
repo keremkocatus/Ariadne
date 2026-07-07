@@ -43,6 +43,9 @@ pub struct ConnectionProfile {
     pub statement_timeout_ms: Option<u64>,
     #[serde(default)]
     pub read_only: bool,
+    /// Per-profile pool size; None → the default (3). Clamped to 1..=10 at pool build.
+    #[serde(default)]
+    pub max_pool_connections: Option<u32>,
     #[serde(default)]
     pub options: HashMap<String, String>,
 }
@@ -71,6 +74,8 @@ pub struct ProfileInput {
     #[serde(default)]
     pub read_only: bool,
     #[serde(default)]
+    pub max_pool_connections: Option<u32>,
+    #[serde(default)]
     pub options: HashMap<String, String>,
 }
 
@@ -93,6 +98,7 @@ impl ProfileInput {
             ssl_mode: self.ssl_mode,
             statement_timeout_ms: self.statement_timeout_ms,
             read_only: self.read_only,
+            max_pool_connections: self.max_pool_connections,
             options: self.options,
         }
     }
@@ -243,6 +249,7 @@ mod tests {
             ssl_mode: SslMode::Prefer,
             statement_timeout_ms: None,
             read_only: false,
+            max_pool_connections: None,
             options: HashMap::new(),
         }
     }

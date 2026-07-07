@@ -23,7 +23,8 @@ modules are plain Rust and are unit-tested without a UI.
 
 - **`pool.rs`** builds a `PgPool` from a profile. Every new connection gets
   `application_name = 'ariadne'`, an optional `statement_timeout`, and
-  `default_transaction_read_only = on` for read-only profiles.
+  `default_transaction_read_only = on` for read-only profiles. Pool size defaults
+  to 3 and is a per-profile setting (clamped to 1–10).
 - **`classify.rs`** classifies a statement via the `pg_query` AST: does it return rows,
   is it a destructive DML without a `WHERE` clause, does it transition transaction
   state. Pure functions.
@@ -35,7 +36,9 @@ modules are plain Rust and are unit-tested without a UI.
   - **Cursored execution.** The last row-returning statement in a script is run through
     `DECLARE … CURSOR` and the first page is `FETCH`ed. If there's no user transaction,
     an internal `BEGIN READ ONLY` is opened to keep the cursor alive and is committed
-    when the cursor closes.
+    when the cursor closes. An exhausted cursor (result fully fetched) is closed
+    eagerly and its pinned connection returns to the pool — only results with pending
+    pages or open transactions hold a connection.
   - **Pagination.** `fetch_page` pulls the next page from the open cursor.
   - **Cancellation** via `pg_cancel_backend` from an independent pool connection, and
     **force-kill** via `pg_terminate_backend`.

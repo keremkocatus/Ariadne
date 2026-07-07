@@ -31,8 +31,9 @@ struct Cursor {
 }
 
 struct TabState {
-    /// Dedicated connection that isn't returned to the pool while a cursor or a
-    /// transaction is open.
+    /// Dedicated connection that isn't returned to the pool while a cursor with
+    /// pending pages or a transaction is open. Exhausted cursors are closed eagerly,
+    /// so a fully-fetched result holds no connection.
     conn: Option<PoolConnection<Postgres>>,
     backend_pid: i32,
     tx: TxStatus,
@@ -357,11 +358,21 @@ async fn open_cursor_and_fetch(
         columns = describe_columns(conn, stmt).await;
     }
 
-    st.cursor = Some(Cursor {
-        query_id: query_id.to_string(),
-        name,
-        has_more,
-    });
+    if has_more {
+        st.cursor = Some(Cursor {
+            query_id: query_id.to_string(),
+            name,
+            has_more,
+        });
+    } else {
+        // Fully fetched on the first page: the cursor has no further purpose. Close it
+        // now so finalize_conn returns the connection to the pool immediately — an open
+        // cursor would otherwise pin one of the few pool connections until the idle
+        // sweeper (15 min) even for a 10-row SELECT.
+        let _ = sqlx::query(&format!("CLOSE {name}"))
+            .execute(&mut *conn)
+            .await;
+    }
     st.last_fetch = std::time::Instant::now();
 
     let fetched_total = page_rows.len();
@@ -474,8 +485,18 @@ pub async fn fetch_page(reg: &ExecRegistry, query_id: &str) -> Result<Page, Aria
         .map_err(AriadneError::from)?;
     let (_, page_rows, _) = read_rows(&rows);
     let has_more = page_rows.len() as i64 == PAGE_SIZE;
-    if let Some(cur) = st.cursor.as_mut() {
-        cur.has_more = has_more;
+    if has_more {
+        if let Some(cur) = st.cursor.as_mut() {
+            cur.has_more = has_more;
+        }
+    } else {
+        // Last page fetched: close the cursor and (unless a user transaction still
+        // needs the session) release the pinned connection back to the pool.
+        close_cursor(&mut st).await;
+        if st.tx == TxStatus::Idle {
+            st.conn = None;
+            st.backend_pid = 0;
+        }
     }
     st.last_fetch = std::time::Instant::now();
     let fetched_total = page_rows.len();
@@ -674,6 +695,60 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r.tx_status, TxStatus::Idle);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
+    async fn small_result_releases_connection() {
+        let pool = pool().await;
+        let reg = ExecRegistry::default();
+        let r = run_query(
+            &reg,
+            &pool,
+            args("SELECT g FROM generate_series(1, 10) g", "ts", "qs"),
+        )
+        .await
+        .unwrap();
+        match &r.statements[0] {
+            StatementResult::Rows { first_page, .. } => {
+                assert_eq!(first_page.fetched_total, 10);
+                assert!(!first_page.has_more);
+            }
+            _ => panic!("expected Rows"),
+        }
+        // An exhausted cursor must not pin a pool connection.
+        let tab = reg.tab("ts");
+        let st = tab.lock().await;
+        assert!(st.cursor.is_none(), "cursor should be closed eagerly");
+        assert!(st.conn.is_none(), "connection should return to the pool");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
+    async fn last_page_releases_connection() {
+        let pool = pool().await;
+        let reg = ExecRegistry::default();
+        let r = run_query(
+            &reg,
+            &pool,
+            args("SELECT g FROM generate_series(1, 1200) g", "tp", "qp"),
+        )
+        .await
+        .unwrap();
+        match &r.statements[0] {
+            StatementResult::Rows { first_page, .. } => assert!(first_page.has_more),
+            _ => panic!("expected Rows"),
+        }
+        assert!(fetch_page(&reg, "qp").await.unwrap().has_more);
+        assert!(!fetch_page(&reg, "qp").await.unwrap().has_more);
+        // The last page closes the cursor and releases the pinned connection.
+        let tab = reg.tab("tp");
+        let st = tab.lock().await;
+        assert!(
+            st.cursor.is_none(),
+            "cursor should be closed on the last page"
+        );
+        assert!(st.conn.is_none(), "connection should return to the pool");
     }
 
     #[tokio::test]

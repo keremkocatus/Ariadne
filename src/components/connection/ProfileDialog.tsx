@@ -48,6 +48,7 @@ export function ProfileDialog({ open, onOpenChange, existing, onSaved }: Props) 
       ssl_mode: f.ssl_mode,
       statement_timeout_ms: null,
       read_only: f.read_only,
+      max_pool_connections: f.max_pool.trim() ? Number(f.max_pool) || null : null,
       options: {},
     };
   }
@@ -156,6 +157,14 @@ export function ProfileDialog({ open, onOpenChange, existing, onSaved }: Props) 
           <Field label="Strip color (prod cue)">
             <Input value={f.color ?? ""} onChange={(e) => set("color", e.target.value)} placeholder="#e5484d" />
           </Field>
+          <Field label="Max pool connections">
+            <Input
+              value={f.max_pool}
+              onChange={(e) => set("max_pool", e.target.value)}
+              inputMode="numeric"
+              placeholder="3 (1-10)"
+            />
+          </Field>
           <label className="col-span-2 mt-1 flex items-center gap-2 text-xs text-fg">
             <input
               type="checkbox"
@@ -212,6 +221,7 @@ function initialForm(p?: ConnectionProfile | null) {
     ssl_mode: (p?.ssl_mode ?? "prefer") as SslMode,
     read_only: p?.read_only ?? false,
     color: p?.color ?? "",
+    max_pool: p?.max_pool_connections != null ? String(p.max_pool_connections) : "",
   };
 }
 

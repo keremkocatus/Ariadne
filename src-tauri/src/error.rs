@@ -101,7 +101,18 @@ impl From<sqlx::Error> for AriadneError {
                 }
             }
             E::PoolTimedOut => {
-                AriadneError::new(ErrorKind::ConnectionFailed, "Connection pool timed out")
+                // The pool's few connections are all pinned by open results (cursors
+                // with pending pages) or open transactions in other tabs — actionable
+                // for the user, unlike a generic timeout.
+                let mut e = AriadneError::new(
+                    ErrorKind::ConnectionFailed,
+                    "All pool connections are busy holding open results or transactions",
+                );
+                e.hint = Some(
+                    "Close unused tabs, finish open transactions, or re-run this query in a tab that already holds a result."
+                        .to_string(),
+                );
+                e
             }
             E::Io(_) | E::Tls(_) | E::Configuration(_) => {
                 AriadneError::new(ErrorKind::ConnectionFailed, err.to_string())

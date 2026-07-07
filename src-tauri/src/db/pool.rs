@@ -43,10 +43,11 @@ pub async fn build_pool(
     let read_only = profile.read_only;
 
     PgPoolOptions::new()
-        // 3 is enough headroom for the parallel catalog queries of a schema load;
-        // every extra slot is a potential physical connection against a shared DB's
-        // max_connections budget.
-        .max_connections(3)
+        // Default 3: enough headroom for the parallel catalog queries of a schema
+        // load, and every extra slot is a potential physical connection against a
+        // shared DB's max_connections budget. Per-profile override, clamped so a
+        // typo can't request 0 or hammer the server.
+        .max_connections(profile.max_pool_connections.unwrap_or(3).clamp(1, 10))
         .min_connections(0)
         .acquire_timeout(Duration::from_secs(10))
         .idle_timeout(Duration::from_secs(300))
