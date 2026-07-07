@@ -8,6 +8,16 @@ import { getPrimaryKey, type ColumnMeta, type PkPredicate } from "@/lib/api";
 
 const pkCache = new Map<string, Promise<string[]>>();
 
+/// Mirror of MAX_CELL_BYTES in src-tauri/src/db/rows.rs: the backend truncates cells
+/// whose text form exceeds 8 KB (keeping 8192 chars + '…'). A kept cell is therefore
+/// ≤ 8192 bytes iff it was NOT truncated, so this byte check detects truncation
+/// exactly — no per-cell flag is needed over IPC.
+const MAX_CELL_BYTES = 8 * 1024;
+
+export function isTruncatedCell(value: string | null): boolean {
+  return value !== null && new TextEncoder().encode(value).length > MAX_CELL_BYTES;
+}
+
 /// Resolves a table's PK columns (memoized). Failures are NOT cached → the next
 /// attempt asks again.
 export async function resolvePrimaryKey(
@@ -40,17 +50,23 @@ export function buildEditability(
   row: (string | null)[],
 ): Editability {
   if (pkColumns.length === 0) {
-    return { editable: false, reason: "read-only — table has no primary key" };
+    return {
+      editable: false,
+      reason: "This table has no primary key, so a single row can't be targeted safely.",
+    };
   }
   const pk: PkPredicate[] = [];
   for (const col of pkColumns) {
     const idx = columns.findIndex((c) => c.name === col);
     if (idx === -1) {
-      return { editable: false, reason: "read-only — primary key not in result columns" };
+      return {
+        editable: false,
+        reason: `The primary key column "${col}" isn't in this result. Include it in the SELECT to edit.`,
+      };
     }
     const value = row[idx];
     if (value === null) {
-      return { editable: false, reason: "read-only — primary key value is NULL" };
+      return { editable: false, reason: "The primary key value of this row is NULL." };
     }
     pk.push({ column: col, value });
   }

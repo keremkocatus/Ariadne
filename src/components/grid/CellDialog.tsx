@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { updateCell, isAriadneError, type ColumnMeta } from "@/lib/api";
 import { errorTitle } from "@/lib/errors";
-import { resolvePrimaryKey, buildEditability, type Editability } from "@/lib/cellEdit";
+import {
+  resolvePrimaryKey,
+  buildEditability,
+  isTruncatedCell,
+  type Editability,
+} from "@/lib/cellEdit";
 
 export interface CellEditContext {
   connectionId: string;
@@ -40,15 +46,29 @@ export function CellDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { sourceTable, readOnly, connectionId, columns, row } = ctx;
+  const { sourceTable, readOnly, connectionId, columns, row, colIndex } = ctx;
   useEffect(() => {
     let cancelled = false;
+    // Guard order matters: a truncated cell must never be editable — saving it would
+    // overwrite the full value in the database with the truncated display text.
+    if (isTruncatedCell(row[colIndex])) {
+      setEdit({
+        editable: false,
+        reason:
+          "This value was truncated for display (over 8 KB). Edit it with an UPDATE statement instead, to avoid overwriting the full value.",
+      });
+      return;
+    }
     if (!sourceTable) {
-      setEdit({ editable: false, reason: "read-only — not a single-table result" });
+      setEdit({
+        editable: false,
+        reason:
+          "This result didn't come from a single table. Open the table from the sidebar to edit its rows.",
+      });
       return;
     }
     if (readOnly) {
-      setEdit({ editable: false, reason: "read-only connection profile" });
+      setEdit({ editable: false, reason: "This connection profile is marked read-only." });
       return;
     }
     resolvePrimaryKey(connectionId, sourceTable.schema, sourceTable.name)
@@ -56,13 +76,14 @@ export function CellDialog({
         if (!cancelled) setEdit(buildEditability(pkCols, columns, row));
       })
       .catch(() => {
-        if (!cancelled) setEdit({ editable: false, reason: "read-only — couldn't resolve primary key" });
+        if (!cancelled)
+          setEdit({ editable: false, reason: "Couldn't resolve the table's primary key." });
       });
     return () => {
       cancelled = true;
     };
     // Keyed on stable fields (the ctx object is new each render; the fields are stable refs from q).
-  }, [connectionId, sourceTable, readOnly, columns, row]);
+  }, [connectionId, sourceTable, readOnly, columns, row, colIndex]);
 
   const canEdit = edit.editable === true;
   const pretty = prettyJson(original);
@@ -96,7 +117,7 @@ export function CellDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && !saving && onClose()}>
-      <DialogContent className="w-[560px]">
+      <DialogContent className="w-[560px]" hideClose={saving}>
         <DialogTitle className="pr-6">
           <span className="font-mono">{col.name}</span>
           <span className="ml-2 text-[11px] font-normal text-fg-muted">{col.type_name}</span>
@@ -127,28 +148,24 @@ export function CellDialog({
               </p>
             )}
             <div className="flex justify-end gap-2 pt-1">
-              <button
-                onClick={onClose}
-                disabled={saving}
-                className="rounded border border-border px-3 py-1 text-xs hover:border-fg-muted disabled:opacity-50"
-              >
+              <Button onClick={onClose} disabled={saving}>
                 Cancel
-              </button>
-              <button
-                onClick={() => void save()}
-                disabled={saving}
-                className="rounded border border-fg bg-fg px-3 py-1 text-xs font-medium text-bg hover:opacity-90 disabled:opacity-50"
-              >
+              </Button>
+              <Button variant="default" onClick={() => void save()} disabled={saving}>
                 {saving ? "Saving…" : "Save"}
-              </button>
+              </Button>
             </div>
           </div>
         ) : (
           <div className="mt-3 space-y-2">
             <ReadOnlyValue value={original} pretty={pretty} />
-            <p className="text-[11px] text-fg-muted">
-              {edit.editable === "resolving" ? "Checking if editable…" : edit.reason}
-            </p>
+            {edit.editable === "resolving" ? (
+              <p className="text-[11px] text-fg-muted">Checking if editable…</p>
+            ) : (
+              <p className="rounded border border-border bg-bg px-2 py-1.5 text-[11px] text-fg-muted">
+                <span className="font-medium text-fg">Read-only.</span> {edit.reason}
+              </p>
+            )}
           </div>
         )}
       </DialogContent>
