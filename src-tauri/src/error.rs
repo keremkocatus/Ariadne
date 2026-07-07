@@ -101,15 +101,16 @@ impl From<sqlx::Error> for AriadneError {
                 }
             }
             E::PoolTimedOut => {
-                // The pool's few connections are all pinned by open results (cursors
-                // with pending pages) or open transactions in other tabs — actionable
-                // for the user, unlike a generic timeout.
+                // Two very different causes share this error: every pool connection is
+                // pinned by open results/transactions in other tabs, or the server
+                // stopped answering so no new connection could be opened in time. Name
+                // both — a wrong single-cause message would mislead the user.
                 let mut e = AriadneError::new(
                     ErrorKind::ConnectionFailed,
-                    "All pool connections are busy holding open results or transactions",
+                    "No database connection became available in time",
                 );
                 e.hint = Some(
-                    "Close unused tabs, finish open transactions, or re-run this query in a tab that already holds a result."
+                    "Either all pool connections are busy (close unused tabs / finish open transactions) or the server is unreachable (check the connection)."
                         .to_string(),
                 );
                 e

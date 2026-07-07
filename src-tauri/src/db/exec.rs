@@ -337,7 +337,12 @@ async fn open_cursor_and_fetch(
         ae
     })?;
 
-    let fetch_sql = format!("FETCH FORWARD {page_size} FROM {name}");
+    // Fetch one row MORE than the page size: "got exactly page_size" is not proof of
+    // more pages (a result of exactly page_size rows — e.g. the table-open LIMIT 500 —
+    // would false-positive, keep the exhausted cursor open, and pin a pool connection
+    // until the idle sweeper). The probe row can't be pushed back into a NO SCROLL
+    // cursor, so it is simply included in the page (pages are up to page_size+1 rows).
+    let fetch_sql = format!("FETCH FORWARD {} FROM {name}", page_size + 1);
     let rows = conn
         .fetch_all(sqlx::raw_sql(&fetch_sql))
         .await
@@ -350,7 +355,7 @@ async fn open_cursor_and_fetch(
             ae
         })?;
     let (mut columns, page_rows, truncated) = read_rows(&rows);
-    let has_more = page_rows.len() as i64 == page_size;
+    let has_more = page_rows.len() as i64 > page_size;
     // A zero-row SELECT can't derive column names from a row, so fetch the real headers
     // via describe → the grid renders with headers but an empty body, not a placeholder.
     // Only in the empty case; on failure columns stay empty (the grid still opens).
@@ -478,13 +483,14 @@ pub async fn fetch_page(reg: &ExecRegistry, query_id: &str) -> Result<Page, Aria
     }
     let name = cur.name.clone();
     let conn = st.conn.as_mut().expect("conn").as_mut();
-    let fetch_sql = format!("FETCH FORWARD {PAGE_SIZE} FROM {name}");
+    // +1 probe row, same as the first page: see open_cursor_and_fetch.
+    let fetch_sql = format!("FETCH FORWARD {} FROM {name}", PAGE_SIZE + 1);
     let rows = conn
         .fetch_all(sqlx::raw_sql(&fetch_sql))
         .await
         .map_err(AriadneError::from)?;
     let (_, page_rows, _) = read_rows(&rows);
-    let has_more = page_rows.len() as i64 == PAGE_SIZE;
+    let has_more = page_rows.len() as i64 > PAGE_SIZE;
     if has_more {
         if let Some(cur) = st.cursor.as_mut() {
             cur.has_more = has_more;
@@ -675,19 +681,20 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(r.tx_status, TxStatus::InTransaction);
+        // Pages carry a +1 probe row (501 = 500 requested + the has_more probe).
         match &r.statements[0] {
             StatementResult::Rows { first_page, .. } => {
-                assert_eq!(first_page.fetched_total, 500);
+                assert_eq!(first_page.fetched_total, 501);
                 assert!(first_page.has_more);
             }
             _ => panic!("expected Rows"),
         }
 
         let p2 = fetch_page(&reg, "q2").await.unwrap();
-        assert_eq!(p2.fetched_total, 500);
+        assert_eq!(p2.fetched_total, 501);
         assert!(p2.has_more);
         let p3 = fetch_page(&reg, "q2").await.unwrap();
-        assert_eq!(p3.fetched_total, 200);
+        assert_eq!(p3.fetched_total, 198);
         assert!(!p3.has_more);
 
         // ROLLBACK → tx closes, temp table drops, cursor closes.
