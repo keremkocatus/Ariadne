@@ -2,6 +2,10 @@
 // pulls Monaco from a CDN by default; loader.config points it at the npm package.
 import * as monaco from "monaco-editor";
 import { loader } from "@monaco-editor/react";
+import {
+  conf as pgsqlConf,
+  language as pgsqlLanguage,
+} from "monaco-editor/esm/vs/basic-languages/pgsql/pgsql.js";
 
 // Only the base editor worker is needed. Vite's ?worker import emits the worker as a
 // separate bundle.
@@ -15,11 +19,43 @@ self.MonacoEnvironment = {
 
 loader.config({ monaco });
 
+// "ariadne-pgsql": Monaco's built-in pgsql tokenizer, extended. The stock keyword
+// list holds only PostgreSQL's ~90 RESERVED words — everyday DML/DDL like UPDATE,
+// SET, DELETE, INSERT, BEGIN are unreserved in Postgres and would render as plain
+// identifiers. A separate language id is used because the built-in registers its
+// tokenizer lazily on first use and would overwrite an override under the same id.
+monaco.languages.register({ id: "ariadne-pgsql" });
+monaco.languages.setLanguageConfiguration("ariadne-pgsql", pgsqlConf);
+monaco.languages.setMonarchTokensProvider("ariadne-pgsql", {
+  ...pgsqlLanguage,
+  keywords: [
+    ...pgsqlLanguage.keywords,
+    // Unreserved-in-Postgres words that any SQL editor is expected to color.
+    ...["UPDATE", "SET", "DELETE", "INSERT", "VALUES", "TRUNCATE", "MERGE",
+      "BEGIN", "START", "TRANSACTION", "WORK", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE",
+      "ALTER", "DROP", "ADD", "RENAME", "OWNER", "INDEX", "VIEW", "MATERIALIZED",
+      "SEQUENCE", "SCHEMA", "DATABASE", "EXTENSION", "TYPE", "DOMAIN",
+      "FUNCTION", "PROCEDURE", "TRIGGER", "RETURNS", "RETURNING", "RETURN", "LANGUAGE",
+      "IMMUTABLE", "STABLE", "VOLATILE", "STRICT", "SECURITY", "DEFINER", "INVOKER",
+      "DECLARE", "CURSOR", "FETCH", "MOVE", "CLOSE", "EXPLAIN", "VACUUM", "REINDEX", "CLUSTER",
+      "REVOKE", "COMMENT", "IF", "EXISTS", "TEMP", "TEMPORARY", "UNLOGGED",
+      "CASCADE", "RESTRICT", "PARTITION", "OVER", "FILTER", "WITHIN",
+      "ROWS", "RANGE", "PRECEDING", "FOLLOWING", "UNBOUNDED",
+      "CONFLICT", "NOTHING", "KEY", "IDENTITY", "GENERATED", "STORED", "INCLUDE",
+      "EXECUTE", "PREPARE", "DEALLOCATE", "LISTEN", "NOTIFY", "UNLISTEN",
+      "COPY", "LOCK", "MODE", "NOWAIT", "SKIP", "LOCKED", "SHOW", "RESET", "CALL",
+      "LOOP", "WHILE", "EXCEPTION", "ELSIF", "PERFORM", "RAISE", "NEXT", "QUERY",
+      "BY", "NO", "DATA", "REFRESH", "OPTIONS", "AT", "ZONE", "INTERVAL"],
+  ],
+});
+
 // Custom editor themes matching the app's monochrome palette (src/index.css).
 // Monaco's stock vs/vs-dark themes clash with it (saturated #A31515 strings on
-// light, blue keywords). Monaco's basic `pgsql` tokenizer emits only: keyword,
-// operator, predefined, identifier, identifier.quote, string, number, comment,
-// delimiter.* — rules cover exactly those; anything else would never match.
+// light, blue keywords). The tokenizer emits only: keyword, operator, predefined,
+// identifier, identifier.quote, string, number, comment, delimiter.* — rules cover
+// exactly those; anything else would never match. The explicit `string.sql` rule is
+// load-bearing: the inherited base themes ship a legacy `string.sql = FF0000` rule
+// that is MORE specific than a plain `string` rule and would win (red strings).
 monaco.editor.defineTheme("ariadne-dark", {
   base: "vs-dark",
   inherit: true,
@@ -28,6 +64,7 @@ monaco.editor.defineTheme("ariadne-dark", {
     { token: "keyword", foreground: "8FB4D8" },
     { token: "predefined", foreground: "AFA3CE" },
     { token: "string", foreground: "A9BE93" },
+    { token: "string.sql", foreground: "A9BE93" },
     { token: "number", foreground: "D0B17E" },
     { token: "comment", foreground: "6B6B72", fontStyle: "italic" },
     { token: "operator", foreground: "9A9AA2" },
@@ -59,6 +96,7 @@ monaco.editor.defineTheme("ariadne-light", {
     { token: "keyword", foreground: "3B6EA8" },
     { token: "predefined", foreground: "6B5F92" },
     { token: "string", foreground: "5F7A54" },
+    { token: "string.sql", foreground: "5F7A54" },
     { token: "number", foreground: "8A6D33" },
     { token: "comment", foreground: "8E8E95", fontStyle: "italic" },
     { token: "operator", foreground: "52525B" },

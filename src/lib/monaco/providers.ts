@@ -5,7 +5,7 @@
 import * as monaco from "monaco-editor";
 import { getCompletions, getSignatureHelp, type CompletionKind } from "@/lib/api";
 
-const LANG = "pgsql";
+const LANG = "ariadne-pgsql";
 let registered = false;
 let activeConnectionId: string | null = null;
 
