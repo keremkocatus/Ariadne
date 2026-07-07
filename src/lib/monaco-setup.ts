@@ -24,10 +24,55 @@ loader.config({ monaco });
 // SET, DELETE, INSERT, BEGIN are unreserved in Postgres and would render as plain
 // identifiers. A separate language id is used because the built-in registers its
 // tokenizer lazily on first use and would overwrite an override under the same id.
+// Word-boundary cases shared by the two word rules below. Order matters: earlier
+// entries win, so a word that is both (e.g. LEFT is an operator and a function)
+// keeps the built-in's original precedence.
+const wordCases = {
+  "@operators": "operator",
+  "@builtinVariables": "predefined",
+  "@builtinFunctions": "predefined",
+  "@keywords": "keyword",
+};
+
 monaco.languages.register({ id: "ariadne-pgsql" });
 monaco.languages.setLanguageConfiguration("ariadne-pgsql", pgsqlConf);
 monaco.languages.setMonarchTokensProvider("ariadne-pgsql", {
   ...pgsqlLanguage,
+  tokenizer: {
+    ...pgsqlLanguage.tokenizer,
+    // The built-in root, with two additions: a lookahead rule tagging `name(` call
+    // sites as `function`, and a `type` case for Postgres type names.
+    root: [
+      { include: "@comments" },
+      { include: "@whitespace" },
+      { include: "@pseudoColumns" },
+      { include: "@numbers" },
+      { include: "@strings" },
+      { include: "@complexIdentifiers" },
+      { include: "@scopes" },
+      [/[;,.]/, "delimiter"],
+      [/[()]/, "@brackets"],
+      [/[\w@#$]+(?=\s*\()/, { cases: { ...wordCases, "@default": "function" } }],
+      [
+        /[\w@#$]+/,
+        { cases: { ...wordCases, "@typeKeywords": "type", "@default": "identifier" } },
+      ],
+      [/[<>=!%&+\-*/|~^]/, "operator"],
+    ],
+  },
+  // Common Postgres type names (ignoreCase applies). Matched only when the word is
+  // not a keyword/builtin, so e.g. INTERVAL stays a keyword in `AT TIME ZONE` use.
+  typeKeywords: [
+    "SMALLINT", "INTEGER", "INT", "INT2", "INT4", "INT8", "BIGINT",
+    "DECIMAL", "NUMERIC", "REAL", "FLOAT4", "FLOAT8", "DOUBLE", "PRECISION",
+    "SERIAL", "BIGSERIAL", "SMALLSERIAL", "MONEY",
+    "TEXT", "VARCHAR", "CHARACTER", "CHAR", "BPCHAR", "NAME", "CITEXT",
+    "BYTEA", "TIMESTAMP", "TIMESTAMPTZ", "DATE", "TIME", "TIMETZ",
+    "BOOLEAN", "BOOL", "UUID", "JSON", "JSONB", "XML",
+    "INET", "CIDR", "MACADDR", "MACADDR8", "BIT", "VARBIT",
+    "TSVECTOR", "TSQUERY", "POINT", "LINE", "LSEG", "BOX", "PATH", "POLYGON", "CIRCLE",
+    "OID", "REGCLASS", "REGTYPE", "VOID", "RECORD", "ANYELEMENT", "ANYARRAY",
+  ],
   keywords: [
     ...pgsqlLanguage.keywords,
     // Unreserved-in-Postgres words that any SQL editor is expected to color.
@@ -63,6 +108,8 @@ monaco.editor.defineTheme("ariadne-dark", {
     { token: "", foreground: "EDEDED" },
     { token: "keyword", foreground: "8FB4D8" },
     { token: "predefined", foreground: "AFA3CE" },
+    { token: "function", foreground: "D6D39B" },
+    { token: "type", foreground: "6FB8A9" },
     { token: "string", foreground: "A9BE93" },
     { token: "string.sql", foreground: "A9BE93" },
     { token: "number", foreground: "D0B17E" },
@@ -95,6 +142,8 @@ monaco.editor.defineTheme("ariadne-light", {
     { token: "", foreground: "18181B" },
     { token: "keyword", foreground: "3B6EA8" },
     { token: "predefined", foreground: "6B5F92" },
+    { token: "function", foreground: "795E26" },
+    { token: "type", foreground: "2E7D74" },
     { token: "string", foreground: "5F7A54" },
     { token: "string.sql", foreground: "5F7A54" },
     { token: "number", foreground: "8A6D33" },
