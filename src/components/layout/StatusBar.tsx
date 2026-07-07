@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSchemaStore } from "@/stores/schemaStore";
 import { useTabsStore } from "@/stores/tabsStore";
@@ -17,6 +18,7 @@ export function StatusBar() {
   );
   const closed = !!tabConnectionId && !info;
   const stats = useDbStats(info ? tabConnectionId : null);
+  const version = useAppVersion();
 
   return (
     <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-border px-2 text-[11px] text-fg-muted">
@@ -42,7 +44,7 @@ export function StatusBar() {
       )}
       <div className="ml-auto flex items-center gap-2">
         {stats && <StatsStrip stats={stats} />}
-        <span>v0.0.2</span>
+        {version && <span>v{version}</span>}
       </div>
     </footer>
   );
@@ -94,6 +96,16 @@ function useDbStats(connectionId: string | null): DbStats | null {
     };
   }, [connectionId]);
   return stats;
+}
+
+/// The real app version from tauri.conf.json — a hardcoded label here went stale
+/// once and displayed the wrong version for a whole release.
+function useAppVersion(): string | null {
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    getVersion().then(setVersion).catch(() => {});
+  }, []);
+  return version;
 }
 
 function relTime(iso: string): string {
