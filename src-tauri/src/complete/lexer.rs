@@ -27,11 +27,43 @@ pub(super) enum TokKind {
     Other,
 }
 
-pub(super) fn tokenize(sql: &str) -> Vec<Tok> {
-    let scan = match pg_query::scan(sql) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
+/// Plain single-shot tokenize; production code goes through `tokenize_resilient`.
+#[cfg(test)]
+fn tokenize(sql: &str) -> Vec<Tok> {
+    try_tokenize(sql).unwrap_or_default()
+}
+
+/// Tokenize with graceful degradation for half-written SQL. `pg_query::scan` fails
+/// outright on an unterminated string/comment anywhere in the text, which would leave
+/// completion with zero tokens (the common case: typing a literal in UPDATE … SET).
+/// Context analysis never looks past the cursor, so the fallbacks only need to be
+/// correct before it: (1) full scan; (2) the text truncated at the cursor (an
+/// unterminated literal after the cursor disappears); (3) the truncated text with a
+/// closing terminator appended (the cursor is inside the literal — the resulting
+/// string token makes the suppress check fire, which is the right outcome);
+/// (4) empty stream, as before.
+pub(super) fn tokenize_resilient(sql: &str, offset: usize) -> Vec<Tok> {
+    if let Ok(toks) = try_tokenize(sql) {
+        return toks;
+    }
+    let mut off = offset.min(sql.len());
+    while off > 0 && !sql.is_char_boundary(off) {
+        off -= 1;
+    }
+    let prefix = &sql[..off];
+    if let Ok(toks) = try_tokenize(prefix) {
+        return toks;
+    }
+    for term in ["'", "\"", "*/"] {
+        if let Ok(toks) = try_tokenize(&format!("{prefix}{term}")) {
+            return toks;
+        }
+    }
+    Vec::new()
+}
+
+fn try_tokenize(sql: &str) -> Result<Vec<Tok>, pg_query::Error> {
+    let scan = pg_query::scan(sql)?;
     let bytes = sql.as_bytes();
     let mut out = Vec::with_capacity(scan.tokens.len());
     for t in scan.tokens {
@@ -51,7 +83,7 @@ pub(super) fn tokenize(sql: &str) -> Vec<Tok> {
             kind,
         });
     }
-    out
+    Ok(out)
 }
 
 fn classify(text: &str, is_keyword: bool) -> TokKind {
@@ -129,4 +161,28 @@ pub(super) fn split_items(toks: &[Tok]) -> Vec<&[Tok]> {
         out.push(&toks[start..]);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resilient_tokenizes_unterminated_string() {
+        let sql = "UPDATE users SET name = 'x";
+        assert!(tokenize(sql).is_empty(), "plain scan must fail");
+        let toks = tokenize_resilient(sql, sql.len());
+        assert!(!toks.is_empty());
+        assert_eq!(toks.last().unwrap().kind, TokKind::String);
+    }
+
+    #[test]
+    fn resilient_truncates_at_cursor() {
+        // The unterminated literal is AFTER the cursor; the prefix scan recovers.
+        let sql = "SELECT * FROM users WHERE  ; SELECT 'oops";
+        let offset = sql.find(';').unwrap() - 1;
+        assert!(tokenize(sql).is_empty());
+        let toks = tokenize_resilient(sql, offset);
+        assert!(toks.iter().any(|t| t.upper == "WHERE"));
+    }
 }

@@ -53,6 +53,9 @@ pub fn generate(cache: &SchemaCache, ctx: &CompletionContext) -> Vec<CompletionI
             // Target table: a single relation.
             columns_candidates(cache, ctx, &mut cands);
         }
+        Clause::TableTarget => {
+            relation_candidates(cache, ctx, &mut cands);
+        }
         Clause::Unknown => {
             push_kw(
                 &mut cands,

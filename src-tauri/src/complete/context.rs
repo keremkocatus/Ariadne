@@ -17,6 +17,9 @@ pub enum Clause {
     Returning,
     InsertCols,
     UpdateSet,
+    /// Right after `UPDATE` / `INSERT INTO`: the target-table position — suggest
+    /// relations only, not keywords.
+    TableTarget,
     Unknown,
 }
 
@@ -68,12 +71,12 @@ pub struct CompletionContext {
 
 // The token model and lexer helpers (Tok, tokenize, statement_bounds, match_paren,
 // split_items) live in [`super::lexer`]; only semantic analysis lives here.
-use super::lexer::{match_paren, split_items, statement_bounds, tokenize, Tok, TokKind};
+use super::lexer::{match_paren, split_items, statement_bounds, tokenize_resilient, Tok, TokKind};
 
 /// Main entry: SQL + cursor offset → CompletionContext.
 pub fn analyze(sql: &str, offset: usize) -> CompletionContext {
     let offset = offset.min(sql.len());
-    let all = tokenize(sql);
+    let all = tokenize_resilient(sql, offset);
 
     // Is the cursor inside a string/comment?
     for t in &all {
@@ -113,7 +116,7 @@ pub fn analyze(sql: &str, offset: usize) -> CompletionContext {
 /// Returns the full identifier under the cursor (for Alt+F1): (qualifier, name).
 pub fn identifier_at(sql: &str, offset: usize) -> Option<(Option<String>, String)> {
     let offset = offset.min(sql.len());
-    let all = tokenize(sql);
+    let all = tokenize_resilient(sql, offset);
     let (lo, hi) = statement_bounds(&all, offset);
     let toks = &all[lo..hi];
     let i = toks
@@ -130,7 +133,7 @@ pub fn identifier_at(sql: &str, offset: usize) -> Option<(Option<String>, String
 /// active parameter index) — for signature help.
 pub fn call_context(sql: &str, offset: usize) -> Option<(String, u32)> {
     let offset = offset.min(sql.len());
-    let all = tokenize(sql);
+    let all = tokenize_resilient(sql, offset);
     let (lo, hi) = statement_bounds(&all, offset);
     let toks = &all[lo..hi];
 
@@ -260,6 +263,8 @@ fn detect_clause(toks: &[Tok], offset: usize, stmt_kind: StmtKind) -> Clause {
                 "USING" => clause = Clause::JoinOn,
                 "HAVING" => clause = Clause::Having,
                 "RETURNING" => clause = Clause::Returning,
+                "UPDATE" if stmt_kind == StmtKind::Update => clause = Clause::TableTarget,
+                "INTO" if stmt_kind == StmtKind::Insert => clause = Clause::TableTarget,
                 "SET" if stmt_kind == StmtKind::Update => clause = Clause::UpdateSet,
                 "VALUES" => clause = Clause::Unknown,
                 "GROUP" => clause = Clause::GroupBy,
@@ -270,7 +275,7 @@ fn detect_clause(toks: &[Tok], offset: usize, stmt_kind: StmtKind) -> Clause {
         } else if t.kind == TokKind::LParen
             && stmt_kind == StmtKind::Insert
             && !insert_seen_paren
-            && clause == Clause::Unknown
+            && matches!(clause, Clause::Unknown | Clause::TableTarget)
         {
             // INSERT INTO t ( → column list
             insert_seen_paren = true;
@@ -593,5 +598,64 @@ mod tests {
         assert_eq!(c.clause, Clause::Where);
         assert!(c.relations.iter().any(|r| r.name == "orders"));
         assert!(!c.relations.iter().any(|r| r.name == "users"));
+    }
+
+    #[test]
+    fn update_set_clause() {
+        let c = ctx("UPDATE users SET |");
+        assert_eq!(c.stmt_kind, StmtKind::Update);
+        assert_eq!(c.clause, Clause::UpdateSet);
+        assert!(c.relations.iter().any(|r| r.name == "users"));
+    }
+
+    #[test]
+    fn update_set_multiline() {
+        let c = ctx("UPDATE users\nSET name = 'x',\n    |");
+        assert_eq!(c.clause, Clause::UpdateSet);
+        assert!(c.relations.iter().any(|r| r.name == "users"));
+    }
+
+    #[test]
+    fn update_where_clause() {
+        let c = ctx("UPDATE users SET name = 'x' WHERE |");
+        assert_eq!(c.clause, Clause::Where);
+        assert!(c.relations.iter().any(|r| r.name == "users"));
+    }
+
+    #[test]
+    fn delete_where_clause() {
+        let c = ctx("DELETE FROM users WHERE |");
+        assert_eq!(c.stmt_kind, StmtKind::Delete);
+        assert_eq!(c.clause, Clause::Where);
+        assert!(c.relations.iter().any(|r| r.name == "users"));
+    }
+
+    #[test]
+    fn update_target_clause() {
+        let c = ctx("UPDATE |");
+        assert_eq!(c.clause, Clause::TableTarget);
+    }
+
+    #[test]
+    fn insert_into_target_clause() {
+        let c = ctx("INSERT INTO |");
+        assert_eq!(c.clause, Clause::TableTarget);
+    }
+
+    #[test]
+    fn unterminated_string_suppresses() {
+        // pg_query::scan fails on the whole text; the resilient lexer terminates the
+        // literal, so the cursor lands inside a string token → suppress.
+        let c = ctx("UPDATE users SET name = 'x|");
+        assert!(c.suppress);
+    }
+
+    #[test]
+    fn unterminated_string_recovers_relations() {
+        // The broken literal is AFTER the cursor (another statement): truncating the
+        // scan at the cursor must recover the current statement's context.
+        let c = ctx("UPDATE users SET a = 'x' WHERE | ; SELECT 'oops");
+        assert_eq!(c.clause, Clause::Where);
+        assert!(c.relations.iter().any(|r| r.name == "users"));
     }
 }

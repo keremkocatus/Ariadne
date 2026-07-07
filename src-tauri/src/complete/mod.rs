@@ -410,4 +410,38 @@ mod golden {
         assert_eq!(sig.parameters, vec!["uid int4".to_string()]);
         assert_eq!(sig.active_parameter, 0);
     }
+
+    #[test]
+    fn update_set_columns() {
+        let l = run("UPDATE users SET |");
+        assert!(has(&l, "id") && has(&l, "email"), "labels: {l:?}");
+    }
+
+    #[test]
+    fn update_multiline_where_columns() {
+        let l = run("UPDATE users\nSET email = 'x'\nWHERE |");
+        assert!(has(&l, "id") && has(&l, "email"), "labels: {l:?}");
+    }
+
+    #[test]
+    fn delete_where_columns() {
+        let l = run("DELETE FROM users WHERE |");
+        assert!(has(&l, "id") && has(&l, "email"), "labels: {l:?}");
+    }
+
+    #[test]
+    fn update_target_tables() {
+        let l = run("UPDATE |");
+        assert!(has(&l, "users") && has(&l, "orders"), "labels: {l:?}");
+        assert!(
+            !has(&l, "SELECT"),
+            "no keywords at the target position: {l:?}"
+        );
+    }
+
+    #[test]
+    fn unterminated_string_empty() {
+        let l = run("UPDATE users SET email = 'x|");
+        assert!(l.is_empty(), "no suggestions inside a literal: {l:?}");
+    }
 }
