@@ -45,6 +45,30 @@ modules are plain Rust and are unit-tested without a UI.
   - **Idle-cursor sweeping.** A background task closes internal-transaction cursors that
     have been idle too long (so they don't hold back vacuum) and emits `result:frozen`.
 
+### Connect directly to Postgres — not through a transaction pooler
+
+Ariadne assumes each logical connection maps to one Postgres backend for its whole
+lifetime, like most interactive SQL tools. Connect it to a **direct** (or
+session-pooled) endpoint. Do **not** point it at a transaction-pooling endpoint
+(PgBouncer/Supavisor in `transaction` mode — e.g. Supabase's port 6543; use 5432
+instead). Behind a transaction pooler:
+
+- **Paged results break.** Cursored execution keeps a `DECLARE CURSOR` inside an open
+  transaction while a result is paged; poolers commonly reclaim such backends
+  (`idle_transaction_timeout`), which surfaces as a sudden "cursor does not exist" /
+  connection-lost error that looks like an Ariadne bug.
+- **Read-only enforcement can silently degrade.** `default_transaction_read_only = on`
+  is set once per physical connection; a pooler can remap the session to a different
+  backend between transactions where that `SET` never happened — no error, the
+  read-only profile just stops being enforced server-side.
+- **Prepared statements and pid-based cancel** may also misbehave (sqlx prepares
+  statements; cancellation targets a `pg_backend_pid` that the pooler may have
+  reassigned).
+
+This is the same guidance most Postgres providers give for GUI tools and migrations.
+If an app tier needs transaction pooling for scale, give interactive tools like
+Ariadne a separate direct endpoint rather than routing them through the pooler.
+
 ### Zero-row column names
 
 A subtlety worth noting: sqlx exposes column metadata only through a returned row, so a
