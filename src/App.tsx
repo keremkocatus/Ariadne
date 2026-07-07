@@ -91,12 +91,9 @@ export default function App() {
   const openRelation = useCallback(
     (schema: string, name: string) => {
       // The new tab binds to the connection the Explorer shows (the active tab's) —
-      // the global active connection may differ. sourceTable is set → cell editing
-      // can be enabled.
-      const id = addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`, tabConnectionId, {
-        schema,
-        name,
-      });
+      // the global active connection may differ. Cell editability comes from the
+      // executed statement itself (a plain single-table SELECT), not from tab state.
+      const id = addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`, tabConnectionId);
       void run(id);
     },
     [addTab, run, tabConnectionId],

@@ -216,7 +216,12 @@ pub async fn run_query(
         };
 
         match exec_res {
-            Ok(r) => results.push(r),
+            Ok(mut r) => {
+                if let StatementResult::Rows { source_table, .. } = &mut r {
+                    *source_table = info.source_table.clone();
+                }
+                results.push(r);
+            }
             Err(mut e) => {
                 // Postgres position is statement-local (1-based); shift it to the
                 // absolute position in the editor.
@@ -369,6 +374,7 @@ async fn open_cursor_and_fetch(
             elapsed_ms: started.elapsed().as_millis() as u64,
         },
         truncated_cells: truncated,
+        source_table: None, // filled by run_query from the statement's StmtInfo
     })
 }
 
@@ -397,6 +403,7 @@ async fn run_inline_rows(
             elapsed_ms: started.elapsed().as_millis() as u64,
         },
         truncated_cells: truncated,
+        source_table: None, // filled by run_query from the statement's StmtInfo
     })
 }
 

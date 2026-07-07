@@ -57,10 +57,10 @@ export function CommandPalette() {
   };
 
   const openTable = (schema: string, name: string) => {
-    // sourceTable is set → cell editing can be enabled.
+    // Cell editability is derived from the executed single-table SELECT itself.
     const id = useTabsStore
       .getState()
-      .addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`, tabConnectionId, { schema, name });
+      .addTab(`SELECT * FROM "${schema}"."${name}" LIMIT 500;`, tabConnectionId);
     void useTabsStore.getState().run(id);
   };
 

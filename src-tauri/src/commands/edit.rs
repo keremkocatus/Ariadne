@@ -22,8 +22,13 @@ fn quote_ident(s: &str) -> String {
 
 /// `"schema"."table"` — bound to `to_regclass($1)` (resolves the relation to an oid;
 /// more robust than matching nspname — handles search_path/case/temp correctly).
-fn qualified(schema: &str, table: &str) -> String {
-    format!("{}.{}", quote_ident(schema), quote_ident(table))
+/// Without a schema (the executed SQL didn't qualify the name) the bare quoted name
+/// lets to_regclass resolve via search_path, matching what the query itself did.
+fn qualified(schema: Option<&str>, table: &str) -> String {
+    match schema {
+        Some(s) => format!("{}.{}", quote_ident(s), quote_ident(table)),
+        None => quote_ident(table),
+    }
 }
 
 /// Returns a table's primary-key columns in order. Empty Vec if there's no PK → the
@@ -31,7 +36,7 @@ fn qualified(schema: &str, table: &str) -> String {
 #[tauri::command]
 pub async fn get_primary_key(
     connection_id: String,
-    schema: String,
+    schema: Option<String>,
     table: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, AriadneError> {
@@ -44,7 +49,7 @@ pub async fn get_primary_key(
          WHERE con.contype = 'p' AND con.conrelid = to_regclass($1) \
          ORDER BY array_position(con.conkey, a.attnum)",
     )
-    .bind(qualified(&schema, &table))
+    .bind(qualified(schema.as_deref(), &table))
     .fetch_all(&conn.pool)
     .await
     .map_err(AriadneError::from)?;
@@ -70,7 +75,7 @@ pub struct UpdateResult {
 #[tauri::command]
 pub async fn update_cell(
     connection_id: String,
-    schema: String,
+    schema: Option<String>,
     table: String,
     pk: Vec<PkPredicate>,
     column: String,
@@ -80,7 +85,7 @@ pub async fn update_cell(
     let conn = state.connection(&connection_id)?;
     do_update_cell(
         &conn.pool,
-        &schema,
+        schema.as_deref(),
         &table,
         &pk,
         &column,
@@ -93,7 +98,7 @@ pub async fn update_cell(
 /// column type, builds the SQL, and applies it inside a single-row-guarded transaction.
 async fn do_update_cell(
     pool: &PgPool,
-    schema: &str,
+    schema: Option<&str>,
     table: &str,
     pk: &[PkPredicate],
     column: &str,
@@ -149,7 +154,7 @@ async fn do_update_cell(
 /// `new_value` Some → `SET col = $1::type` + PK $2..; None → `SET col = NULL` + PK $1..
 /// PK comparison is `col::text = $n` (both sides are text, so they match without a cast).
 fn build_update<'a>(
-    schema: &str,
+    schema: Option<&str>,
     table: &str,
     pk: &'a [PkPredicate],
     column: &str,
@@ -204,7 +209,7 @@ mod tests {
     #[test]
     fn build_update_value_numbers_params_after_set() {
         let pks = [pk("id", "7")];
-        let (sql, params) = build_update("public", "t", &pks, "name", "text", Some("bob"));
+        let (sql, params) = build_update(Some("public"), "t", &pks, "name", "text", Some("bob"));
         assert_eq!(
             sql,
             "UPDATE \"public\".\"t\" SET \"name\" = $1::text WHERE \"id\"::text = $2"
@@ -215,7 +220,7 @@ mod tests {
     #[test]
     fn build_update_null_starts_pk_at_one() {
         let pks = [pk("id", "7")];
-        let (sql, params) = build_update("public", "t", &pks, "name", "text", None);
+        let (sql, params) = build_update(Some("public"), "t", &pks, "name", "text", None);
         assert_eq!(
             sql,
             "UPDATE \"public\".\"t\" SET \"name\" = NULL WHERE \"id\"::text = $1"
@@ -226,12 +231,25 @@ mod tests {
     #[test]
     fn build_update_composite_pk() {
         let pks = [pk("a", "1"), pk("b", "2")];
-        let (sql, params) = build_update("s", "t", &pks, "v", "integer", Some("9"));
+        let (sql, params) = build_update(Some("s"), "t", &pks, "v", "integer", Some("9"));
         assert_eq!(
             sql,
             "UPDATE \"s\".\"t\" SET \"v\" = $1::integer WHERE \"a\"::text = $2 AND \"b\"::text = $3"
         );
         assert_eq!(params, vec!["9", "1", "2"]);
+    }
+
+    #[test]
+    fn build_update_bare_name_without_schema() {
+        // A schema-less source table (unqualified SQL) targets the bare name; the
+        // to_regclass lookups resolve it via search_path, same as the query did.
+        let pks = [pk("id", "7")];
+        let (sql, params) = build_update(None, "t", &pks, "name", "text", Some("x"));
+        assert_eq!(
+            sql,
+            "UPDATE \"t\" SET \"name\" = $1::text WHERE \"id\"::text = $2"
+        );
+        assert_eq!(params, vec!["x", "7"]);
     }
 
     #[tokio::test]
@@ -264,7 +282,7 @@ mod tests {
         // (1) normal update: exactly 1 row.
         let r = do_update_cell(
             &pool,
-            &tsch,
+            Some(tsch.as_str()),
             "ariadne_edit",
             &[pk("id", "1")],
             "name",
@@ -280,9 +298,16 @@ mod tests {
         assert_eq!(got, "zzz");
 
         // (2) writing NULL.
-        do_update_cell(&pool, &tsch, "ariadne_edit", &[pk("id", "2")], "name", None)
-            .await
-            .unwrap();
+        do_update_cell(
+            &pool,
+            Some(tsch.as_str()),
+            "ariadne_edit",
+            &[pk("id", "2")],
+            "name",
+            None,
+        )
+        .await
+        .unwrap();
         let is_null: bool = sqlx::query_scalar("SELECT name IS NULL FROM ariadne_edit WHERE id=2")
             .fetch_one(&pool)
             .await
@@ -292,7 +317,7 @@ mod tests {
         // (3) multi-match (g=5 hits two rows) → rollback + error; data unchanged.
         let err = do_update_cell(
             &pool,
-            &tsch,
+            Some(tsch.as_str()),
             "ariadne_dup",
             &[pk("g", "5")],
             "name",

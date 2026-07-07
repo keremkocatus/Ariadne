@@ -80,7 +80,7 @@ export function ResultArea({ tabId, onFetchMore }: { tabId: string; onFetchMore:
           ctx={
             {
               connectionId: tab.connectionId,
-              sourceTable: tab.sourceTable,
+              sourceTable: q.sourceTable,
               readOnly: isReadOnly,
               columns: q.columns,
               row: q.rows[cell.rowIndex],

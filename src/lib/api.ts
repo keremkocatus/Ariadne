@@ -192,14 +192,14 @@ export interface PkPredicate {
 }
 export function getPrimaryKey(
   connectionId: string,
-  schema: string,
+  schema: string | null,
   table: string,
 ): Promise<string[]> {
   return invoke("get_primary_key", { connectionId, schema, table });
 }
 export function updateCell(args: {
   connectionId: string;
-  schema: string;
+  schema: string | null;
   table: string;
   pk: PkPredicate[];
   column: string;
@@ -243,8 +243,21 @@ export interface Page {
   fetched_total: number;
   elapsed_ms: number;
 }
+/// The single table a plain SELECT reads from (backend-derived from the executed
+/// statement) — the basis for cell editing. schema is null when the SQL didn't
+/// qualify the name.
+export interface SourceTable {
+  schema: string | null;
+  name: string;
+}
 export type StatementResult =
-  | { kind: "rows"; columns: ColumnMeta[]; first_page: Page; truncated_cells: boolean }
+  | {
+      kind: "rows";
+      columns: ColumnMeta[];
+      first_page: Page;
+      truncated_cells: boolean;
+      source_table?: SourceTable | null;
+    }
   | { kind: "affected"; command: string; row_count: number }
   | { kind: "empty"; command: string };
 export type TxStatus = "idle" | "in_transaction" | "aborted";

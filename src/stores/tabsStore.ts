@@ -7,6 +7,7 @@ import type {
   ColumnMeta,
   Confirmation,
   ObjectInfo,
+  SourceTable,
   StatementResult,
   TxStatus,
 } from "@/lib/api";
@@ -25,6 +26,10 @@ export interface QueryState {
   fetchedTotal: number;
   elapsedMs: number;
   extra: StatementResult[]; // non-rows results (affected/empty)
+  /// Backend-derived from the EXECUTED statement: set iff it was a plain single-table
+  /// SELECT (see api.SourceTable). Basis for cell editing — reflects what actually
+  /// ran, so editing the SQL text can't invalidate or falsify it.
+  sourceTable: SourceTable | null;
   running: boolean;
   fetchingMore: boolean;
   error?: AriadneError | null;
@@ -71,10 +76,6 @@ export interface Tab {
   filePath: string | null;
   /// The file's last saved/opened content — dirty = `sql !== savedSql`.
   savedSql: string | null;
-  /// Whether the tab was opened from a table (explorer double-click / palette "open
-  /// table"). If set, one of the cell-editing conditions is met (the others: PK
-  /// resolves + PK values are in the row). null for arbitrary/JOIN queries → view-only.
-  sourceTable: { schema: string; name: string } | null;
   query: QueryState;
 }
 
@@ -116,6 +117,7 @@ function emptyQuery(): QueryState {
     fetchedTotal: 0,
     elapsedMs: 0,
     extra: [],
+    sourceTable: null,
     running: false,
     fetchingMore: false,
     txStatus: "idle",
@@ -130,11 +132,7 @@ function emptyQuery(): QueryState {
   };
 }
 
-function newTab(
-  sql = "",
-  connectionId: string | null = null,
-  sourceTable: { schema: string; name: string } | null = null,
-): Tab {
+function newTab(sql = "", connectionId: string | null = null): Tab {
   return {
     id: crypto.randomUUID(),
     title: "Query",
@@ -142,7 +140,6 @@ function newTab(
     connectionId,
     filePath: null,
     savedSql: null,
-    sourceTable,
     query: emptyQuery(),
   };
 }
@@ -177,11 +174,7 @@ interface TabsState {
   /// each launch and the allocator skips numbers held by restored tabs.
   nextTabNumber: number;
 
-  addTab: (
-    sql?: string,
-    connectionId?: string | null,
-    sourceTable?: { schema: string; name: string } | null,
-  ) => string;
+  addTab: (sql?: string, connectionId?: string | null) => string;
   /// Updates a single cell of the result grid in place: after a successful UPDATE it
   /// refreshes the grid WITHOUT re-running the query.
   patchCell: (id: string, rowIndex: number, colIndex: number, value: string | null) => void;
@@ -306,10 +299,10 @@ export const useTabsStore = create<TabsState>()(
   dirtyCloseRequest: null,
   nextTabNumber: 1,
 
-  addTab(sql, connectionId, sourceTable) {
+  addTab(sql, connectionId) {
     const connId = connectionId ?? useConnectionStore.getState().activeConnectionId;
     const { number, next } = allocTabNumber(get().tabs, get().nextTabNumber);
-    const t = { ...newTab(sql, connId, sourceTable ?? null), title: `Query ${number}` };
+    const t = { ...newTab(sql, connId), title: `Query ${number}` };
     set((s) => ({ tabs: [...s.tabs, t], activeTabId: t.id, nextTabNumber: next }));
     return t.id;
   },
@@ -375,16 +368,12 @@ export const useTabsStore = create<TabsState>()(
         if (t.id !== id) return t;
         // Editing stales the error marker (the offset now points at the wrong place):
         // the marker is hidden, the error banner stays until the next run.
+        // (Editing does NOT affect cell editability — query.sourceTable describes the
+        // EXECUTED statement and only changes on the next run.)
         const needStale = t.query.error?.position != null && !t.query.markerStale;
-        // Once the user edits the SQL, the tab may no longer be "SELECT * FROM
-        // sourceTable" → clear sourceTable so cell editing can't target the WRONG
-        // table. openRelation/openTable set the sql directly via addTab (they don't go
-        // through setSql), so the marker is preserved there.
-        const sourceTable = t.sourceTable != null ? null : t.sourceTable;
         return {
           ...t,
           sql,
-          sourceTable,
           query: needStale ? { ...t.query, markerStale: true } : t.query,
         };
       }),
@@ -509,6 +498,7 @@ export const useTabsStore = create<TabsState>()(
         hasMore: rowsStmt?.kind === "rows" ? rowsStmt.first_page.has_more : false,
         fetchedTotal: rowsStmt?.kind === "rows" ? rowsStmt.first_page.fetched_total : 0,
         elapsedMs: rowsStmt?.kind === "rows" ? rowsStmt.first_page.elapsed_ms : 0,
+        sourceTable: rowsStmt?.kind === "rows" ? (rowsStmt.source_table ?? null) : null,
         extra: res.statements.filter((s) => s.kind !== "rows"),
         // Partial result: statements + (if any) the error are shown together.
         error: res.error ?? null,
@@ -544,6 +534,7 @@ export const useTabsStore = create<TabsState>()(
         columns: [],
         rows: [],
         extra: [],
+        sourceTable: null,
         hasMore: false,
         fetchedTotal: 0,
         error: api.isAriadneError(e) ? e : { kind: "internal", message: String(e) },
@@ -645,7 +636,6 @@ export const useTabsStore = create<TabsState>()(
           connectionId: t.connectionId,
           filePath: t.filePath,
           savedSql: t.savedSql,
-          sourceTable: t.sourceTable,
         })),
         activeTabId: s.activeTabId,
       }),
@@ -659,16 +649,18 @@ export const useTabsStore = create<TabsState>()(
             connectionId?: string | null;
             filePath?: string | null;
             savedSql?: string | null;
-            sourceTable?: { schema: string; name: string } | null;
           }[];
           activeTabId?: string | null;
         };
+        // Fields are listed explicitly (no spread) so extra properties persisted by
+        // older versions (e.g. the removed tab-level sourceTable) are dropped.
         const tabs: Tab[] = (p.tabs ?? []).map((t) => ({
-          ...t,
+          id: t.id,
+          title: t.title,
+          sql: t.sql,
           connectionId: t.connectionId ?? null,
           filePath: t.filePath ?? null,
           savedSql: t.savedSql ?? null,
-          sourceTable: t.sourceTable ?? null,
           query: emptyQuery(),
         }));
         return {

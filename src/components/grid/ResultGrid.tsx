@@ -6,6 +6,9 @@ import type { ColumnMeta } from "@/lib/api";
 
 const ROW_H = 24;
 const COL_W = 168;
+// The row-number gutter (sticky left, outside the column virtualizer). 48px fits the
+// 6-digit numbers of the 100k row cap.
+const GUTTER_W = 48;
 // Above this row count, generating JSON/Markdown could block the UI thread; those
 // items are disabled while the CSV/TSV path stays open.
 const HEAVY_FORMAT_LIMIT = 50_000;
@@ -24,13 +27,14 @@ interface Props {
   onCellActivate?: (rowIndex: number, colIndex: number) => void;
 }
 
-/// Column-scoped selection: a vertical range of rows within a single column. `col` is
-/// fixed to the column the selection started in; shift/ctrl extend within it. Only the
-/// cells in `col` are highlighted (not whole rows), and Ctrl+C copies those cells.
+/// Selection: a set of row indexes scoped to `col`. A numeric `col` is the classic
+/// column-scoped selection (only that column's cells light up; Ctrl+C copies them
+/// newline-joined). `col: "row"` is a whole-row selection started from the gutter:
+/// all cells of the selected rows light up and Ctrl+C copies full rows as TSV.
 interface Sel {
   rows: Set<number>;
   anchor: number;
-  col: number;
+  col: number | "row";
 }
 
 export function ResultGrid({
@@ -140,14 +144,45 @@ export function ResultGrid({
     });
   };
 
-  // Ctrl/Cmd+C copies the selected column's cells (newline-joined), matching the
-  // single-column selection. The grid container is focusable so it receives the key.
+  // Gutter click → whole-row selection. Same shift/ctrl semantics as cells, but
+  // shift/ctrl only CONTINUE a selection that is already row-scoped; after a cell
+  // selection they restart in row mode (mixing the two scopes would be ambiguous).
+  const clickGutter = (e: React.MouseEvent, r: number) => {
+    setSel((prev) => {
+      const rowPrev = prev?.col === "row" ? prev : null;
+      if (e.shiftKey && rowPrev) {
+        const lo = Math.min(rowPrev.anchor, r);
+        const hi = Math.max(rowPrev.anchor, r);
+        const set = new Set<number>();
+        for (let i = lo; i <= hi; i++) set.add(i);
+        return { rows: set, anchor: rowPrev.anchor, col: "row" };
+      }
+      if ((e.ctrlKey || e.metaKey) && rowPrev) {
+        const set = new Set(rowPrev.rows);
+        if (set.has(r)) set.delete(r);
+        else set.add(r);
+        return { rows: set, anchor: r, col: "row" };
+      }
+      return { rows: new Set([r]), anchor: r, col: "row" };
+    });
+  };
+
+  // Ctrl/Cmd+C: column selection copies the column's cells newline-joined; row
+  // selection copies full rows as TSV without headers (splits into spreadsheet
+  // columns; toDelimited isn't reused because it always prepends a header row).
+  // The grid container is focusable so it receives the key.
   const onKeyDown = (e: React.KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
       if (!sel || sel.rows.size === 0) return;
       e.preventDefault();
       const sorted = [...sel.rows].sort((a, b) => a - b);
-      const text = sorted.map((i) => rows[i]?.[sel.col] ?? "").join("\n");
+      if (sel.col === "row") {
+        const text = sorted.map((i) => (rows[i] ?? []).map((v) => v ?? "").join("\t")).join("\n");
+        void copyText(text, `${sorted.length} row${sorted.length > 1 ? "s" : ""} copied`);
+        return;
+      }
+      const col = sel.col;
+      const text = sorted.map((i) => rows[i]?.[col] ?? "").join("\n");
       void copyText(text, `${sorted.length} cell${sorted.length > 1 ? "s" : ""} copied`);
     }
   };
@@ -158,8 +193,15 @@ export function ResultGrid({
     e.preventDefault();
     const r = Number(cell.dataset.row);
     const c = Number(cell.dataset.col);
-    // Right-click outside the selection narrows it to that cell; inside, it keeps the selection.
-    setSel((prev) => (prev && prev.rows.has(r) ? { ...prev, col: c } : { rows: new Set([r]), anchor: r, col: c }));
+    // Right-click outside the selection narrows it to that cell; inside, it keeps the
+    // selection (a row selection stays row-scoped so the row copy items apply).
+    setSel((prev) =>
+      prev && prev.rows.has(r)
+        ? prev.col === "row"
+          ? prev
+          : { ...prev, col: c }
+        : { rows: new Set([r]), anchor: r, col: c },
+    );
     setMenu({ x: e.clientX, y: e.clientY });
   };
 
@@ -178,21 +220,26 @@ export function ResultGrid({
         onContextMenu={openContextMenu}
       >
         <div
-          style={{ width: colV.getTotalSize(), height: rowV.getTotalSize() + ROW_H }}
+          style={{ width: colV.getTotalSize() + GUTTER_W, height: rowV.getTotalSize() + ROW_H }}
           className="relative"
         >
           {/* Header (sticky) */}
           <div
             className="sticky top-0 z-10 border-b border-border bg-bg-elev"
-            style={{ height: ROW_H, width: colV.getTotalSize() }}
+            style={{ height: ROW_H, width: colV.getTotalSize() + GUTTER_W }}
           >
+            {/* Corner cell above the row-number gutter (sticky on both axes). */}
+            <div
+              className="sticky left-0 z-20 h-full border-r border-border bg-bg-elev"
+              style={{ width: GUTTER_W }}
+            />
             {cols.map((c) => {
               const col = columns[c.index];
               return (
                 <div
                   key={c.index}
-                  className="absolute flex h-full items-center gap-1 border-r border-border px-2 font-mono text-[11px] font-medium"
-                  style={{ left: c.start, width: c.size }}
+                  className="absolute top-0 flex h-full items-center gap-1 border-r border-border px-2 font-mono text-[11px] font-medium"
+                  style={{ left: GUTTER_W + c.start, width: c.size }}
                   title={`${col.name} · ${col.type_name}`}
                 >
                   <span className="truncate">{col.name}</span>
@@ -211,17 +258,37 @@ export function ResultGrid({
           {/* Body */}
           {virtualRows.map((vr) => {
             const row = rows[vr.index];
+            const rowMode = sel?.col === "row";
+            const rowSelected = rowMode && (sel?.rows.has(vr.index) ?? false);
             return (
               <div
                 key={vr.index}
                 className={cn("absolute", vr.index % 2 === 1 && "bg-bg-elev/40")}
-                style={{ top: vr.start + ROW_H, height: vr.size, width: colV.getTotalSize() }}
+                style={{
+                  top: vr.start + ROW_H,
+                  height: vr.size,
+                  width: colV.getTotalSize() + GUTTER_W,
+                }}
               >
+                {/* Row-number gutter: sticky-left, opaque (covers cells sliding under
+                    it), no data-cell → context menu / double-click ignore it. */}
+                <div
+                  onClick={(e) => clickGutter(e, vr.index)}
+                  className={cn(
+                    "sticky left-0 z-[5] flex h-full cursor-default items-center justify-end border-r border-b border-border bg-bg-elev pr-2 font-mono text-[10px] tabular-nums text-fg-muted",
+                    rowSelected && "bg-fg/20 text-fg",
+                  )}
+                  style={{ width: GUTTER_W }}
+                >
+                  {vr.index + 1}
+                </div>
                 {cols.map((c) => {
                   const v = row[c.index];
-                  // Only cells in the selected column light up (column-scoped selection).
-                  const selected = sel?.col === c.index && (sel?.rows.has(vr.index) ?? false);
-                  const focused = sel?.anchor === vr.index && sel?.col === c.index;
+                  // Column selection lights up only that column's cells; a row
+                  // selection lights up every cell of the selected rows.
+                  const selected =
+                    (sel?.rows.has(vr.index) ?? false) && (rowMode || sel?.col === c.index);
+                  const focused = !rowMode && sel?.anchor === vr.index && sel?.col === c.index;
                   return (
                     <div
                       key={c.index}
@@ -231,11 +298,11 @@ export function ResultGrid({
                       onClick={(e) => clickCell(e, vr.index, c.index)}
                       onDoubleClick={() => onCellActivate?.(vr.index, c.index)}
                       className={cn(
-                        "absolute flex h-full cursor-default items-center truncate border-r border-b border-border/50 px-2 font-mono text-[11px]",
+                        "absolute top-0 flex h-full cursor-default items-center truncate border-r border-b border-border/50 px-2 font-mono text-[11px]",
                         selected && "bg-fg/20",
                         focused && "ring-1 ring-inset ring-fg-muted",
                       )}
-                      style={{ left: c.start, width: c.size }}
+                      style={{ left: GUTTER_W + c.start, width: c.size }}
                       title={v ?? "NULL"}
                     >
                       {v === null ? (
@@ -315,7 +382,8 @@ function CopyMenu({
   const targetMatrix = targetRows.map((i) => rows[i]);
   const rowsLabel = selRows ? `${selRows.length} row${selRows.length > 1 ? "s" : ""}` : "all rows";
   const heavy = targetRows.length > HEAVY_FORMAT_LIMIT;
-  const focusCol = sel?.col ?? null;
+  // Row-scoped selections have no focused column → the cell/column items are hidden.
+  const focusCol = typeof sel?.col === "number" ? sel.col : null;
 
   const run = (fn: () => void) => {
     fn();

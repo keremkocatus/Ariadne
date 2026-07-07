@@ -22,6 +22,15 @@ pub struct RunResult {
     pub error_statement_index: Option<usize>,
 }
 
+/// The single table a plain SELECT reads from — the basis for cell editing.
+/// `schema` is `None` when the SQL didn't qualify the name (resolved downstream via
+/// search_path).
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceTable {
+    pub schema: Option<String>,
+    pub name: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StatementResult {
@@ -29,6 +38,11 @@ pub enum StatementResult {
         columns: Vec<ColumnMeta>,
         first_page: Page,
         truncated_cells: bool,
+        /// Present only when the statement was a plain single-table SELECT
+        /// (no joins/set-ops/GROUP BY/DISTINCT/CTEs) — grid rows then map 1:1 to
+        /// physical rows, so cell editing is safe to offer.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_table: Option<SourceTable>,
     },
     Affected {
         command: String,

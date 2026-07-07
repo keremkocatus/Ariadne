@@ -13,7 +13,8 @@ import {
 
 export interface CellEditContext {
   connectionId: string;
-  sourceTable: { schema: string; name: string } | null;
+  /// Derived by the backend from the executed statement (null → read-only viewer).
+  sourceTable: { schema: string | null; name: string } | null;
   readOnly: boolean;
   columns: ColumnMeta[];
   row: (string | null)[];
@@ -63,7 +64,7 @@ export function CellDialog({
       setEdit({
         editable: false,
         reason:
-          "This result didn't come from a single table. Open the table from the sidebar to edit its rows.",
+          "The executed query doesn't read from a single plain table (JOIN, GROUP BY, DISTINCT, UNION or a subquery). Run a plain single-table SELECT to edit.",
       });
       return;
     }

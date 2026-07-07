@@ -2,7 +2,7 @@
 //! destructive, does it transition transaction state. Pure functions — no DB
 //! access, testable without a UI.
 
-use super::types::TxStatus;
+use super::types::{SourceTable, TxStatus};
 
 pub struct StmtInfo {
     pub command: String,
@@ -10,6 +10,8 @@ pub struct StmtInfo {
     pub returns_rows: bool,
     pub destructive: Option<(String, String)>, // (kind, table)
     pub tx_transition: Option<TxStatus>,
+    /// For a plain single-table SELECT: the table it reads. See `derive_source_table`.
+    pub source_table: Option<SourceTable>,
 }
 
 pub fn stmt_returns_rows(sql: &str) -> bool {
@@ -26,6 +28,7 @@ pub fn classify(sql: &str) -> StmtInfo {
         returns_rows: false,
         destructive: None,
         tx_transition: None,
+        source_table: None,
     };
 
     let Ok(parsed) = pg_query::parse(sql) else {
@@ -47,7 +50,10 @@ pub fn classify(sql: &str) -> StmtInfo {
     };
 
     match node {
-        N::SelectStmt(_) => info.returns_rows = true,
+        N::SelectStmt(s) => {
+            info.returns_rows = true;
+            info.source_table = derive_source_table(s);
+        }
         N::ExplainStmt(_) => info.returns_rows = true,
         N::VariableShowStmt(_) => info.returns_rows = true,
         N::InsertStmt(s) => {
@@ -92,6 +98,41 @@ pub fn classify(sql: &str) -> StmtInfo {
         _ => {}
     }
     info
+}
+
+/// `Some` only when the SELECT reads exactly one physical table and every grid row
+/// maps 1:1 to a physical row: a single RangeVar FROM item, no set-ops, no CTEs, no
+/// GROUP BY/DISTINCT/HAVING/window, no SELECT INTO. WHERE/ORDER BY/LIMIT/locking and
+/// aliases don't affect row identity and are allowed — that's the point: cell editing
+/// keeps working on filtered views of a table.
+fn derive_source_table(s: &pg_query::protobuf::SelectStmt) -> Option<SourceTable> {
+    use pg_query::protobuf::node::Node as N;
+    use pg_query::protobuf::SetOperation;
+
+    if s.op() != SetOperation::SetopNone || s.larg.is_some() || s.rarg.is_some() {
+        return None;
+    }
+    if s.with_clause.is_some()
+        || !s.distinct_clause.is_empty()
+        || !s.group_clause.is_empty()
+        || s.having_clause.is_some()
+        || !s.window_clause.is_empty()
+        || !s.values_lists.is_empty()
+        || s.into_clause.is_some()
+    {
+        return None;
+    }
+    if s.from_clause.len() != 1 {
+        return None;
+    }
+    // A JoinExpr / subquery / function FROM item fails this match — only a bare table.
+    let N::RangeVar(rv) = s.from_clause[0].node.as_ref()? else {
+        return None;
+    };
+    Some(SourceTable {
+        schema: (!rv.schemaname.is_empty()).then(|| rv.schemaname.clone()),
+        name: rv.relname.clone(),
+    })
 }
 
 fn rangevar_name(rv: Option<&pg_query::protobuf::RangeVar>) -> String {
@@ -172,5 +213,53 @@ mod tests {
         assert!(classify("INSERT INTO t VALUES (1) RETURNING id").returns_rows);
         assert!(!classify("INSERT INTO t VALUES (1)").returns_rows);
         assert!(!classify("UPDATE t SET x=1 WHERE id=1").returns_rows);
+    }
+
+    fn source(sql: &str) -> Option<(Option<String>, String)> {
+        classify(sql).source_table.map(|s| (s.schema, s.name))
+    }
+
+    #[test]
+    fn source_table_simple_select() {
+        assert_eq!(
+            source("SELECT * FROM users WHERE id > 1 ORDER BY id LIMIT 10"),
+            Some((None, "users".into()))
+        );
+        assert_eq!(
+            source("SELECT id FROM users FOR UPDATE"),
+            Some((None, "users".into()))
+        );
+    }
+
+    #[test]
+    fn source_table_qualified_and_alias() {
+        assert_eq!(
+            source(r#"SELECT u.id FROM "public"."users" u"#),
+            Some((Some("public".into()), "users".into()))
+        );
+    }
+
+    #[test]
+    fn source_table_excluded() {
+        for sql in [
+            "SELECT * FROM a JOIN b ON a.id = b.id",
+            "SELECT * FROM a, b",
+            "SELECT x, count(*) FROM a GROUP BY x",
+            "SELECT DISTINCT x FROM a",
+            "SELECT x FROM a UNION SELECT x FROM b",
+            "WITH x AS (SELECT 1) SELECT * FROM x",
+            "SELECT * FROM (SELECT 1) sub",
+            "SELECT * FROM generate_series(1, 10)",
+            "SELECT x INTO t2 FROM a",
+            "SELECT 1",
+        ] {
+            assert_eq!(source(sql), None, "should be excluded: {sql}");
+        }
+    }
+
+    #[test]
+    fn source_table_absent_on_dml() {
+        assert_eq!(source("UPDATE users SET x = 1 WHERE id = 1"), None);
+        assert_eq!(source("INSERT INTO users VALUES (1) RETURNING id"), None);
     }
 }

@@ -1,8 +1,9 @@
 // Helpers for single-cell editing. Decides whether a result cell is editable and
 // resolves the primary-key columns (on-demand, memoized). Editing is enabled only
-// when THREE conditions all hold: (a) the tab was opened from a table (sourceTable),
-// (b) the table's PK resolves, (c) the PK columns are present in the result with
-// non-null values (so a WHERE can be built). Otherwise it's a read-only viewer.
+// when THREE conditions all hold: (a) the EXECUTED statement read exactly one table
+// (the backend derives sourceTable from the statement's AST), (b) the table's PK
+// resolves, (c) the PK columns are present in the result with non-null values (so a
+// WHERE can be built). Otherwise it's a read-only viewer.
 
 import { getPrimaryKey, type ColumnMeta, type PkPredicate } from "@/lib/api";
 
@@ -22,10 +23,12 @@ export function isTruncatedCell(value: string | null): boolean {
 /// attempt asks again.
 export async function resolvePrimaryKey(
   connectionId: string,
-  schema: string,
+  schema: string | null,
   name: string,
 ): Promise<string[]> {
-  const key = `${connectionId}:${schema}.${name}`;
+  // Schema-less names resolve via search_path server-side; the sentinel keeps a
+  // qualified "public.users" and a bare "users" as distinct cache entries.
+  const key = `${connectionId}:${schema ?? "<search_path>"}.${name}`;
   const cached = pkCache.get(key);
   if (cached) return cached;
   const p = getPrimaryKey(connectionId, schema, name);
