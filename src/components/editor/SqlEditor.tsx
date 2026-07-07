@@ -220,7 +220,7 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
     <Editor
       height="100%"
       defaultLanguage="pgsql"
-      theme={theme === "light" ? "vs" : "vs-dark"}
+      theme={theme === "light" ? "ariadne-light" : "ariadne-dark"}
       value={value}
       onChange={(v) => onChange(v ?? "")}
       onMount={handleMount}
