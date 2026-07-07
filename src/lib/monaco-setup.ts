@@ -24,16 +24,6 @@ loader.config({ monaco });
 // SET, DELETE, INSERT, BEGIN are unreserved in Postgres and would render as plain
 // identifiers. A separate language id is used because the built-in registers its
 // tokenizer lazily on first use and would overwrite an override under the same id.
-// Word-boundary cases shared by the two word rules below. Order matters: earlier
-// entries win, so a word that is both (e.g. LEFT is an operator and a function)
-// keeps the built-in's original precedence.
-const wordCases = {
-  "@operators": "operator",
-  "@builtinVariables": "predefined",
-  "@builtinFunctions": "predefined",
-  "@keywords": "keyword",
-};
-
 monaco.languages.register({ id: "ariadne-pgsql" });
 monaco.languages.setLanguageConfiguration("ariadne-pgsql", pgsqlConf);
 monaco.languages.setMonarchTokensProvider("ariadne-pgsql", {
@@ -52,10 +42,37 @@ monaco.languages.setMonarchTokensProvider("ariadne-pgsql", {
       { include: "@scopes" },
       [/[;,.]/, "delimiter"],
       [/[()]/, "@brackets"],
-      [/[\w@#$]+(?=\s*\()/, { cases: { ...wordCases, "@default": "function" } }],
+      // Call sites: a word DIRECTLY followed by '(' (no whitespace — `INSERT INTO
+      // t (cols)` writes the column-list paren with a space, `f(x)` doesn't; the
+      // pragmatic heuristic every SQL grammar uses). Builtins win over keywords here
+      // so `replace(x)` stays a builtin even though REPLACE is also a keyword.
+      [
+        /[\w@#$]+(?=\()/,
+        {
+          cases: {
+            "@operators": "operator",
+            "@builtinVariables": "predefined",
+            "@builtinFunctions": "predefined",
+            "@keywords": "keyword",
+            "@default": "function",
+          },
+        },
+      ],
+      // Bare words: keywords win over builtins (CREATE OR REPLACE — REPLACE is a
+      // keyword here, not the replace() function), and types win over builtins
+      // (`text`/`date` as column types, not the same-named functions).
       [
         /[\w@#$]+/,
-        { cases: { ...wordCases, "@typeKeywords": "type", "@default": "identifier" } },
+        {
+          cases: {
+            "@operators": "operator",
+            "@builtinVariables": "predefined",
+            "@keywords": "keyword",
+            "@typeKeywords": "type",
+            "@builtinFunctions": "predefined",
+            "@default": "identifier",
+          },
+        },
       ],
       [/[<>=!%&+\-*/|~^]/, "operator"],
     ],
@@ -64,7 +81,7 @@ monaco.languages.setMonarchTokensProvider("ariadne-pgsql", {
   // not a keyword/builtin, so e.g. INTERVAL stays a keyword in `AT TIME ZONE` use.
   typeKeywords: [
     "SMALLINT", "INTEGER", "INT", "INT2", "INT4", "INT8", "BIGINT",
-    "DECIMAL", "NUMERIC", "REAL", "FLOAT4", "FLOAT8", "DOUBLE", "PRECISION",
+    "DECIMAL", "NUMERIC", "REAL", "FLOAT4", "FLOAT8", "DOUBLE", "PRECISION", "VARYING",
     "SERIAL", "BIGSERIAL", "SMALLSERIAL", "MONEY",
     "TEXT", "VARCHAR", "CHARACTER", "CHAR", "BPCHAR", "NAME", "CITEXT",
     "BYTEA", "TIMESTAMP", "TIMESTAMPTZ", "DATE", "TIME", "TIMETZ",
@@ -76,7 +93,7 @@ monaco.languages.setMonarchTokensProvider("ariadne-pgsql", {
   keywords: [
     ...pgsqlLanguage.keywords,
     // Unreserved-in-Postgres words that any SQL editor is expected to color.
-    ...["UPDATE", "SET", "DELETE", "INSERT", "VALUES", "TRUNCATE", "MERGE",
+    ...["UPDATE", "SET", "DELETE", "INSERT", "VALUES", "TRUNCATE", "MERGE", "REPLACE",
       "BEGIN", "START", "TRANSACTION", "WORK", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE",
       "ALTER", "DROP", "ADD", "RENAME", "OWNER", "INDEX", "VIEW", "MATERIALIZED",
       "SEQUENCE", "SCHEMA", "DATABASE", "EXTENSION", "TYPE", "DOMAIN",
