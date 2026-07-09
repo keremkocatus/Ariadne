@@ -6,9 +6,8 @@ autocomplete comes from an in-process cache, results from 200M-row tables are pa
 with server-side cursors rather than pulled into memory, and every query is
 cancellable.
 
-> **Status: early / pre-release (v0.0.2).** The core works and is used day to day, but
-> the app has not been through a formal release or wide testing yet. Expect rough
-> edges.
+> **Status: early / pre-release (v0.1.3).** The core works and is used day to day, but
+> the app has not been through wide testing yet. Expect rough edges.
 
 ## Highlights
 
@@ -28,7 +27,12 @@ cancellable.
 - **A real result grid.** Virtualized rendering, rich copy (CSV/TSV/JSON/Markdown),
   resizable columns, and a cell view/edit popup.
 - **Ergonomics.** Command palette (Ctrl+K), SQL formatter, `.sql` open/save, a server
-  activity view (`pg_stat_activity` with cancel/terminate), and a DB stats strip.
+  activity view (`pg_stat_activity` with cancel/terminate), a DB stats strip, and custom
+  Monaco themes (light/dark) matching the app palette.
+- **Lightweight and fast.** Native, not Electron: the app process runs at ~15-16 MB and
+  the webview at ~80-90 MB, and startup is near-instant.
+- **Cross-platform with auto-update.** Windows, macOS, and Linux installers, with a
+  signed in-app updater that checks GitHub Releases.
 
 ## Tech stack
 
@@ -40,6 +44,20 @@ cancellable.
   [react-arborist](https://github.com/brimdata/react-arborist) (tree),
   [TanStack Virtual](https://tanstack.com/virtual) (grid), [cmdk](https://github.com/pacocoursey/cmdk),
   Radix UI, [sql-formatter](https://github.com/sql-formatter-org/sql-formatter).
+
+## Download
+
+Pre-built installers for Windows, macOS, and Linux are published on the
+[Releases page](https://github.com/keremkocatus/Ariadne/releases/latest) — grab the
+installer for your platform, no build step required. The in-app updater checks for new
+releases automatically.
+
+- **Windows**: the `.exe` (NSIS) is unsigned (no code-signing certificate yet), so
+  SmartScreen shows an "Unknown publisher" warning on first run — click "More info" →
+  "Run anyway".
+- **macOS**: unsigned/un-notarized, so Gatekeeper blocks a plain double-click — right-click
+  the app → "Open" the first time.
+- **Linux**: the `.deb`/`.AppImage` install and run without any warning.
 
 ## Documentation
 
