@@ -69,6 +69,29 @@ pub async fn run_query(
     Ok(result)
 }
 
+/// The plan of a single statement as `EXPLAIN (FORMAT JSON)` text. `analyze` runs the
+/// statement for real timings, inside a transaction that is rolled back. Cancellable
+/// through `cancel_query` with the same `query_id`.
+#[tauri::command]
+pub async fn explain_query(
+    connection_id: String,
+    sql: String,
+    query_id: String,
+    analyze: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<String, AriadneError> {
+    let conn = state.connection(&connection_id)?;
+    tracing::debug!(query_id = %query_id, sql = %sql, "explain_query");
+    exec::explain(
+        &conn.exec,
+        &conn.pool,
+        &sql,
+        &query_id,
+        analyze.unwrap_or(false),
+    )
+    .await
+}
+
 #[tauri::command]
 pub async fn fetch_page(
     connection_id: String,

@@ -2,7 +2,8 @@ import Editor, { type OnMount, type Monaco } from "@monaco-editor/react";
 import { useEffect, useRef } from "react";
 import type { editor } from "monaco-editor";
 import { registerSqlProviders, setActiveConnection } from "@/lib/monaco/providers";
-import { setRunSelectionGetter, setFormatAction } from "@/lib/editorRun";
+import { setRunSelectionGetter, setFormatAction, setSnippetPlacer } from "@/lib/editorRun";
+import { explainActive } from "@/lib/queryActions";
 import { formatSql } from "@/lib/format";
 import { toast } from "sonner";
 import { getObjectInfo, type ObjectInfo } from "@/lib/api";
@@ -27,6 +28,59 @@ function formatInEditor(ed: editor.IStandaloneCodeEditor) {
   if (formatted.trimEnd() === src.trimEnd()) return; // already formatted
   ed.executeEdits("ariadne-format", [{ range, text: formatted, forceMoveMarkers: true }]);
   ed.pushUndoStop();
+}
+
+/// Line/column (1-based) of a character index in LF-normalized text.
+function positionAt(text: string, index: number): { lineNumber: number; column: number } {
+  let lineNumber = 1;
+  let lineStart = 0;
+  for (let i = text.indexOf("\n"); i !== -1 && i < index; i = text.indexOf("\n", i + 1)) {
+    lineNumber++;
+    lineStart = i + 1;
+  }
+  return { lineNumber, column: index - lineStart + 1 };
+}
+
+/// Puts a snippet into the document and selects it: an existing identical copy is
+/// reused; otherwise it is written on the cursor's line when that line is blank, or
+/// on a new line right below it. Everything is compared in LF form because the model
+/// may hold CRLF, where a line break is two characters.
+function placeSnippetInEditor(ed: editor.IStandaloneCodeEditor, monaco: Monaco, raw: string) {
+  const model = ed.getModel();
+  const snippet = raw.trim().replace(/\r\n?/g, "\n");
+  if (!model || !snippet) return null;
+  const snippetLines = snippet.split("\n");
+
+  const rangeFrom = (start: { lineNumber: number; column: number }) => {
+    const endLine = start.lineNumber + snippetLines.length - 1;
+    const lastLen = snippetLines[snippetLines.length - 1].length;
+    const endColumn = snippetLines.length === 1 ? start.column + lastLen : lastLen + 1;
+    return new monaco.Range(start.lineNumber, start.column, endLine, endColumn);
+  };
+
+  const doc = model.getValue(monaco.editor.EndOfLinePreference.LF);
+  const found = doc.indexOf(snippet);
+  let range;
+  if (found !== -1) {
+    range = rangeFrom(positionAt(doc, found));
+  } else {
+    const line = (ed.getPosition() ?? model.getFullModelRange().getEndPosition()).lineNumber;
+    const lineEnd = model.getLineMaxColumn(line);
+    const blank = model.getLineContent(line).trim() === "";
+    const edit = blank
+      ? { range: new monaco.Range(line, 1, line, lineEnd), text: snippet }
+      : { range: new monaco.Range(line, lineEnd, line, lineEnd), text: `\n${snippet}` };
+    ed.pushUndoStop();
+    ed.executeEdits("ariadne-snippet", [{ ...edit, forceMoveMarkers: true }]);
+    ed.pushUndoStop();
+    range = rangeFrom({ lineNumber: blank ? line : line + 1, column: 1 });
+  }
+  ed.setSelection(range);
+  ed.revealRangeInCenterIfOutsideViewport(range);
+  return {
+    sql: model.getValueInRange(range),
+    selectionOffset: model.getOffsetAt(range.getStartPosition()),
+  };
 }
 
 interface SqlEditorProps {
@@ -98,6 +152,7 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
     return () => {
       setRunSelectionGetter(null);
       setFormatAction(null);
+      setSnippetPlacer(null);
     };
   }, []);
 
@@ -115,6 +170,27 @@ export function SqlEditor({ value, onChange, connectionId, onRun, onPeek, marker
       const sql = model.getValueInRange(sel);
       if (!sql.trim()) return null;
       return { sql, selectionOffset: model.getOffsetAt(sel.getStartPosition()) };
+    });
+
+    setSnippetPlacer((sql) => placeSnippetInEditor(ed, monaco, sql));
+
+    // Execution plan (SSMS: Ctrl+L). Replaces Monaco's "expand line selection"; with
+    // Shift it runs EXPLAIN ANALYZE. Also offered in the right-click menu.
+    ed.addAction({
+      id: "ariadne.explain",
+      label: "Explain Plan",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL],
+      contextMenuGroupId: "navigation",
+      contextMenuOrder: 1.6,
+      run: () => explainActive(false),
+    });
+    ed.addAction({
+      id: "ariadne.explainAnalyze",
+      label: "Explain Analyze (runs the statement)",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyL],
+      contextMenuGroupId: "navigation",
+      contextMenuOrder: 1.7,
+      run: () => explainActive(true),
     });
 
     // Run: Ctrl+Enter + Ctrl+E + F5 (SSMS).
