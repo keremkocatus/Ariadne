@@ -46,24 +46,36 @@ AriadneError = {
 | --- | --- |
 | `get_schema_snapshot` | `{ connectionId }` → `SchemaSnapshot` (the lightweight tree/search view) |
 | `refresh_schema` | `{ connectionId }` → `void` (rebuilds the cache in the background; start/finish via events) |
-| `get_relation_details` | `{ connectionId, schema, name }` → `{ indexes[], triggers[], size_bytes, live_rows }` |
+| `get_relation_details` | `{ connectionId, schema, name }` → `{ indexes[], triggers[], size_bytes, live_rows }` (the explorer's peek panel) |
+| `get_relation_full` | `{ connectionId, schema, name }` → `RelationFull` (the Details view: columns with defaults, indexes, constraints, incoming FKs, triggers, partitions, sizes, vacuum/analyze stats, view definition) |
 | `get_function_source` | `{ connectionId, fnOid }` → `string` (`CREATE OR REPLACE FUNCTION …`) |
+
+The snapshot's relations carry `parent_oid` / `partition_bound` for partitions, which is
+how the explorer nests them under their parent table. Indexes are returned structured
+(`method`, `key_columns`, `include_columns`, `predicate`, `size_bytes`, `scans`) next to
+the raw `definition`; triggers likewise (`timing`, `events`, `level`, `enabled`).
 
 ### Query execution
 
 | Command | Request → Response |
 | --- | --- |
 | `run_query` | `{ connectionId, sql, tabId, queryId, confirmed?, maxRowsPerPage? }` → `RunResult` |
+| `explain_query` | `{ connectionId, sql, queryId, analyze? }` → `string` (`EXPLAIN (FORMAT JSON)` of exactly one statement; `analyze` runs it inside a transaction that is rolled back; cancellable via `cancel_query`) |
 | `fetch_page` | `{ connectionId, queryId }` → `Page` (next page from the open cursor) |
 | `cancel_query` | `{ connectionId, queryId }` → `void` (`pg_cancel_backend`) |
 | `force_kill_query` | `{ connectionId, queryId }` → `bool` (`pg_terminate_backend`; whether a backend was signaled) |
 | `close_result` | `{ connectionId, tabId }` → `void` (releases the cursor/tx on tab close) |
 
-`RunResult` carries the statements, the transaction status, an optional
-`needs_confirmation` (the destructive guard), and — on a partial failure — the error and
-the failed statement index. A row-returning statement produces
-`{ kind: "rows", columns, first_page, truncated_cells }`; DML produces
-`{ kind: "affected", command, row_count }`; anything else `{ kind: "empty", command }`.
+`RunResult` carries the statements, `total_statements`, the transaction status, an
+optional `needs_confirmation` (the destructive guard), and — on a partial failure — the
+error, the failed statement's index and its `error_statement` metadata. Every statement
+result has `command` (a psql-like tag such as `CREATE FUNCTION`), a one-line `preview`
+and `elapsed_ms`. A row-returning statement produces
+`{ kind: "rows", columns, first_page, truncated_cells, partial }`; DML produces
+`{ kind: "affected", row_count }`; anything else `{ kind: "empty" }`.
+
+Only the script's **last** statement is paged through a cursor. Earlier `SELECT`s return
+a single page with `partial: true` when rows were left behind.
 
 ### Completion
 
@@ -79,12 +91,30 @@ All three are computed from the cache with no DB round-trip.
 
 | Command | Request → Response |
 | --- | --- |
-| `list_roles` | `{ connectionId }` → `RoleInfo[]` (`pg_roles`, read-only) |
+| `list_roles` | `{ connectionId }` → `RoleInfo[]` (`pg_roles`: attributes, membership in both directions, comment) |
+| `get_role_grants` | `{ connectionId, role }` → `RoleGrant[]` (privileges granted directly to the role in the current database) |
+| `execute_statements` | `{ connectionId, statements: string[] }` → `void` (UI-built role/privilege statements, in one transaction; the SQL is never logged because it can carry a password) |
 | `list_activity` | `{ connectionId }` → `ActivityRow[]` (`pg_stat_activity` client backends) |
 | `signal_backend` | `{ connectionId, pid, mode: "cancel" \| "terminate" }` → `bool` |
 | `db_stats` | `{ connectionId }` → `{ active_connections, max_connections?, cache_hit_ratio?, db_size_bytes? }` |
 
 `db_stats` deliberately has no CPU/RAM: host metrics can't be read with plain SQL.
+
+### Scheduled jobs (pg_cron)
+
+| Command | Request → Response |
+| --- | --- |
+| `cron_overview` | `{ connectionId }` → `{ installed, version?, cron_database?, current_database, has_run_details, jobs[] }` |
+| `cron_job_runs` | `{ connectionId, jobId, limit? }` → `CronRun[]` (newest first) |
+| `cron_save_job` | `{ connectionId, job: { job_id?, name, schedule, command, database?, active } }` → `number` (the job id) |
+| `cron_set_active` | `{ connectionId, jobId, active }` → `void` |
+| `cron_delete_job` | `{ connectionId, jobId }` → `void` |
+
+These call pg_cron's own API (`cron.schedule`, `cron.alter_job`, `cron.unschedule`) with
+bound parameters. `cron_overview` reports `installed: false` instead of failing when the
+connected database isn't the one pg_cron lives in. Each job carries its latest run and
+failure count, computed over the newest 5000 run records only — `cron.job_run_details`
+has no index on `jobid`.
 
 ### Data editing (data-write)
 
