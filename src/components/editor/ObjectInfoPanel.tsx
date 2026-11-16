@@ -72,14 +72,18 @@ export function ObjectInfoView({
           ) : (
             <div className="space-y-1">
               {details.indexes.map((ix) => (
-                <div key={ix.name} className="font-mono text-[11px]">
+                <div key={ix.name} className="font-mono text-[11px]" title={ix.definition}>
                   <span className="text-fg">{ix.name}</span>
                   {ix.is_primary ? (
                     <span className="ml-1 rounded bg-warn/20 px-1 text-[9px] text-warn">PRIMARY</span>
                   ) : ix.is_unique ? (
                     <span className="ml-1 rounded bg-fg/10 px-1 text-[9px] text-fg-muted">UNIQUE</span>
                   ) : null}
-                  <div className="text-[10px] text-fg-muted">{ix.definition}</div>
+                  <span className="ml-2 text-[10px] text-fg-muted">
+                    {ix.method} ({ix.key_columns.join(", ")})
+                    {ix.include_columns.length > 0 && ` include (${ix.include_columns.join(", ")})`}
+                    {ix.predicate && ` where ${ix.predicate}`}
+                  </span>
                 </div>
               ))}
             </div>

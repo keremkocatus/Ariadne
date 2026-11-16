@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tree } from "react-arborist";
-import { Pin, RefreshCw, Search } from "lucide-react";
+import { Code2, Copy, Hash, Maximize2, Pin, PinOff, RefreshCw, Search, Table2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fuzzyMatch } from "@/lib/fuzzy";
 import {
@@ -15,8 +15,11 @@ import { iconFor } from "./icons";
 import { NodeRow } from "./NodeRow";
 import { PeekPanel } from "./PeekPanel";
 import { ContextBar } from "./ContextBar";
-import { QuickActionMenu } from "./QuickActionMenu";
+import { QuickActionMenu, type QuickMenuItem } from "./QuickActionMenu";
 import { useTabsStore } from "@/stores/tabsStore";
+import { useUiStore } from "@/stores/uiStore";
+import { copyText } from "@/lib/clipboard";
+import { qualifiedName, quoteIdent } from "@/lib/pgFormat";
 
 const EMPTY_PINS: string[] = [];
 
@@ -49,9 +52,19 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
   const [peek, setPeek] = useState<PeekTarget | null>(null);
   // Right-click a schema node → "New query here" menu.
   const [schemaMenu, setSchemaMenu] = useState<{ schema: string; x: number; y: number } | null>(null);
+  // Right-click a table/view/function → its action menu.
+  const [objectMenu, setObjectMenu] = useState<{ node: TreeNode; x: number; y: number } | null>(null);
+  const setDetailsTarget = useUiStore((s) => s.setDetailsTarget);
   const { ref: sizeRef, height } = useSize();
 
   const snapshot = entry?.snapshot;
+  // The peeked relation is held by name and re-resolved from the current snapshot, so
+  // a schema refresh updates the panel (or closes it if the table is gone).
+  const peekRel = useMemo(() => {
+    if (!peek || !snapshot) return null;
+    const sc = snapshot.schemas.find((x) => x.name === peek.schema);
+    return sc?.relations.find((r) => r.name === peek.rel.name) ?? null;
+  }, [peek, snapshot]);
   const treeData = useMemo(
     () => (snapshot ? buildTree(filterSnapshot(snapshot, filter)) : []),
     [snapshot, filter],
@@ -61,7 +74,8 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
   const initialOpen = useMemo(() => (snapshot ? defaultOpenState(snapshot) : {}), [snapshot]);
 
   const which = (node: TreeNode): "rel" | "fn" => (node.name.startsWith("Functions") ? "fn" : "rel");
-  // Right-click: category → filter popover; schema → "New query here".
+  // Right-click: category → filter popover; schema → "New query here"; an object →
+  // its action menu.
   const openFilterMenu = (node: TreeNode, e: React.MouseEvent) => {
     if (node.ntype === "category") {
       e.preventDefault();
@@ -69,6 +83,9 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
     } else if (node.ntype === "schema") {
       e.preventDefault();
       setSchemaMenu({ schema: node.name, x: e.clientX, y: e.clientY });
+    } else if (node.ntype === "relation" || node.ntype === "function") {
+      e.preventDefault();
+      setObjectMenu({ node, x: e.clientX, y: e.clientY });
     }
   };
   // Click the "more" node → open that category's filter popover.
@@ -136,6 +153,80 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
     }
   };
 
+  const openDetails = (schema: string, name: string) => {
+    if (connectionId) setDetailsTarget({ connectionId, schema, name });
+  };
+
+  const objectActions = (node: TreeNode): QuickMenuItem[] => {
+    if (node.ntype === "function" && node.fn) {
+      const fn = node.fn;
+      return [
+        { label: "Open source", icon: <Code2 size={12} />, onClick: () => onOpenFunction(fn) },
+        "separator",
+        { label: "Copy name", icon: <Copy size={12} />, onClick: () => void copyText(fn.name, "Name copied") },
+      ];
+    }
+    if (!node.rel || !node.schema) return [];
+    const { rel, schema } = node as { rel: SnapRel; schema: string };
+    const target = qualifiedName(schema, rel.name);
+    const key = `${schema}.${rel.name}`;
+    const pinned = pins.includes(key);
+    const tabs = useTabsStore.getState();
+    const items: QuickMenuItem[] = [];
+    if (rel.kind !== "sequence") {
+      items.push({
+        label: "Open data",
+        icon: <Table2 size={12} />,
+        hint: "double-click",
+        onClick: () => onOpenRelation(schema, rel.name),
+      });
+    }
+    items.push({
+      label: "View details",
+      icon: <Maximize2 size={12} />,
+      onClick: () => openDetails(schema, rel.name),
+    });
+    if (rel.kind !== "sequence") {
+      items.push(
+        "separator",
+        {
+          label: "Count rows",
+          icon: <Hash size={12} />,
+          onClick: () => {
+            const id = tabs.addTab(`SELECT count(*) FROM ${target};`, connectionId);
+            void tabs.run(id);
+          },
+        },
+        {
+          label: "Script as SELECT",
+          icon: <Code2 size={12} />,
+          onClick: () => {
+            const cols = rel.columns.map((c) => `    ${quoteIdent(c.name)}`).join(",\n");
+            tabs.addTab(`SELECT\n${cols || "    *"}\nFROM ${target}\nLIMIT 100;`, connectionId);
+          },
+        },
+      );
+    }
+    items.push(
+      "separator",
+      { label: "Copy name", icon: <Copy size={12} />, onClick: () => void copyText(rel.name, "Name copied") },
+      {
+        label: "Copy qualified name",
+        icon: <Copy size={12} />,
+        onClick: () =>
+          void copyText(`${quoteIdent(schema)}.${quoteIdent(rel.name)}`, "Qualified name copied"),
+      },
+    );
+    if (profileId) {
+      items.push("separator", {
+        label: pinned ? "Unpin" : "Pin to top",
+        icon: pinned ? <PinOff size={12} /> : <Pin size={12} />,
+        onClick: () => togglePin(profileId, key),
+      });
+    }
+    return items;
+  };
+
   const pinnedRels = useMemo(() => {
     if (!snapshot) return [];
     const set = new Set(pins);
@@ -171,7 +262,7 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
       {/* Server ▸ database context bar */}
       <ContextBar connectionId={connectionId} />
 
-      {/* Arama + refresh */}
+      {/* Search + refresh */}
       <div className="flex items-center gap-1 border-b border-border p-1.5">
         <div className="relative flex-1">
           <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-fg-muted" />
@@ -180,14 +271,14 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search (Ctrl+P)…"
-            className="w-full rounded border border-border bg-bg py-1 pl-6 pr-2 text-xs outline-none focus:border-fg-muted"
+            className="w-full rounded-md border border-border bg-bg py-1 pl-6 pr-2 text-xs outline-none transition-colors placeholder:text-fg-subtle focus:border-border-strong"
           />
         </div>
         <button
           title="Refresh (F5)"
           disabled={!connectionId}
           onClick={() => connectionId && void refreshSchema(connectionId)}
-          className="rounded border border-border p-1 text-fg-muted hover:text-fg disabled:opacity-40"
+          className="rounded-md border border-border p-1 text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:opacity-40"
         >
           <RefreshCw size={13} className={cn(entry?.status === "loading" && "animate-spin")} />
         </button>
@@ -211,6 +302,7 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
                   sub={n.schema}
                   onClick={() => peekNode(n)}
                   onDoubleClick={() => activateNode(n)}
+                  onContextMenu={(e) => openFilterMenu(n, e)}
                   onPin={() => profileId && togglePin(profileId, `${n.schema}.${n.name}`)}
                   pinned
                 />
@@ -230,6 +322,7 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
                     sub={n.schema}
                     onClick={() => peekNode(n)}
                     onDoubleClick={() => activateNode(n)}
+                    onContextMenu={(e) => openFilterMenu(n, e)}
                     onPin={
                       n.ntype === "relation" && profileId
                         ? () => togglePin(profileId, `${n.schema}.${n.name}`)
@@ -242,7 +335,10 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
             ) : (
               height > 0 && (
                 <Tree<TreeNode>
-                  key={connectionId}
+                  // Remounted once the first snapshot lands: the tree only reads
+                  // initialOpenState at mount, and the cache is still empty right
+                  // after connecting.
+                  key={`${connectionId}:${treeData.length > 0}`}
                   data={treeData}
                   initialOpenState={initialOpen}
                   openByDefault={false}
@@ -276,12 +372,15 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
             )}
           </div>
 
-          {peek && (
+          {peek && peekRel && (
             <PeekPanel
               schema={peek.schema}
-              rel={peek.rel}
+              rel={peekRel}
               connectionId={connectionId}
+              snapshot={snapshot}
               onClose={() => setPeek(null)}
+              onDetails={() => openDetails(peek.schema, peekRel.name)}
+              onNavigate={(schema, rel) => setPeek({ schema, rel })}
             />
           )}
         </>
@@ -295,6 +394,15 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
           filter={filter[filterMenu.which]}
           connectionId={connectionId}
           onClose={() => setFilterMenu(null)}
+        />
+      )}
+
+      {objectMenu && (
+        <QuickActionMenu
+          x={objectMenu.x}
+          y={objectMenu.y}
+          onClose={() => setObjectMenu(null)}
+          actions={objectActions(objectMenu.node)}
         />
       )}
 
@@ -369,7 +477,7 @@ function FilterPopover({
       }}
     >
       <div
-        className="absolute w-52 rounded-md border border-border bg-bg-elev p-2 text-xs shadow-2xl"
+        className="ari-menu-in absolute w-52 rounded-lg border border-border bg-bg-elev p-2 text-xs shadow-2xl"
         style={{ left: Math.min(x, window.innerWidth - 220), top: Math.min(y, window.innerHeight - 240) }}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.key === "Escape" && onClose()}
@@ -420,6 +528,7 @@ function Row({
   sub,
   onClick,
   onDoubleClick,
+  onContextMenu,
   onPin,
   pinned,
 }: {
@@ -428,14 +537,16 @@ function Row({
   sub?: string;
   onClick: () => void;
   onDoubleClick?: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
   onPin?: () => void;
   pinned?: boolean;
 }) {
   return (
     <div
-      className="group flex h-6 cursor-pointer items-center gap-1.5 px-2 text-xs hover:bg-bg-elev"
+      className="group flex h-6 cursor-pointer items-center gap-1.5 px-2 text-xs transition-colors hover:bg-bg-hover"
       onClick={onClick}
       onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
     >
       {icon}
       <span className="truncate">{label}</span>
