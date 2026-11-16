@@ -6,7 +6,7 @@ autocomplete comes from an in-process cache, results from 200M-row tables are pa
 with server-side cursors rather than pulled into memory, and every query is
 cancellable.
 
-> **Status: early / pre-release (v0.1.3).** The core works and is used day to day, but
+> **Status: early / pre-release (v0.2.0).** The core works and is used day to day, but
 > the app has not been through wide testing yet. Expect rough edges.
 
 ## Highlights
