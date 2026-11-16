@@ -13,12 +13,16 @@ import { StatusBar } from "@/components/layout/StatusBar";
 import { ResizeHandle, HResizeHandle } from "@/components/layout/ResizeHandle";
 import { CommandPalette } from "@/components/layout/CommandPalette";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
+import { SnippetsDialog } from "@/components/snippets/SnippetsDialog";
+import { CronDialog } from "@/components/cron/CronDialog";
+import { RelationDetailsDialog } from "@/components/details/RelationDetailsDialog";
+import { applyWindowIcon } from "@/lib/appIcon";
+import { runActive } from "@/lib/queryActions";
 import { saveSqlFile } from "@/lib/fileActions";
 import { toast } from "sonner";
 import { offerReconnect } from "@/lib/sessionResume";
 import { checkForUpdateOnStartup } from "@/lib/updater";
 import { registerEventBridge } from "@/lib/events";
-import { getRunSelection } from "@/lib/editorRun";
 import { useGlobalShortcuts } from "@/lib/shortcuts";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -31,12 +35,18 @@ export default function App() {
     useUiStore();
   const editorFontSize = useUiStore((s) => s.settings.editorFontSize);
   const theme = useUiStore((s) => s.settings.theme);
+  const logo = useUiStore((s) => s.settings.logo);
 
   // Apply the color theme to the document root; the light overrides in index.css key off
   // data-theme. Runs on mount and whenever the setting changes.
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  // The window (title bar / taskbar) icon follows the chosen brand mark.
+  useEffect(() => {
+    void applyWindowIcon(logo);
+  }, [logo]);
 
   const active = useTabsStore((s) => s.active());
   const closeRequest = useTabsStore((s) => s.closeRequest);
@@ -83,11 +93,6 @@ export default function App() {
 
   useGlobalShortcuts();
 
-  const runActive = useCallback(() => {
-    // If there's a selection, run only it; otherwise the full text.
-    if (active) void run(active.id, getRunSelection() ?? undefined);
-  }, [active, run]);
-
   const openRelation = useCallback(
     (schema: string, name: string) => {
       // The new tab binds to the connection the Explorer shows (the active tab's) —
@@ -118,10 +123,17 @@ export default function App() {
 
   const q = active?.query;
   // Marker: if a selection ran, shift the offset into the full text; when the SQL is
-  // edited (markerStale) the marker is hidden but the error banner stays.
+  // edited (markerStale) the marker is hidden but the error banner stays. A failed
+  // EXPLAIN marks its own statement the same way.
+  const markerSource = q?.plan
+    ? q.plan.error && { error: q.plan.error, offset: q.plan.selectionOffset }
+    : q?.error && { error: q.error, offset: q.selectionOffset };
   const errorMarker =
-    q?.error && q.error.position != null && !q.markerStale
-      ? { offset: q.error.position - 1 + q.selectionOffset, message: q.error.message }
+    markerSource && markerSource.error.position != null && !q?.markerStale
+      ? {
+          offset: markerSource.error.position - 1 + markerSource.offset,
+          message: markerSource.error.message,
+        }
       : null;
 
   return (
@@ -219,6 +231,9 @@ export default function App() {
 
       <CommandPalette />
       <SettingsDialog />
+      <SnippetsDialog />
+      <CronDialog />
+      <RelationDetailsDialog />
     </div>
   );
 }

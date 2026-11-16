@@ -79,10 +79,10 @@ export function ConnectionMenu() {
     <>
       <DropdownMenu.Root open={menuOpen} onOpenChange={setMenuOpen}>
         <DropdownMenu.Trigger asChild>
-          <button className="inline-flex items-center gap-2 rounded border border-border bg-bg-elev px-2.5 py-1 text-xs hover:border-fg-muted">
+          <button className="inline-flex h-7 items-center gap-2 rounded-md border border-border bg-bg-elev px-2.5 text-xs transition-colors hover:bg-bg-hover data-[state=open]:bg-bg-hover">
             <span
               className="h-2 w-2 rounded-full"
-              style={{ background: tabInfo?.color || (tabInfo ? "#4ade80" : "#3a3a3a") }}
+              style={{ background: tabInfo?.color || (tabInfo ? "var(--color-ok)" : "var(--color-fg-subtle)") }}
             />
             <span className="max-w-[160px] truncate">{label}</span>
             <ChevronDown size={12} className="text-fg-muted" />
@@ -93,7 +93,7 @@ export function ConnectionMenu() {
           <DropdownMenu.Content
             align="start"
             sideOffset={4}
-            className="z-50 min-w-[240px] rounded-md border border-border bg-bg-elev p-1 text-xs shadow-2xl"
+            className="ari-menu-in z-50 min-w-[240px] rounded-lg border border-border bg-bg-elev p-1 text-xs shadow-2xl"
           >
             {Object.values(connections).length > 0 && (
               <>
@@ -102,7 +102,7 @@ export function ConnectionMenu() {
                   <div
                     key={c.connection_id}
                     className={cn(
-                      "flex items-center justify-between rounded px-2 py-1 hover:bg-bg",
+                      "flex items-center justify-between rounded-md px-2 py-1 hover:bg-bg-hover",
                       c.connection_id === tabConnectionId && "bg-bg",
                     )}
                   >
@@ -110,7 +110,7 @@ export function ConnectionMenu() {
                       className="flex flex-1 items-center gap-2 overflow-hidden text-left"
                       onClick={() => pick(() => focusConnection(c.connection_id))}
                     >
-                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: c.color || "#4ade80" }} />
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: c.color || "var(--color-ok)" }} />
                       <span className="truncate">
                         {profiles.find((p) => p.id === c.profile_id)?.name ?? c.database}
                       </span>
@@ -141,7 +141,7 @@ export function ConnectionMenu() {
             <SectionLabel>Profiles</SectionLabel>
             {profiles.length === 0 && <div className="px-2 py-1 text-fg-muted">No profiles yet</div>}
             {profiles.map((p) => (
-              <div key={p.id} className="flex items-center justify-between rounded px-2 py-1 hover:bg-bg">
+              <div key={p.id} className="flex items-center justify-between rounded-md px-2 py-1 hover:bg-bg-hover">
                 <button
                   className="flex flex-1 items-center gap-2 overflow-hidden text-left"
                   onClick={() => pick(() => void connectProfile(p.id))}
@@ -176,7 +176,7 @@ export function ConnectionMenu() {
 
             <Separator />
             <DropdownMenu.Item
-              className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 outline-none hover:bg-bg"
+              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 outline-none hover:bg-bg-hover"
               onSelect={() => {
                 setEditing(null);
                 setDialogOpen(true);
@@ -251,7 +251,7 @@ function DatabasesSubmenu({ conn, onPick }: { conn: ConnectionInfo; onPick: (ope
       <DropdownMenu.Portal>
         <DropdownMenu.SubContent
           sideOffset={4}
-          className="z-50 max-h-[320px] min-w-[180px] overflow-auto rounded-md border border-border bg-bg-elev p-1 text-xs shadow-2xl"
+          className="z-50 max-h-[320px] min-w-[180px] overflow-auto ari-menu-in rounded-lg border border-border bg-bg-elev p-1 text-xs shadow-2xl"
         >
           {error ? (
             <div className="px-2 py-1 text-danger">Couldn't list databases</div>
@@ -265,7 +265,7 @@ function DatabasesSubmenu({ conn, onPick }: { conn: ConnectionInfo; onPick: (ope
                 key={d.name}
                 disabled={d.is_current}
                 className={cn(
-                  "flex cursor-pointer items-center gap-2 rounded px-2 py-1 outline-none hover:bg-bg data-[disabled]:cursor-default data-[disabled]:opacity-50",
+                  "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 outline-none hover:bg-bg-hover data-[disabled]:cursor-default data-[disabled]:opacity-50",
                 )}
                 onSelect={() => {
                   onPick(false);

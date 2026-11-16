@@ -10,6 +10,7 @@ import { connectProfile, focusConnection } from "@/lib/connectionActions";
 import { openSqlFile, saveSqlFile } from "@/lib/fileActions";
 import { openServerActivity } from "@/lib/activityQuery";
 import { runFormatActive } from "@/lib/editorRun";
+import { explainActive } from "@/lib/queryActions";
 import { refreshSchema } from "@/lib/api";
 
 // "Bind this tab to …" is the explicit, deliberate old behavior: rebind the active
@@ -113,6 +114,42 @@ export function CommandPalette() {
                   Show server activity
                 </Item>
               )}
+              {tabConnectionId && (
+                <Item value="explain plan execution" onSelect={() => run(() => explainActive(false))}>
+                  Explain plan (Ctrl+L)
+                </Item>
+              )}
+              {tabConnectionId && (
+                <Item value="explain analyze plan execution" onSelect={() => run(() => explainActive(true))}>
+                  Explain analyze (Ctrl+Shift+L)
+                </Item>
+              )}
+              {tabConnectionId && (
+                <Item
+                  value="scheduled jobs pg_cron cron agent"
+                  onSelect={() => run(() => useUiStore.getState().setCronOpen(true))}
+                >
+                  Scheduled jobs (pg_cron)
+                </Item>
+              )}
+              <Item
+                value="snippets saved queries shortcuts"
+                onSelect={() => run(() => useUiStore.getState().setSnippetsOpen(true))}
+              >
+                Edit snippets (Ctrl+1 … Ctrl+0)
+              </Item>
+              <Item
+                value="roles users privileges grant"
+                onSelect={() =>
+                  run(() => {
+                    const ui = useUiStore.getState();
+                    ui.setSidebarTab("roles");
+                    if (!ui.sidebarVisible) ui.toggleSidebar();
+                  })
+                }
+              >
+                Manage roles
+              </Item>
               <Item onSelect={() => run(() => useUiStore.getState().setSettingsOpen(true))}>
                 Open settings
               </Item>
@@ -193,7 +230,7 @@ function Item({
     <Command.Item
       value={value}
       onSelect={onSelect}
-      className="flex cursor-pointer items-center rounded px-2 py-1.5 text-xs text-fg data-[selected=true]:bg-fg data-[selected=true]:text-bg"
+      className="flex cursor-pointer items-center rounded-md px-2 py-1.5 text-xs text-fg data-[selected=true]:bg-fg data-[selected=true]:text-bg"
     >
       {children}
     </Command.Item>
