@@ -4,6 +4,7 @@
 pub mod activity;
 pub mod complete;
 pub mod connect;
+pub mod cron;
 pub mod details;
 pub mod edit;
 pub mod files;

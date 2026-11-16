@@ -54,7 +54,7 @@ export function QueryHistory({ connectionId }: { connectionId: string | null }) 
               key={e.id}
               onClick={() => openInTab(e)}
               title={e.errorMessage ?? "Open in a new tab"}
-              className="flex w-full flex-col gap-0.5 px-2 py-1 text-left hover:bg-bg-elev"
+              className="flex w-full flex-col gap-0.5 px-2 py-1 text-left hover:bg-bg-hover"
             >
               <span className="flex items-center gap-1.5">
                 <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", e.status === "ok" ? "bg-fg" : "bg-danger")} />

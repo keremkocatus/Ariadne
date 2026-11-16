@@ -1,6 +1,6 @@
 //! Catalog queries → SchemaCache.
 //!
-//! Uses `pg_catalog` rather than `information_schema` (faster and richer). Four
+//! Uses `pg_catalog` rather than `information_schema` (faster and richer). The
 //! queries run in parallel via `tokio::join!`. System schemas (`pg_catalog`,
 //! `information_schema`) are NOT fetched as objects (to keep the cache lean); they're
 //! only listed as schema nodes.
@@ -23,11 +23,17 @@ const NOT_SYSTEM: &str = "n.nspname NOT LIKE 'pg\\_temp\\_%' \
 
 /// Fetches all catalog data in parallel and builds an immutable SchemaCache.
 pub async fn fetch_schema_cache(pool: &PgPool) -> Result<SchemaCache, AriadneError> {
-    let (schemas, tables_res, constraints_res, functions_res, search_path, server_version) = tokio::join!(
-        fetch_schemas(pool),
+    // Two waves rather than one seven-way join: the default pool holds three
+    // connections, and the big table/function queries shouldn't queue behind the
+    // trivial ones.
+    let (tables_res, constraints_res, functions_res) = tokio::join!(
         fetch_tables(pool),
         fetch_constraints(pool),
         fetch_functions(pool),
+    );
+    let (schemas, partitions_res, search_path, server_version) = tokio::join!(
+        fetch_schemas(pool),
+        fetch_partitions(pool),
         fetch_search_path(pool),
         fetch_server_version(pool),
     );
@@ -35,6 +41,7 @@ pub async fn fetch_schema_cache(pool: &PgPool) -> Result<SchemaCache, AriadneErr
     let schemas = schemas?;
     let mut tables = tables_res?;
     let constraints = constraints_res?;
+    let partitions = partitions_res?;
     let functions = functions_res?;
     let search_path = search_path?;
     let server_version = server_version?;
@@ -47,6 +54,13 @@ pub async fn fetch_schema_cache(pool: &PgPool) -> Result<SchemaCache, AriadneErr
     let mut fks: Vec<FkEdge> = Vec::new();
     let table_index: HashMap<TableId, usize> =
         tables.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
+
+    for part in partitions {
+        if let Some(&ti) = table_index.get(&part.table_oid) {
+            tables[ti].partition_of = Some(part.parent_oid);
+            tables[ti].partition_bound = part.bound;
+        }
+    }
 
     for c in constraints {
         match c.contype as u8 {
@@ -166,6 +180,8 @@ async fn fetch_tables(pool: &PgPool) -> Result<Vec<Table>, AriadneError> {
                     primary_key: Vec::new(),
                     comment: r.try_get("table_comment")?,
                     estimated_rows: r.try_get("est_rows")?,
+                    partition_of: None,
+                    partition_bound: None,
                 };
                 tables.push(t);
                 let i = tables.len() - 1;
@@ -231,7 +247,31 @@ async fn fetch_constraints(pool: &PgPool) -> Result<Vec<RawConstraint>, AriadneE
         .collect()
 }
 
-// ---- Query 4: functions ----
+// ---- Query 4: partitions (child → parent + bound) ----
+
+struct RawPartition {
+    table_oid: TableId,
+    parent_oid: TableId,
+    bound: Option<String>,
+}
+
+async fn fetch_partitions(pool: &PgPool) -> Result<Vec<RawPartition>, AriadneError> {
+    let sql = format!(
+        "SELECT c.oid::int8 AS table_oid, i.inhparent::int8 AS parent_oid,                 pg_catalog.pg_get_expr(c.relpartbound, c.oid) AS bound          FROM pg_catalog.pg_inherits i          JOIN pg_catalog.pg_class c ON c.oid = i.inhrelid          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace          WHERE c.relispartition AND {NOT_SYSTEM}"
+    );
+    let rows = sqlx::query(&sql).fetch_all(pool).await?;
+    rows.into_iter()
+        .map(|r| {
+            Ok(RawPartition {
+                table_oid: r.try_get::<i64, _>("table_oid")? as u32,
+                parent_oid: r.try_get::<i64, _>("parent_oid")? as u32,
+                bound: r.try_get("bound")?,
+            })
+        })
+        .collect()
+}
+
+// ---- Query 5: functions ----
 
 async fn fetch_functions(pool: &PgPool) -> Result<Vec<Function>, AriadneError> {
     let sql = format!(
@@ -240,7 +280,13 @@ async fn fetch_functions(pool: &PgPool) -> Result<Vec<Function>, AriadneError> {
                 pg_catalog.pg_get_function_result(p.oid) AS result, \
                 p.prokind AS prokind, \
                 (p.prorettype = 'pg_catalog.trigger'::pg_catalog.regtype) AS is_trigger, \
-                obj_description(p.oid, 'pg_proc') AS comment \
+                obj_description(p.oid, 'pg_proc') AS comment, \
+                (SELECT e.extname FROM pg_catalog.pg_depend d \
+                   JOIN pg_catalog.pg_extension e ON e.oid = d.refobjid \
+                  WHERE d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass \
+                    AND d.objid = p.oid AND d.deptype = 'e' \
+                    AND d.refclassid = 'pg_catalog.pg_extension'::pg_catalog.regclass \
+                  LIMIT 1) AS extension \
          FROM pg_catalog.pg_proc p \
          JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
          WHERE {NOT_SYSTEM}"
@@ -260,6 +306,7 @@ async fn fetch_functions(pool: &PgPool) -> Result<Vec<Function>, AriadneError> {
                     .unwrap_or_else(|| "void".to_string()),
                 kind: FnKind::from_pg(r.try_get("prokind")?),
                 is_trigger: r.try_get::<Option<bool>, _>("is_trigger")?.unwrap_or(false),
+                extension: r.try_get("extension")?,
                 comment: r.try_get("comment")?,
             })
         })

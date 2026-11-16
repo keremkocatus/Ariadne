@@ -34,13 +34,17 @@ impl SchemaCache {
                     kind: t.kind,
                     estimated_rows: t.estimated_rows,
                     comment: t.comment.clone(),
+                    parent_oid: t.partition_of,
+                    partition_bound: t.partition_bound.clone(),
                     columns: t
                         .columns
                         .iter()
-                        .map(|c| SnapCol {
+                        .enumerate()
+                        .map(|(i, c)| SnapCol {
                             name: c.name.clone(),
                             type_name: c.type_name.clone(),
                             not_null: c.not_null,
+                            is_pk: t.primary_key.contains(&i),
                         })
                         .collect(),
                 });
@@ -55,6 +59,7 @@ impl SchemaCache {
                     signature: f.signature(),
                     kind: f.kind,
                     is_trigger: f.is_trigger,
+                    extension: f.extension.clone(),
                     comment: f.comment.clone(),
                 });
             }
@@ -102,6 +107,11 @@ pub struct SnapRel {
     pub kind: RelKind,
     pub estimated_rows: i64,
     pub comment: Option<String>,
+    /// For a partition: its parent's oid, so the tree can nest it under the parent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_oid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partition_bound: Option<String>,
     pub columns: Vec<SnapCol>,
 }
 
@@ -110,6 +120,7 @@ pub struct SnapCol {
     pub name: String,
     pub type_name: String,
     pub not_null: bool,
+    pub is_pk: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -119,5 +130,7 @@ pub struct SnapFn {
     pub signature: String,
     pub kind: FnKind,
     pub is_trigger: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extension: Option<String>,
     pub comment: Option<String>,
 }

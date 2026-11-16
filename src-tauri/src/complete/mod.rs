@@ -258,6 +258,8 @@ mod golden {
             primary_key: vec![0],
             comment: None,
             estimated_rows: 1000,
+            partition_of: None,
+            partition_bound: None,
         };
         let orders = Table {
             id: 2,
@@ -272,6 +274,8 @@ mod golden {
             primary_key: vec![0],
             comment: None,
             estimated_rows: 5000,
+            partition_of: None,
+            partition_bound: None,
         };
         let fk = FkEdge {
             from_table: 2,
@@ -293,6 +297,7 @@ mod golden {
             return_type: "setof orders".into(),
             kind: FnKind::Function,
             is_trigger: false,
+            extension: None,
             comment: None,
         };
         SchemaCache::build(

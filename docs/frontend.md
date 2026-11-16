@@ -12,7 +12,7 @@ Rust types one-to-one.
 | `tabsStore` | The open tabs and their query state (columns, rows, transaction status, errors), plus all the actions: run, fetch more, cancel, tx control, cell patch. Persists tab SQL/metadata (never results). |
 | `connectionStore` | Active connections and profiles. Persists only a `lastSession` mapping so restored tabs can offer a reconnect. |
 | `schemaStore` | The per-connection schema snapshot, the explorer search/filter, and pins. Persists only pins. |
-| `uiStore` | Layout state (sidebar, results panel height, active side tab) and user settings. |
+| `uiStore` | Layout state (sidebar, results panel height, active side tab), which dialogs are open, and user settings (theme, logo, snippets). |
 
 A tab carries a permanent `connectionId`; the whole UI (explorer, completion, status
 bar, palette) follows the *active tab's* connection rather than a single global one.
@@ -34,7 +34,29 @@ bar, palette) follows the *active tab's* connection rather than a single global 
   a read-only viewer. On save it patches the grid cell in place.
 - **`explorer/Explorer`** — the object tree (react-arborist), with a peek panel, group
   filters, pins, and fuzzy search. Single click peeks (debounced), double click opens a
-  `SELECT`. The context bar above it switches databases on the same server.
+  `SELECT`, right click opens the object menu. Partitions are nested under their parent
+  table (shown by their name without the parent's prefix, with the bound next to it), so
+  a table with a hundred monthly partitions is one row until expanded. The context bar
+  above it switches databases on the same server.
+- **`details/RelationDetailsDialog`** — the Details view of one relation: stat tiles
+  plus Columns / Indexes / Constraints / Triggers / Partitions / DDL tabs. The DDL is
+  reconstructed client-side from the catalog details (`lib/ddl.ts`).
+- **`query/ResultArea`** — the results panel. A run with several statements gets a tab
+  per result set plus a Messages list (command tag, rows, duration per statement);
+  only the last result set is pageable and editable. Object info and execution plans
+  cover it as overlays without discarding the result underneath.
+- **`query/PlanView`** — renders `EXPLAIN (FORMAT JSON)` as a tree: per-node self time
+  (or self cost without ANALYZE), actual vs estimated rows, and a flag where the
+  planner's estimate was off by 10× or more.
+- **`roles/`** — role management. `RolesPanel` lists roles; `RoleDialogs` create, edit,
+  drop and grant. Every statement comes from the pure builders in `lib/roleSql.ts` and
+  is shown before it runs.
+- **`cron/CronDialog`** — the pg_cron job manager: job list with last outcome, run
+  history, create/edit/pause/delete.
+- **`snippets/SnippetsDialog`** — ten saved queries bound to Ctrl+1 … Ctrl+0.
+- **`brand/`** — the logo marks (`logos.ts`, plain SVG markup) and the `Logo`
+  component. The chosen mark is also applied as the window icon at runtime
+  (`lib/appIcon.ts`); `docs/logos/` holds the same marks as standalone SVG files.
 - **`layout/`** — the toolbar, status bar (with the DB stats strip), resize handles, the
   command palette (cmdk), and the settings dialog.
 - **`history/QueryHistory`** — a session-only log of executed queries (never persisted);
@@ -51,6 +73,12 @@ bar, palette) follows the *active tab's* connection rather than a single global 
   target the original table's `UPDATE`.
 - **Partial results.** On a multi-statement failure the results area shows the error
   banner on top and the statements that did run below it.
+- **Explain.** Ctrl+L shows the estimated plan of the selection (or the whole text);
+  Ctrl+Shift+L runs `EXPLAIN ANALYZE`, whose side effects are rolled back.
+- **Snippets.** Ctrl+<digit> places the slot's query in the editor and runs just it. If
+  an identical copy is already in the document it is reused; otherwise the query goes on
+  the cursor's line when that line is blank, or on a new line below it.
+- **A run reopens the results panel.** Hiding it with Ctrl+R never hides an outcome.
 
 ## IPC bindings (`src/lib/api.ts`)
 

@@ -28,7 +28,7 @@ export function StatusBar() {
           <span className="flex items-center gap-1.5">
             <span
               className="h-2 w-2 rounded-full"
-              style={{ background: info.color || "#4ade80" }}
+              style={{ background: info.color || "var(--color-ok)" }}
             />
             {info.database} · PostgreSQL {info.server_version.split(" ")[0]}
           </span>

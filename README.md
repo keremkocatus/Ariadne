@@ -6,7 +6,7 @@ autocomplete comes from an in-process cache, results from 200M-row tables are pa
 with server-side cursors rather than pulled into memory, and every query is
 cancellable.
 
-> **Status: early / pre-release (v0.1.3).** The core works and is used day to day, but
+> **Status: early / pre-release (v0.2.0).** The core works and is used day to day, but
 > the app has not been through wide testing yet. Expect rough edges.
 
 ## Highlights
@@ -26,9 +26,17 @@ cancellable.
   bound to its own connection. Switch databases on the same server from the context bar.
 - **A real result grid.** Virtualized rendering, rich copy (CSV/TSV/JSON/Markdown),
   resizable columns, and a cell view/edit popup.
-- **Ergonomics.** Command palette (Ctrl+K), SQL formatter, `.sql` open/save, a server
-  activity view (`pg_stat_activity` with cancel/terminate), a DB stats strip, and custom
-  Monaco themes (light/dark) matching the app palette.
+- **Understands your schema.** Partitioned tables collapse into one row with their
+  partitions underneath. A Details view shows a table's columns, indexes, constraints,
+  triggers, partitions, sizes and vacuum stats, plus a reconstructed `CREATE` script.
+- **Execution plans.** Ctrl+L renders `EXPLAIN` as a tree with per-node time, actual vs
+  estimated rows, and misestimates called out; Ctrl+Shift+L runs `EXPLAIN ANALYZE` and
+  rolls its effects back.
+- **Admin tools.** Create, alter and drop roles and grant privileges with the SQL shown
+  before it runs; manage `pg_cron` jobs and browse their run history.
+- **Ergonomics.** Command palette (Ctrl+K), saved snippets on Ctrl+1 … Ctrl+0, SQL
+  formatter, `.sql` open/save, a server activity view (`pg_stat_activity`), a DB stats
+  strip, and custom Monaco themes (light/dark) matching the app palette.
 - **Lightweight and fast.** Native, not Electron: the app process runs at ~15-16 MB and
   the webview at ~80-90 MB, and startup is near-instant.
 - **Cross-platform with auto-update.** Windows, macOS, and Linux installers, with a

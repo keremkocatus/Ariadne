@@ -5,6 +5,21 @@ import { persist, createJSONStorage } from "zustand/middleware";
 /// Persisted in localStorage.
 export type Theme = "dark" | "light";
 
+/// A saved query bound to Ctrl+<digit>. An empty `sql` means the slot is unused.
+export interface Snippet {
+  name: string;
+  sql: string;
+}
+/// Slots are indexed in keyboard order: index 0 is Ctrl+1 … index 9 is Ctrl+0.
+export const SNIPPET_SLOTS = 10;
+/// The digit key that triggers a slot.
+export function snippetKey(slot: number): string {
+  return String((slot + 1) % 10);
+}
+function emptySnippets(): Snippet[] {
+  return Array.from({ length: SNIPPET_SLOTS }, () => ({ name: "", sql: "" }));
+}
+
 export interface Settings {
   /** Editor font size (px). */
   editorFontSize: number;
@@ -16,17 +31,31 @@ export interface Settings {
   longQueryNoticeSeconds: number;
   /** UI color theme. Applied via a `data-theme` attribute on the document root. */
   theme: Theme;
+  /** Id of the brand mark shown in the toolbar and as the window icon. */
+  logo: string;
+  /** Saved queries run with Ctrl+1 … Ctrl+0. */
+  snippets: Snippet[];
 }
 export const DEFAULT_SETTINGS: Settings = {
   editorFontSize: 13,
   schemaStaleMinutes: 5,
   longQueryNoticeSeconds: 10,
   theme: "dark",
+  logo: "weaver",
+  snippets: emptySnippets(),
 };
 
 /// The left panel's active tab. Kept in uiStore so the palette can switch it
 /// programmatically.
 export type SidebarTab = "explorer" | "roles" | "history";
+
+/// The relation shown in the Details view. Carries its connection so the view stays
+/// on the right database when the active tab changes underneath it.
+export interface DetailsTarget {
+  connectionId: string;
+  schema: string;
+  name: string;
+}
 
 interface UiState {
   sidebarVisible: boolean;
@@ -39,6 +68,9 @@ interface UiState {
   resultsHeight: number;
   paletteOpen: boolean;
   settingsOpen: boolean;
+  snippetsOpen: boolean;
+  cronOpen: boolean;
+  detailsTarget: DetailsTarget | null;
   /// Whether the connection menu is open (controlled): the empty-state card's
   /// "Connect…" button opens it programmatically; ConnectionMenu binds to this state.
   connectMenuOpen: boolean;
@@ -51,8 +83,25 @@ interface UiState {
   setResultsHeight: (h: number) => void;
   setPaletteOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
+  setSnippetsOpen: (open: boolean) => void;
+  setCronOpen: (open: boolean) => void;
+  setDetailsTarget: (target: DetailsTarget | null) => void;
   setConnectMenuOpen: (open: boolean) => void;
   updateSettings: (patch: Partial<Settings>) => void;
+  setSnippet: (slot: number, snippet: Snippet) => void;
+}
+
+/// Persisted snippets may come from an older build or be hand-edited: coerce to
+/// exactly SNIPPET_SLOTS well-formed entries.
+function normalizeSnippets(raw: unknown): Snippet[] {
+  const list = Array.isArray(raw) ? raw : [];
+  return emptySnippets().map((empty, i) => {
+    const s = list[i] as Partial<Snippet> | undefined;
+    return {
+      name: typeof s?.name === "string" ? s.name : empty.name,
+      sql: typeof s?.sql === "string" ? s.sql : empty.sql,
+    };
+  });
 }
 
 export const useUiStore = create<UiState>()(
@@ -65,6 +114,9 @@ export const useUiStore = create<UiState>()(
       resultsHeight: 280,
       paletteOpen: false,
       settingsOpen: false,
+      snippetsOpen: false,
+      cronOpen: false,
+      detailsTarget: null,
       connectMenuOpen: false,
       settings: DEFAULT_SETTINGS,
       toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
@@ -76,13 +128,23 @@ export const useUiStore = create<UiState>()(
       setResultsHeight: (h) => set({ resultsHeight: Math.max(80, h) }),
       setPaletteOpen: (open) => set({ paletteOpen: open }),
       setSettingsOpen: (open) => set({ settingsOpen: open }),
+      setSnippetsOpen: (open) => set({ snippetsOpen: open }),
+      setCronOpen: (open) => set({ cronOpen: open }),
+      setDetailsTarget: (target) => set({ detailsTarget: target }),
       setConnectMenuOpen: (open) => set({ connectMenuOpen: open }),
       updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
+      setSnippet: (slot, snippet) =>
+        set((s) => ({
+          settings: {
+            ...s.settings,
+            snippets: s.settings.snippets.map((cur, i) => (i === slot ? snippet : cur)),
+          },
+        })),
     }),
     {
       name: "ariadne-ui",
       storage: createJSONStorage(() => localStorage),
-      // paletteOpen/settingsOpen are not persisted (start closed each launch).
+      // Open/closed state of dialogs is not persisted (they start closed each launch).
       partialize: (s) => ({
         sidebarVisible: s.sidebarVisible,
         sidebarWidth: s.sidebarWidth,
@@ -99,11 +161,12 @@ export const useUiStore = create<UiState>()(
         const sidebarTab = validTabs.includes(p.sidebarTab as SidebarTab)
           ? (p.sidebarTab as SidebarTab)
           : "explorer";
+        const settings = { ...DEFAULT_SETTINGS, ...(p.settings ?? {}) };
         return {
           ...current,
           ...p,
           sidebarTab,
-          settings: { ...DEFAULT_SETTINGS, ...(p.settings ?? {}) },
+          settings: { ...settings, snippets: normalizeSnippets(settings.snippets) },
         };
       },
     },

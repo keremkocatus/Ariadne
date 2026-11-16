@@ -33,8 +33,17 @@ modules are plain Rust and are unit-tested without a UI.
   over 8 KB are truncated with a flag.
 - **`exec.rs`** is the heart. It holds per-tab state (a pinned connection, transaction
   status, and an optional open cursor) and implements:
-  - **Cursored execution.** The last row-returning statement in a script is run through
-    `DECLARE … CURSOR` and the first page is `FETCH`ed. If there's no user transaction,
+  - **Cursored execution.** When a script's final statement is a plain query, it is
+    run through `DECLARE … CURSOR` and the first page is `FETCH`ed. Only the final
+    statement keeps a cursor: anything after it would run inside the cursor's READ ONLY
+    transaction, and a later `COMMIT` would close it. Earlier queries run to completion
+    through a short-lived cursor that keeps one page and skips the rest with `MOVE`
+    (flagged `partial`); statements that return rows but aren't valid cursor queries
+    (`EXPLAIN`, `SHOW`, DML … `RETURNING`) are read directly. A query that writes
+    (`SELECT nextval(…)`) is rejected by the READ ONLY transaction and transparently
+    re-run the same bounded way in a read-write one.
+  - **Destructive guard.** The whole script is checked before any statement executes,
+    so a confirmed re-run never repeats statements that had already run. If there's no user transaction,
     an internal `BEGIN READ ONLY` is opened to keep the cursor alive and is committed
     when the cursor closes. An exhausted cursor (result fully fetched) is closed
     eagerly and its pinned connection returns to the pool — only results with pending
@@ -45,6 +54,9 @@ modules are plain Rust and are unit-tested without a UI.
   - **Partial results.** If a statement in a multi-statement script fails, the results
     accumulated so far are kept and the error is returned alongside them (psql-like);
     remaining statements don't run.
+  - **Explain.** `explain` returns `EXPLAIN (FORMAT JSON)` for one statement on a pool
+    connection; with ANALYZE it wraps the run in a transaction that is always rolled
+    back. It registers in the same `running` map, so it cancels like a query.
   - **Idle-cursor sweeping.** A background task closes internal-transaction cursors that
     have been idle too long (so they don't hold back vacuum) and emits `result:frozen`.
 
@@ -83,7 +95,8 @@ body instead of a misleading placeholder.
 ## Schema cache (`cache/`)
 
 - **`catalog.rs`** fetches everything from `pg_catalog` (not `information_schema`) in
-  four parallel queries: schemas, tables + columns, constraints (PK/FK), and functions.
+  parallel queries: schemas, tables + columns, constraints (PK/FK), partitions (child →
+  parent + bound), and functions.
   System schemas are listed but their objects are not fetched, keeping the cache lean.
 - **`mod.rs`** builds an immutable `SchemaCache`: the tables/functions plus fast lookup
   indexes (`schema.name → id`, `name → ids`, and a bidirectional FK adjacency graph used
@@ -109,6 +122,18 @@ A pure module that reads the cache and never touches the database (target: under
   from the FK graph.
 - **`mod.rs`** also serves Alt+F1 object info (resolving an identifier or alias to a
   table) and signature help for function calls.
+
+## On-demand catalog reads (`commands/`)
+
+Object details, roles and pg_cron are read when asked for and never cached:
+
+- **`details.rs`** — the peek panel's light read (`get_relation_details`) and the
+  Details view's full one (`get_relation_full`). Each runs its queries sequentially on a
+  single pool connection rather than fanning out, because the pool is small and tabs
+  may be pinning the rest.
+- **`roles.rs`** — role listing, a role's direct grants (via `aclexplode`), and
+  `execute_statements`, which applies UI-built administrative SQL atomically.
+- **`cron.rs`** — pg_cron through its own SQL API with bound parameters.
 
 ## Errors, profiles, logging
 

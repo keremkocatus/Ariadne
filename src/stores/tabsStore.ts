@@ -8,7 +8,6 @@ import type {
   Confirmation,
   ObjectInfo,
   SourceTable,
-  StatementResult,
   TxStatus,
 } from "@/lib/api";
 import { useConnectionStore } from "./connectionStore";
@@ -18,6 +17,45 @@ import { useHistoryStore } from "./historyStore";
 // Max rows held per tab in the UI (a safety net against an accidental SELECT *).
 const MAX_ROWS = 100_000;
 
+/// One executed statement, as a row of the Messages list.
+export interface StatementSummary {
+  kind: "rows" | "affected" | "empty" | "failed";
+  /** Command tag: "SELECT", "CREATE FUNCTION", … */
+  command: string;
+  /** The statement on one short line. */
+  preview: string;
+  elapsedMs: number;
+  /** Rows fetched (rows) or affected (DML); null where a count has no meaning. */
+  rowCount: number | null;
+  /** For a row-returning statement: its position among the run's result sets. */
+  resultIndex: number | null;
+}
+
+/// The result set of a row-returning statement that was NOT the script's last one.
+/// It holds a single page and can't be paged: only the last statement keeps a cursor.
+export interface StaticResult {
+  command: string;
+  preview: string;
+  columns: ColumnMeta[];
+  rows: (string | null)[][];
+  elapsedMs: number;
+  /** More rows existed than the one page that was fetched. */
+  partial: boolean;
+}
+
+/// An execution plan shown over the results area. `json` is the raw
+/// `EXPLAIN (FORMAT JSON)` text; exactly one of `json` / `error` is set.
+export interface PlanState {
+  analyze: boolean;
+  /** The statement that was explained (for "re-run with ANALYZE"). */
+  sql: string;
+  /** Offset of that statement in the editor text, to place an error marker. */
+  selectionOffset: number;
+  json: string | null;
+  error: AriadneError | null;
+  elapsedMs: number;
+}
+
 export interface QueryState {
   queryId?: string;
   columns: ColumnMeta[];
@@ -25,7 +63,16 @@ export interface QueryState {
   hasMore: boolean;
   fetchedTotal: number;
   elapsedMs: number;
-  extra: StatementResult[]; // non-rows results (affected/empty)
+  /// The main result was cut at one page and has no cursor behind it (it was followed
+  /// by other statements in the script).
+  partial: boolean;
+  /// Result sets of the row-returning statements before the last one. The flat
+  /// columns/rows fields above always describe the LAST result set.
+  earlier: StaticResult[];
+  /// Every statement of the last run, in order.
+  statements: StatementSummary[];
+  /// Statements in the script; more than `statements.length` if the run stopped early.
+  totalStatements: number;
   /// Backend-derived from the EXECUTED statement: set iff it was a plain single-table
   /// SELECT (see api.SourceTable). Basis for cell editing — reflects what actually
   /// ran, so editing the SQL text can't invalidate or falsify it.
@@ -52,6 +99,11 @@ export interface QueryState {
   /// Alt+F1 object info is shown as an overlay in the results area. Closing it (null)
   /// restores the query result underneath — the result is NOT overwritten.
   infoResult: ObjectInfo | null;
+  /// An execution plan, shown as an overlay the same way.
+  plan: PlanState | null;
+  /// The id of an EXPLAIN in flight, for cancelling it. Kept apart from `queryId`,
+  /// which must keep naming the result's cursor so paging still works afterwards.
+  explainQueryId: string | null;
   /// Marked when a query finishes in a background (non-active) tab: a dot is shown on
   /// the TabBar title; setActive clears it once the tab is seen.
   finishedUnseen: boolean;
@@ -116,7 +168,10 @@ function emptyQuery(): QueryState {
     hasMore: false,
     fetchedTotal: 0,
     elapsedMs: 0,
-    extra: [],
+    partial: false,
+    earlier: [],
+    statements: [],
+    totalStatements: 0,
     sourceTable: null,
     running: false,
     fetchingMore: false,
@@ -128,8 +183,46 @@ function emptyQuery(): QueryState {
     markerStale: false,
     pendingRun: null,
     infoResult: null,
+    plan: null,
+    explainQueryId: null,
     finishedUnseen: false,
   };
+}
+
+/// Splits a run's statements into the shapes the results area renders: the last
+/// result set (pageable, editable), the earlier ones, and the Messages list.
+function summarizeRun(res: api.RunResult) {
+  const rowStmts = res.statements.filter((st) => st.kind === "rows");
+  const main = rowStmts.length > 0 ? rowStmts[rowStmts.length - 1] : null;
+  const earlier: StaticResult[] = rowStmts.slice(0, -1).map((st) => ({
+    command: st.command,
+    preview: st.preview,
+    columns: st.columns,
+    rows: st.first_page.rows,
+    elapsedMs: st.elapsed_ms,
+    partial: st.partial,
+  }));
+  let resultIndex = 0;
+  const statements: StatementSummary[] = res.statements.map((st) => ({
+    kind: st.kind,
+    command: st.command,
+    preview: st.preview,
+    elapsedMs: st.elapsed_ms,
+    rowCount:
+      st.kind === "rows" ? st.first_page.fetched_total : st.kind === "affected" ? st.row_count : null,
+    resultIndex: st.kind === "rows" ? resultIndex++ : null,
+  }));
+  if (res.error && res.error_statement) {
+    statements.push({
+      kind: "failed",
+      command: res.error_statement.command,
+      preview: res.error_statement.preview,
+      elapsedMs: res.error_statement.elapsed_ms,
+      rowCount: null,
+      resultIndex: null,
+    });
+  }
+  return { main, earlier, statements };
 }
 
 function newTab(sql = "", connectionId: string | null = null): Tab {
@@ -156,7 +249,8 @@ export function isPristine(tab: Tab): boolean {
     !q.hasMore &&
     q.columns.length === 0 &&
     q.rows.length === 0 &&
-    q.extra.length === 0 &&
+    q.statements.length === 0 &&
+    !q.plan &&
     !q.error
   );
 }
@@ -205,6 +299,12 @@ interface TabsState {
   remapConnection: (oldConnectionIds: string[], newConnectionId: string) => void;
 
   run: (id: string, opts?: RunOpts) => Promise<void>;
+  /// Fetches the execution plan of one statement (the selection, else the whole
+  /// text) and shows it over the results. `analyze` really runs the statement, in a
+  /// transaction that is rolled back.
+  explain: (id: string, opts: { analyze: boolean; sql?: string; selectionOffset?: number }) => Promise<void>;
+  /// Closes the plan overlay (null) — the query result underneath is untouched.
+  setPlan: (tabId: string, plan: PlanState | null) => void;
   fetchMore: (id: string) => Promise<void>;
   cancel: (id: string) => Promise<void>;
   /// Kills a stuck query's backend when cancel has no effect.
@@ -370,7 +470,8 @@ export const useTabsStore = create<TabsState>()(
         // the marker is hidden, the error banner stays until the next run.
         // (Editing does NOT affect cell editability — query.sourceTable describes the
         // EXECUTED statement and only changes on the next run.)
-        const needStale = t.query.error?.position != null && !t.query.markerStale;
+        const markerError = t.query.plan ? t.query.plan.error : t.query.error;
+        const needStale = markerError?.position != null && !t.query.markerStale;
         return {
           ...t,
           sql,
@@ -429,7 +530,17 @@ export const useTabsStore = create<TabsState>()(
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.connectionId === connectionId
-          ? { ...t, query: { ...t.query, running: false, txStatus: "idle", hasMore: false, fetchingMore: false } }
+          ? {
+              ...t,
+              query: {
+                ...t.query,
+                running: false,
+                explainQueryId: null,
+                txStatus: "idle",
+                hasMore: false,
+                fetchingMore: false,
+              },
+            }
           : t,
       ),
     }));
@@ -478,9 +589,13 @@ export const useTabsStore = create<TabsState>()(
       selectionOffset,
       pendingRun: null,
       infoResult: null,
+      plan: null,
       finishedUnseen: false,
       queryId,
     });
+    // A run always has something to show; a results panel hidden with Ctrl+R would
+    // otherwise swallow the outcome (including errors) silently.
+    if (get().activeTabId === id) useUiStore.getState().setResultsVisible(true);
     try {
       const res = await api.runQuery(connId, sql, id, queryId, opts?.confirmed);
       if (res.needs_confirmation) {
@@ -489,28 +604,30 @@ export const useTabsStore = create<TabsState>()(
         patchQuery(set, id, { running: false, needsConfirmation: res.needs_confirmation, pendingRun: opts ?? null });
         return;
       }
-      const rowsStmt = res.statements.find((s) => s.kind === "rows");
+      const { main, earlier, statements } = summarizeRun(res);
       patchQuery(set, id, {
         running: false,
         txStatus: res.tx_status,
-        columns: rowsStmt?.kind === "rows" ? rowsStmt.columns : [],
-        rows: rowsStmt?.kind === "rows" ? rowsStmt.first_page.rows : [],
-        hasMore: rowsStmt?.kind === "rows" ? rowsStmt.first_page.has_more : false,
-        fetchedTotal: rowsStmt?.kind === "rows" ? rowsStmt.first_page.fetched_total : 0,
-        elapsedMs: rowsStmt?.kind === "rows" ? rowsStmt.first_page.elapsed_ms : 0,
-        sourceTable: rowsStmt?.kind === "rows" ? (rowsStmt.source_table ?? null) : null,
-        extra: res.statements.filter((s) => s.kind !== "rows"),
+        columns: main?.columns ?? [],
+        rows: main?.first_page.rows ?? [],
+        hasMore: main?.first_page.has_more ?? false,
+        fetchedTotal: main?.first_page.fetched_total ?? 0,
+        elapsedMs: main?.first_page.elapsed_ms ?? 0,
+        partial: main?.partial ?? false,
+        sourceTable: main?.source_table ?? null,
+        earlier,
+        statements,
+        totalStatements: res.total_statements,
         // Partial result: statements + (if any) the error are shown together.
         error: res.error ?? null,
         capped: false,
       });
       // Row count: SELECT → the first page fetched; DML → total affected; else null.
-      const rowCount =
-        rowsStmt?.kind === "rows"
-          ? rowsStmt.first_page.fetched_total
-          : res.statements.some((s) => s.kind === "affected")
-            ? res.statements.reduce((n, s) => n + (s.kind === "affected" ? s.row_count : 0), 0)
-            : null;
+      const rowCount = main
+        ? main.first_page.fetched_total
+        : res.statements.some((s) => s.kind === "affected")
+          ? res.statements.reduce((n, s) => n + (s.kind === "affected" ? s.row_count : 0), 0)
+          : null;
       useHistoryStore.getState().add({
         sql,
         connectionLabel: connectionLabel(connId),
@@ -533,7 +650,10 @@ export const useTabsStore = create<TabsState>()(
         running: false,
         columns: [],
         rows: [],
-        extra: [],
+        earlier: [],
+        statements: [],
+        totalStatements: 0,
+        partial: false,
         sourceTable: null,
         hasMore: false,
         fetchedTotal: 0,
@@ -550,6 +670,38 @@ export const useTabsStore = create<TabsState>()(
       });
       signalFinish(set, get, id, performance.now() - startedAt, null, true);
     }
+  },
+
+  async explain(id, opts) {
+    const tab = get().tabs.find((t) => t.id === id);
+    if (!tab || tab.query.running) return;
+    const connId = tab.connectionId;
+    if (!connId || !useConnectionStore.getState().connections[connId]) {
+      toast.message("Connect to a database first");
+      return;
+    }
+    const sql = opts.sql ?? tab.sql;
+    if (!sql.trim()) return;
+    const base = { analyze: opts.analyze, sql, selectionOffset: opts.selectionOffset ?? 0 };
+    const queryId = crypto.randomUUID();
+    const startedAt = performance.now();
+    patchQuery(set, id, { running: true, explainQueryId: queryId, infoResult: null });
+    if (get().activeTabId === id) useUiStore.getState().setResultsVisible(true);
+    let plan: PlanState;
+    try {
+      const json = await api.explainQuery(connId, sql, queryId, opts.analyze);
+      plan = { ...base, json, error: null, elapsedMs: Math.round(performance.now() - startedAt) };
+    } catch (e) {
+      const error = api.isAriadneError(e) ? e : { kind: "internal" as const, message: String(e) };
+      plan = { ...base, json: null, error, elapsedMs: Math.round(performance.now() - startedAt) };
+    }
+    // markerStale is reset only now, together with the new plan: the editor marker
+    // belongs to whichever of plan / run error is on screen.
+    patchQuery(set, id, { running: false, explainQueryId: null, plan, markerStale: false });
+  },
+
+  setPlan(tabId, plan) {
+    patchQuery(set, tabId, { plan });
   },
 
   async fetchMore(id) {
@@ -579,15 +731,17 @@ export const useTabsStore = create<TabsState>()(
 
   async cancel(id) {
     const tab = get().tabs.find((t) => t.id === id);
-    if (tab?.connectionId && tab.query.queryId) {
-      await api.cancelQuery(tab.connectionId, tab.query.queryId).catch(() => {});
+    const queryId = tab?.query.explainQueryId ?? tab?.query.queryId;
+    if (tab?.connectionId && queryId) {
+      await api.cancelQuery(tab.connectionId, queryId).catch(() => {});
     }
   },
 
   async forceKill(id) {
     const tab = get().tabs.find((t) => t.id === id);
-    if (tab?.connectionId && tab.query.queryId) {
-      await api.forceKillQuery(tab.connectionId, tab.query.queryId).catch(() => {});
+    const queryId = tab?.query.explainQueryId ?? tab?.query.queryId;
+    if (tab?.connectionId && queryId) {
+      await api.forceKillQuery(tab.connectionId, queryId).catch(() => {});
     }
   },
 

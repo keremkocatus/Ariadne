@@ -2,19 +2,25 @@
 
 /*
  * Ariadne theme — black-and-white monochrome minimalism.
- * Color is used only for error/warning/profile-stripe signals.
+ * Color is used only for error/warning/success/profile-stripe signals.
  * Tailwind v4: theme tokens are defined as CSS variables via @theme.
  */
 @theme {
   --color-bg: #0b0b0c;
   --color-bg-elev: #141416;
+  /* Hover/pressed surface on top of either background. */
+  --color-bg-hover: #1d1d21;
   --color-border: #26262a;
+  --color-border-strong: #3a3a41;
   --color-fg: #ededed;
   --color-fg-muted: #8a8a90;
+  /* Tertiary text: placeholders, row numbers, de-emphasized metadata. */
+  --color-fg-subtle: #5d5d65;
   --color-accent: #ededed;
-  /* Signal colors — for errors/warnings only */
+  /* Signal colors — for errors/warnings/success only */
   --color-danger: #e5484d;
   --color-warn: #f5a524;
+  --color-ok: #46a758;
   --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Menlo, Consolas,
     monospace;
 }
@@ -27,12 +33,16 @@
 :root[data-theme="light"] {
   --color-bg: #ffffff;
   --color-bg-elev: #f4f4f5;
+  --color-bg-hover: #e9e9ec;
   --color-border: #d9d9de;
+  --color-border-strong: #bcbcc4;
   --color-fg: #18181b;
   --color-fg-muted: #6b6b73;
+  --color-fg-subtle: #a0a0a8;
   --color-accent: #18181b;
   --color-danger: #d21c22;
   --color-warn: #b5760a;
+  --color-ok: #2a7e3b;
 }
 
 html,
@@ -51,6 +61,16 @@ body {
   overflow: hidden;
 }
 
+::selection {
+  background: color-mix(in srgb, var(--color-fg) 24%, transparent);
+}
+
+/* Keyboard focus is visible everywhere; mouse focus stays quiet. */
+:where(button, [role="tab"], [role="menuitem"], a):focus-visible {
+  outline: 1px solid var(--color-fg-muted);
+  outline-offset: 1px;
+}
+
 /* Shared scrollbar — thin, monochrome */
 ::-webkit-scrollbar {
   width: 10px;
@@ -59,7 +79,54 @@ body {
 ::-webkit-scrollbar-thumb {
   background: var(--color-border);
   border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
-::-webkit-scrollbar-track {
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+/*
+ * Entrance motion for surfaces that appear on top of the app. Kept short: these open
+ * dozens of times a day and must never feel like waiting.
+ */
+@keyframes ari-overlay-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes ari-dialog-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -49%) scale(0.985);
+  }
+}
+@keyframes ari-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+.ari-overlay-in {
+  animation: ari-overlay-in 120ms ease-out;
+}
+.ari-dialog-in {
+  animation: ari-dialog-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ari-menu-in {
+  animation: ari-menu-in 90ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ari-overlay-in,
+  .ari-dialog-in,
+  .ari-menu-in {
+    animation: none;
+  }
 }

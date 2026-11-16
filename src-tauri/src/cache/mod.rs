@@ -101,6 +101,9 @@ pub struct Table {
     pub primary_key: Vec<ColIdx>,
     pub comment: Option<String>,
     pub estimated_rows: i64, // pg_class.reltuples
+    /// For a partition: the parent table and its bound (`FOR VALUES …` / `DEFAULT`).
+    pub partition_of: Option<TableId>,
+    pub partition_bound: Option<String>,
 }
 
 impl Table {
@@ -144,6 +147,10 @@ pub struct Function {
     /// Whether the return type is `trigger` — for the "trigger function" filter in
     /// the explorer. Independent of `kind` (trigger fns have prokind='f').
     pub is_trigger: bool,
+    /// The extension that installed this function, if any. Extensions put hundreds
+    /// of functions into user schemas (often `public`); the explorer groups them
+    /// apart from the ones the user wrote.
+    pub extension: Option<String>,
     pub comment: Option<String>,
 }
 
@@ -305,6 +312,8 @@ mod tests {
             primary_key: Vec::new(),
             comment: None,
             estimated_rows: rows,
+            partition_of: None,
+            partition_bound: None,
         }
     }
 

@@ -18,18 +18,21 @@ export function DialogContent({
 }) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[1px]" />
+      <DialogPrimitive.Overlay className="ari-overlay-in fixed inset-0 z-50 bg-black/55 backdrop-blur-[2px]" />
       <DialogPrimitive.Content
         className={cn(
-          "fixed left-1/2 top-1/2 z-50 w-[460px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2",
-          "rounded-md border border-border bg-bg-elev p-4 shadow-2xl outline-none",
+          "ari-dialog-in fixed left-1/2 top-1/2 z-50 w-[460px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2",
+          "rounded-xl border border-border bg-bg-elev p-4 shadow-2xl outline-none",
           className,
         )}
         {...props}
       >
         {children}
         {!hideClose && (
-          <DialogPrimitive.Close className="absolute right-3 top-3 text-fg-muted hover:text-fg">
+          <DialogPrimitive.Close
+            className="absolute right-3 top-3 rounded-md p-1 text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+            aria-label="Close"
+          >
             <X size={14} />
           </DialogPrimitive.Close>
         )}

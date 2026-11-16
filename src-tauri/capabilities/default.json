@@ -1,7 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Ariadne ana pencere yetkileri: core + dosya aç/kaydet diyaloğu (design 15 §P1-U4).",
+  "description": "Main window permissions: core, the runtime window icon, the open/save file dialog, and the updater.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "updater:default", "process:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-icon",
+    "dialog:default",
+    "updater:default",
+    "process:default"
+  ]
 }

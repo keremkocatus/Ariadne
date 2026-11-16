@@ -21,7 +21,7 @@ export function Sidebar({ connectionId, profileId, onOpenRelation, onOpenFunctio
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 border-b border-border">
+      <div className="flex shrink-0 gap-0.5 border-b border-border p-1" role="tablist">
         <TabButton active={tab === "explorer"} onClick={() => setTab("explorer")} icon={<Table2 size={12} />}>
           Explorer
         </TabButton>
@@ -63,10 +63,12 @@ function TabButton({
 }) {
   return (
     <button
+      role="tab"
+      aria-selected={active}
       onClick={onClick}
       className={cn(
-        "flex flex-1 items-center justify-center gap-1.5 py-1.5 text-[11px]",
-        active ? "border-b-2 border-fg text-fg" : "border-b-2 border-transparent text-fg-muted hover:text-fg",
+        "flex h-6 flex-1 items-center justify-center gap-1.5 rounded-md text-[11px] transition-colors",
+        active ? "bg-bg-hover text-fg" : "text-fg-muted hover:text-fg",
       )}
     >
       {icon}

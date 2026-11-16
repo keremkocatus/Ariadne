@@ -48,7 +48,7 @@ export function ContextBar({ connectionId }: { connectionId: string | null }) {
 
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
-            <button className="inline-flex items-center gap-1 rounded px-1 hover:bg-bg-elev">
+            <button className="inline-flex items-center gap-1 rounded px-1 hover:bg-bg-hover">
               <Database size={11} className="shrink-0 text-fg-muted" />
               <span className="max-w-[110px] truncate">{info.database}</span>
               <ChevronDown size={10} className="text-fg-muted" />
@@ -58,7 +58,7 @@ export function ContextBar({ connectionId }: { connectionId: string | null }) {
             <DropdownMenu.Content
               align="start"
               sideOffset={4}
-              className="z-50 max-h-[320px] min-w-[180px] overflow-auto rounded-md border border-border bg-bg-elev p-1 text-xs shadow-2xl"
+              className="z-50 max-h-[320px] min-w-[180px] overflow-auto ari-menu-in rounded-lg border border-border bg-bg-elev p-1 text-xs shadow-2xl"
             >
               <DatabaseList
                 connectionId={connectionId}
@@ -123,7 +123,7 @@ function DatabaseList({
             key={d.name}
             disabled={isCurrent}
             className={cn(
-              "flex cursor-pointer items-center gap-2 rounded px-2 py-1 outline-none hover:bg-bg data-[disabled]:cursor-default data-[disabled]:opacity-60",
+              "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 outline-none hover:bg-bg-hover data-[disabled]:cursor-default data-[disabled]:opacity-60",
             )}
             onSelect={() => !isCurrent && void connectProfile(profileId, d.name)}
           >
