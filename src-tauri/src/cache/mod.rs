@@ -101,6 +101,9 @@ pub struct Table {
     pub primary_key: Vec<ColIdx>,
     pub comment: Option<String>,
     pub estimated_rows: i64, // pg_class.reltuples
+    /// For a partition: the parent table and its bound (`FOR VALUES …` / `DEFAULT`).
+    pub partition_of: Option<TableId>,
+    pub partition_bound: Option<String>,
 }
 
 impl Table {
@@ -305,6 +308,8 @@ mod tests {
             primary_key: Vec::new(),
             comment: None,
             estimated_rows: rows,
+            partition_of: None,
+            partition_bound: None,
         }
     }
 

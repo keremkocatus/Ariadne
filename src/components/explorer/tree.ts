@@ -2,6 +2,7 @@
 // react-arborist renders these nodes.
 import type { SchemaSnapshot, SnapFn, SnapRel } from "@/lib/api";
 import type { ExplorerFilter } from "@/stores/schemaStore";
+import { partitionLabel } from "@/lib/pgFormat";
 
 export interface TreeNode {
   id: string;
@@ -13,6 +14,14 @@ export interface TreeNode {
   isSystem?: boolean;
   /// Which category filter a "more" node opens.
   moreWhich?: "rel" | "fn";
+  /// For a partition nested under its parent: the name with the parent's prefix
+  /// removed (`event_logs_y2026m11` → `y2026m11`).
+  shortName?: string;
+  /// For a table with partitions: how many there are in total (all levels), and the
+  /// row estimate summed over the leaves — the parent's own reltuples is not kept up
+  /// to date by Postgres.
+  partitionCount?: number;
+  partitionRows?: number;
   children?: TreeNode[];
 }
 
@@ -20,10 +29,53 @@ export interface TreeNode {
 /// narrow" node; keeps a 2000-table tree from choking.
 export const CATEGORY_CAP = 200;
 
-/// Snapshot → a 3-level tree: schema → category → object. System schemas
-/// (pg_catalog/information_schema) aren't shown — their objects aren't fetched into
-/// the cache, so they shouldn't appear as empty nodes.
+/// Snapshot → a tree: schema → category → object, with partitions nested under their
+/// parent table. System schemas (pg_catalog/information_schema) aren't shown — their
+/// objects aren't fetched into the cache, so they shouldn't appear as empty nodes.
 export function buildTree(snap: SchemaSnapshot): TreeNode[] {
+  // Partitions hang under their parent wherever it lives, so the lookup spans all
+  // schemas. It is built from the snapshot as given: when a filter has removed the
+  // parent, its partitions fall back to being listed as ordinary tables.
+  const byOid = new Map<number, SnapRel>();
+  const childrenOf = new Map<number, { schema: string; rel: SnapRel }[]>();
+  for (const sc of snap.schemas) {
+    for (const r of sc.relations) byOid.set(r.oid, r);
+  }
+  for (const sc of snap.schemas) {
+    for (const r of sc.relations) {
+      if (r.parent_oid != null && byOid.has(r.parent_oid)) {
+        const list = childrenOf.get(r.parent_oid) ?? [];
+        list.push({ schema: sc.name, rel: r });
+        childrenOf.set(r.parent_oid, list);
+      }
+    }
+  }
+  const isNested = (r: SnapRel) => r.parent_oid != null && byOid.has(r.parent_oid);
+
+  const relNode = (schema: string, r: SnapRel, parent?: SnapRel): TreeNode => {
+    const node: TreeNode = {
+      id: `${schema}.${r.name}`,
+      name: r.name,
+      ntype: "relation",
+      schema,
+      rel: r,
+      shortName: parent ? partitionLabel(r.name, parent.name) : undefined,
+    };
+    const kids = childrenOf.get(r.oid);
+    if (kids && kids.length > 0) {
+      node.children = kids
+        .slice()
+        .sort((a, b) => a.rel.name.localeCompare(b.rel.name, undefined, { numeric: true }))
+        .map((k) => relNode(k.schema, k.rel, r));
+      node.partitionCount = node.children.reduce((n, c) => n + 1 + (c.partitionCount ?? 0), 0);
+      node.partitionRows = node.children.reduce(
+        (n, c) => n + (c.children ? (c.partitionRows ?? 0) : Math.max(0, c.rel?.estimated_rows ?? 0)),
+        0,
+      );
+    }
+    return node;
+  };
+
   return snap.schemas
     .filter((sc) => !sc.is_system)
     .slice()
@@ -36,25 +88,15 @@ export function buildTree(snap: SchemaSnapshot): TreeNode[] {
           id: `${sc.name}:${label}`,
           name: `${label} (${rels.length})`,
           ntype: "category",
-          children: capChildren(
-            rels,
-            (r) => ({
-              id: `${sc.name}.${r.name}`,
-              name: r.name,
-              ntype: "relation" as const,
-              schema: sc.name,
-              rel: r,
-            }),
-            `${sc.name}:${label}`,
-            which,
-          ),
+          children: capChildren(rels, (r) => relNode(sc.name, r), `${sc.name}:${label}`, which),
         });
       };
       group(
         "Tables",
         "rel",
         sc.relations.filter(
-          (r) => r.kind === "table" || r.kind === "partitioned" || r.kind === "foreign",
+          (r) =>
+            (r.kind === "table" || r.kind === "partitioned" || r.kind === "foreign") && !isNested(r),
         ),
       );
       group("Views", "rel", sc.relations.filter((r) => r.kind === "view"));
@@ -177,9 +219,26 @@ export function defaultOpenState(snap: SchemaSnapshot): Record<string, boolean> 
   return { [`schema:${active}`]: true, [`${active}:Tables`]: true };
 }
 
-export function formatRows(n: number): string {
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
-  return String(n);
+/// The parent table of a partition, when it is in the snapshot.
+export function findParent(
+  snap: SchemaSnapshot,
+  rel: SnapRel,
+): { schema: string; rel: SnapRel } | null {
+  if (rel.parent_oid == null) return null;
+  for (const sc of snap.schemas) {
+    const parent = sc.relations.find((r) => r.oid === rel.parent_oid);
+    if (parent) return { schema: sc.name, rel: parent };
+  }
+  return null;
+}
+
+/// The direct partitions of a table, name-sorted.
+export function findPartitions(snap: SchemaSnapshot, rel: SnapRel): { schema: string; rel: SnapRel }[] {
+  const out: { schema: string; rel: SnapRel }[] = [];
+  for (const sc of snap.schemas) {
+    for (const r of sc.relations) {
+      if (r.parent_oid === rel.oid) out.push({ schema: sc.name, rel: r });
+    }
+  }
+  return out.sort((a, b) => a.rel.name.localeCompare(b.rel.name, undefined, { numeric: true }));
 }
