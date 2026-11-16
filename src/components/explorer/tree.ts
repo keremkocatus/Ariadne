@@ -12,6 +12,8 @@ export interface TreeNode {
   rel?: SnapRel;
   fn?: SnapFn;
   isSystem?: boolean;
+  /// For a category: what it holds. Drives its icon and which filter applies to it.
+  group?: CategoryGroup;
   /// Which category filter a "more" node opens.
   moreWhich?: "rel" | "fn";
   /// For a partition nested under its parent: the name with the parent's prefix
@@ -24,6 +26,23 @@ export interface TreeNode {
   partitionRows?: number;
   children?: TreeNode[];
 }
+
+export type CategoryGroup =
+  | "tables"
+  | "views"
+  | "mat_views"
+  | "sequences"
+  | "functions"
+  | "fn_user"
+  | "fn_trigger"
+  | "fn_system";
+
+const GROUP_OF: Record<string, CategoryGroup> = {
+  Tables: "tables",
+  Views: "views",
+  Materialized: "mat_views",
+  Sequences: "sequences",
+};
 
 /// Max objects shown per category. If exceeded, the first CAP + a "N more — filter to
 /// narrow" node; keeps a 2000-table tree from choking.
@@ -88,6 +107,7 @@ export function buildTree(snap: SchemaSnapshot): TreeNode[] {
           id: `${sc.name}:${label}`,
           name: `${label} (${rels.length})`,
           ntype: "category",
+          group: GROUP_OF[label],
           children: capChildren(rels, (r) => relNode(sc.name, r), `${sc.name}:${label}`, which),
         });
       };
@@ -103,12 +123,10 @@ export function buildTree(snap: SchemaSnapshot): TreeNode[] {
       group("Materialized", "rel", sc.relations.filter((r) => r.kind === "mat_view"));
       group("Sequences", "rel", sc.relations.filter((r) => r.kind === "sequence"));
       if (sc.functions.length > 0) {
-        cats.push({
-          id: `${sc.name}:Functions`,
-          name: `Functions (${sc.functions.length})`,
-          ntype: "category",
-          children: capChildren(
-            sc.functions,
+        const fnId = `${sc.name}:Functions`;
+        const fnNodes = (fns: SnapFn[], catId: string) =>
+          capChildren(
+            fns,
             (f) => ({
               id: `${sc.name}.fn.${f.oid}`,
               name: f.name,
@@ -116,9 +134,42 @@ export function buildTree(snap: SchemaSnapshot): TreeNode[] {
               schema: sc.name,
               fn: f,
             }),
-            `${sc.name}:Functions`,
+            catId,
             "fn",
-          ),
+          );
+        const fromExt = sc.functions.filter((f) => f.extension);
+        const triggers = sc.functions.filter((f) => !f.extension && f.is_trigger);
+        const own = sc.functions.filter((f) => !f.extension && !f.is_trigger);
+        const sub = (key: string, label: string, group: CategoryGroup, fns: SnapFn[]): TreeNode[] =>
+          fns.length === 0
+            ? []
+            : [
+                {
+                  id: `${fnId}:${key}`,
+                  name: `${label} (${fns.length})`,
+                  ntype: "category",
+                  group,
+                  children: fnNodes(fns, `${fnId}:${key}`),
+                },
+              ];
+        // An extension can drop hundreds of functions into a schema, and trigger
+        // functions are never called by hand; grouping both apart keeps the callable
+        // functions the user wrote easy to reach. When everything is of that one
+        // kind the extra level would only add a click.
+        const children: TreeNode[] =
+          fromExt.length === 0 && triggers.length === 0
+            ? fnNodes(own, fnId)
+            : [
+                ...sub("user", "User-defined", "fn_user", own),
+                ...sub("triggers", "Triggers", "fn_trigger", triggers),
+                ...sub("system", "System functions", "fn_system", fromExt),
+              ];
+        cats.push({
+          id: fnId,
+          name: `Functions (${sc.functions.length})`,
+          ntype: "category",
+          group: "functions",
+          children,
         });
       }
       return {
@@ -216,7 +267,11 @@ export function defaultOpenState(snap: SchemaSnapshot): Record<string, boolean> 
   const preferred = snap.search_path.find((s) => userSchemas.includes(s));
   const active =
     preferred ?? (userSchemas.includes("public") ? "public" : userSchemas[0]);
-  return { [`schema:${active}`]: true, [`${active}:Tables`]: true };
+  const open: Record<string, boolean> = { [`schema:${active}`]: true, [`${active}:Tables`]: true };
+  // Opening "Functions" should land on the user's own functions straight away; the
+  // extension group stays closed.
+  for (const s of userSchemas) open[`${s}:Functions:user`] = true;
+  return open;
 }
 
 /// The parent table of a partition, when it is in the snapshot.

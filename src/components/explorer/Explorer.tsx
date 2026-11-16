@@ -73,7 +73,8 @@ export function Explorer({ connectionId, profileId, onOpenRelation, onOpenFuncti
   // this when the connection changes.
   const initialOpen = useMemo(() => (snapshot ? defaultOpenState(snapshot) : {}), [snapshot]);
 
-  const which = (node: TreeNode): "rel" | "fn" => (node.name.startsWith("Functions") ? "fn" : "rel");
+  const which = (node: TreeNode): "rel" | "fn" =>
+    node.group === "functions" || node.group?.startsWith("fn_") ? "fn" : "rel";
   // Right-click: category → filter popover; schema → "New query here"; an object →
   // its action menu.
   const openFilterMenu = (node: TreeNode, e: React.MouseEvent) => {

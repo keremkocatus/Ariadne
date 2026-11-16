@@ -129,6 +129,8 @@ export interface SnapFn {
   kind: FnKind;
   /** Whether the return type is `trigger` — for the explorer's "trigger function" filter. */
   is_trigger: boolean;
+  /** The extension that installed the function; absent for user-written ones. */
+  extension?: string;
   comment?: string | null;
 }
 export interface SnapSchema {

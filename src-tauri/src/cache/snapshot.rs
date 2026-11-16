@@ -59,6 +59,7 @@ impl SchemaCache {
                     signature: f.signature(),
                     kind: f.kind,
                     is_trigger: f.is_trigger,
+                    extension: f.extension.clone(),
                     comment: f.comment.clone(),
                 });
             }
@@ -129,5 +130,7 @@ pub struct SnapFn {
     pub signature: String,
     pub kind: FnKind,
     pub is_trigger: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extension: Option<String>,
     pub comment: Option<String>,
 }

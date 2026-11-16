@@ -147,6 +147,10 @@ pub struct Function {
     /// Whether the return type is `trigger` — for the "trigger function" filter in
     /// the explorer. Independent of `kind` (trigger fns have prokind='f').
     pub is_trigger: bool,
+    /// The extension that installed this function, if any. Extensions put hundreds
+    /// of functions into user schemas (often `public`); the explorer groups them
+    /// apart from the ones the user wrote.
+    pub extension: Option<String>,
     pub comment: Option<String>,
 }
 

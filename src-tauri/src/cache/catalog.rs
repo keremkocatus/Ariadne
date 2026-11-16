@@ -280,7 +280,13 @@ async fn fetch_functions(pool: &PgPool) -> Result<Vec<Function>, AriadneError> {
                 pg_catalog.pg_get_function_result(p.oid) AS result, \
                 p.prokind AS prokind, \
                 (p.prorettype = 'pg_catalog.trigger'::pg_catalog.regtype) AS is_trigger, \
-                obj_description(p.oid, 'pg_proc') AS comment \
+                obj_description(p.oid, 'pg_proc') AS comment, \
+                (SELECT e.extname FROM pg_catalog.pg_depend d \
+                   JOIN pg_catalog.pg_extension e ON e.oid = d.refobjid \
+                  WHERE d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass \
+                    AND d.objid = p.oid AND d.deptype = 'e' \
+                    AND d.refclassid = 'pg_catalog.pg_extension'::pg_catalog.regclass \
+                  LIMIT 1) AS extension \
          FROM pg_catalog.pg_proc p \
          JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
          WHERE {NOT_SYSTEM}"
@@ -300,6 +306,7 @@ async fn fetch_functions(pool: &PgPool) -> Result<Vec<Function>, AriadneError> {
                     .unwrap_or_else(|| "void".to_string()),
                 kind: FnKind::from_pg(r.try_get("prokind")?),
                 is_trigger: r.try_get::<Option<bool>, _>("is_trigger")?.unwrap_or(false),
+                extension: r.try_get("extension")?,
                 comment: r.try_get("comment")?,
             })
         })
