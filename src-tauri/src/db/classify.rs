@@ -5,17 +5,18 @@
 use super::types::{SourceTable, TxStatus};
 
 pub struct StmtInfo {
+    /// Display tag ("CREATE FUNCTION", "SELECT", …). See `command_tag`.
     pub command: String,
     pub is_dml: bool,
     pub returns_rows: bool,
+    /// Whether the statement can be wrapped in `DECLARE … CURSOR FOR`. Only a plain
+    /// query can: EXPLAIN, SHOW and DML … RETURNING return rows but are not valid
+    /// cursor queries.
+    pub cursorable: bool,
     pub destructive: Option<(String, String)>, // (kind, table)
     pub tx_transition: Option<TxStatus>,
     /// For a plain single-table SELECT: the table it reads. See `derive_source_table`.
     pub source_table: Option<SourceTable>,
-}
-
-pub fn stmt_returns_rows(sql: &str) -> bool {
-    classify(sql).returns_rows
 }
 
 pub fn classify(sql: &str) -> StmtInfo {
@@ -23,9 +24,10 @@ pub fn classify(sql: &str) -> StmtInfo {
 
     let command = first_keyword(sql);
     let mut info = StmtInfo {
-        command: command.clone(),
-        is_dml: matches!(command.as_str(), "INSERT" | "UPDATE" | "DELETE"),
+        command: command_tag(sql),
+        is_dml: matches!(command.as_str(), "INSERT" | "UPDATE" | "DELETE" | "MERGE"),
         returns_rows: false,
+        cursorable: false,
         destructive: None,
         tx_transition: None,
         source_table: None,
@@ -37,6 +39,7 @@ pub fn classify(sql: &str) -> StmtInfo {
             command.as_str(),
             "SELECT" | "WITH" | "VALUES" | "TABLE" | "SHOW" | "EXPLAIN"
         );
+        info.cursorable = matches!(command.as_str(), "SELECT" | "VALUES" | "TABLE");
         return info;
     };
     let Some(node) = parsed
@@ -50,22 +53,30 @@ pub fn classify(sql: &str) -> StmtInfo {
     };
 
     match node {
+        // SELECT … INTO creates a table and returns nothing.
+        N::SelectStmt(s) if s.into_clause.is_some() => {}
         N::SelectStmt(s) => {
             info.returns_rows = true;
+            info.cursorable = true;
             info.source_table = derive_source_table(s);
         }
         N::ExplainStmt(_) => info.returns_rows = true,
         N::VariableShowStmt(_) => info.returns_rows = true,
+        // DML is flagged from the AST as well: a leading CTE (`WITH … INSERT`) hides
+        // the verb from the first-keyword check.
         N::InsertStmt(s) => {
+            info.is_dml = true;
             info.returns_rows = !s.returning_list.is_empty();
         }
         N::UpdateStmt(s) => {
+            info.is_dml = true;
             info.returns_rows = !s.returning_list.is_empty();
             if s.where_clause.is_none() {
                 info.destructive = Some(("update".into(), rangevar_name(s.relation.as_ref())));
             }
         }
         N::DeleteStmt(s) => {
+            info.is_dml = true;
             info.returns_rows = !s.returning_list.is_empty();
             if s.where_clause.is_none() {
                 info.destructive = Some(("delete".into(), rangevar_name(s.relation.as_ref())));
@@ -149,16 +160,153 @@ fn rangevar_name(rv: Option<&pg_query::protobuf::RangeVar>) -> String {
 /// The first significant word of the SQL, upper-cased ("SELECT", "INSERT", …).
 /// Shared by `touches_schema` and `classify`.
 pub(crate) fn first_keyword(sql: &str) -> String {
-    sql.trim_start()
-        .split(|c: char| c.is_whitespace() || c == '(')
-        .find(|w| !w.is_empty())
-        .unwrap_or("")
-        .to_uppercase()
+    keywords(sql).next().unwrap_or_default()
+}
+
+/// Skips leading whitespace and SQL comments. The statement splitter keeps a comment
+/// that precedes a statement attached to it, so the first "word" would otherwise be
+/// `--`.
+pub(crate) fn strip_leading_comments(sql: &str) -> &str {
+    let mut s = sql.trim_start();
+    loop {
+        if let Some(rest) = s.strip_prefix("--") {
+            s = rest
+                .split_once('\n')
+                .map_or("", |(_, tail)| tail)
+                .trim_start();
+        } else if let Some(rest) = s.strip_prefix("/*") {
+            s = rest
+                .split_once("*/")
+                .map_or("", |(_, tail)| tail)
+                .trim_start();
+        } else {
+            return s;
+        }
+    }
+}
+
+fn keywords(sql: &str) -> impl Iterator<Item = String> + '_ {
+    strip_leading_comments(sql)
+        .split(|c: char| c.is_whitespace() || c == '(' || c == ';')
+        .filter(|w| !w.is_empty())
+        .map(str::to_uppercase)
+}
+
+/// A psql-like command tag for the Messages list. DDL gets its object kind
+/// ("CREATE FUNCTION", "DROP MATERIALIZED VIEW"); everything else is its verb.
+pub(crate) fn command_tag(sql: &str) -> String {
+    const MODIFIERS: &[&str] = &[
+        "OR",
+        "REPLACE",
+        "UNIQUE",
+        "TEMP",
+        "TEMPORARY",
+        "UNLOGGED",
+        "GLOBAL",
+        "LOCAL",
+        "RECURSIVE",
+        "CONSTRAINT",
+        "TRUSTED",
+        "PROCEDURAL",
+        "DEFAULT",
+    ];
+    let mut words = keywords(sql);
+    let Some(verb) = words.next() else {
+        return String::new();
+    };
+    match verb.as_str() {
+        "CREATE" | "ALTER" | "DROP" => {
+            let mut rest = words.filter(|w| !MODIFIERS.contains(&w.as_str()));
+            match rest.next() {
+                Some(obj) if matches!(obj.as_str(), "MATERIALIZED" | "FOREIGN" | "EVENT") => {
+                    match rest.next() {
+                        Some(next) => format!("{verb} {obj} {next}"),
+                        None => format!("{verb} {obj}"),
+                    }
+                }
+                Some(obj) => format!("{verb} {obj}"),
+                None => verb,
+            }
+        }
+        "START" => "START TRANSACTION".to_string(),
+        "REFRESH" => "REFRESH MATERIALIZED VIEW".to_string(),
+        _ => verb,
+    }
+}
+
+/// A one-line preview of a statement for the Messages list: comments stripped,
+/// whitespace collapsed, cut at `max` characters.
+pub(crate) fn preview(sql: &str, max: usize) -> String {
+    let flat = strip_leading_comments(sql)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if flat.chars().count() <= max {
+        flat
+    } else {
+        let mut cut: String = flat.chars().take(max).collect();
+        cut.push('…');
+        cut
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leading_comments_do_not_hide_the_command() {
+        let sql = "-- migrate\n/* step 1 */\n  BEGIN";
+        assert_eq!(first_keyword(sql), "BEGIN");
+        assert_eq!(classify(sql).command, "BEGIN");
+        assert_eq!(first_keyword("-- only a comment"), "");
+    }
+
+    #[test]
+    fn command_tags() {
+        for (sql, tag) in [
+            (
+                "create or replace function f() returns int as $$ select 1 $$ language sql",
+                "CREATE FUNCTION",
+            ),
+            ("CREATE UNIQUE INDEX i ON t (a)", "CREATE INDEX"),
+            ("CREATE TEMP TABLE t(id int)", "CREATE TABLE"),
+            ("DROP MATERIALIZED VIEW mv", "DROP MATERIALIZED VIEW"),
+            ("ALTER TABLE t ADD COLUMN x int", "ALTER TABLE"),
+            ("SET search_path = public", "SET"),
+            ("COMMIT;", "COMMIT"),
+            ("START TRANSACTION", "START TRANSACTION"),
+            ("SELECT(1)", "SELECT"),
+        ] {
+            assert_eq!(command_tag(sql), tag, "{sql}");
+        }
+    }
+
+    #[test]
+    fn preview_is_one_short_line() {
+        assert_eq!(preview("-- c\nSELECT 1\n  FROM t", 80), "SELECT 1 FROM t");
+        assert_eq!(preview("SELECT 12345", 8), "SELECT 1…");
+    }
+
+    #[test]
+    fn only_plain_queries_are_cursorable() {
+        assert!(classify("SELECT 1").cursorable);
+        assert!(classify("WITH x AS (SELECT 1) SELECT * FROM x").cursorable);
+        assert!(classify("VALUES (1)").cursorable);
+        for sql in [
+            "EXPLAIN SELECT 1",
+            "SHOW search_path",
+            "INSERT INTO t VALUES (1) RETURNING id",
+            "WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x RETURNING id",
+        ] {
+            let info = classify(sql);
+            assert!(info.returns_rows, "{sql}");
+            assert!(!info.cursorable, "{sql}");
+        }
+        // SELECT … INTO creates a table; it returns no rows at all.
+        assert!(!classify("SELECT x INTO t2 FROM a").returns_rows);
+        assert!(classify("WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x").is_dml);
+    }
 
     #[test]
     fn destructive_whereless() {

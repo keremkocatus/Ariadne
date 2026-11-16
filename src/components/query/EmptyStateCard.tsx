@@ -6,11 +6,14 @@ import { Plug, FolderOpen } from "lucide-react";
 import { useTabsStore, isPristine } from "@/stores/tabsStore";
 import { useUiStore } from "@/stores/uiStore";
 import { openSqlFile } from "@/lib/fileActions";
+import { Logo } from "@/components/brand/Logo";
 
 const SHORTCUTS: [string, string][] = [
   ["Ctrl+K", "Connections / command palette"],
   ["Ctrl+Enter", "Run query (or selection)"],
   ["Ctrl+P", "Search schema"],
+  ["Ctrl+L", "Execution plan of the selection"],
+  ["Ctrl+1…0", "Run a saved snippet"],
   ["Ctrl+O", "Open .sql file"],
   ["Ctrl+T", "New tab"],
 ];
@@ -24,19 +27,20 @@ export function EmptyStateCard() {
 
   return (
     <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6">
-      <div className="pointer-events-auto w-full max-w-sm rounded-lg border border-border bg-bg-elev/80 p-5 shadow-xl backdrop-blur-sm">
+      <div className="pointer-events-auto w-full max-w-sm rounded-xl border border-border bg-bg-elev/80 p-5 shadow-xl backdrop-blur-sm">
+        <Logo size={28} className="mb-3 text-fg" />
         <h2 className="text-sm font-medium text-fg">Welcome to Ariadne</h2>
         <p className="mt-1 text-xs text-fg-muted">Connect to a database to start querying.</p>
         <div className="mt-4 flex gap-2">
           <button
             onClick={() => setConnectMenuOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded border border-fg bg-fg px-2.5 py-1 text-xs font-medium text-bg hover:opacity-90"
+            className="inline-flex items-center gap-1.5 rounded-md border border-fg bg-fg px-2.5 py-1 text-xs font-medium text-bg hover:opacity-90"
           >
             <Plug size={12} /> Connect…
           </button>
           <button
             onClick={() => void openSqlFile()}
-            className="inline-flex items-center gap-1.5 rounded border border-border px-2.5 py-1 text-xs hover:border-fg-muted"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs transition-colors hover:bg-bg-hover"
           >
             <FolderOpen size={12} /> Open .sql
           </button>

@@ -322,7 +322,7 @@ export function ResultGrid({
       {/* Footer */}
       <div className="flex h-6 shrink-0 items-center gap-3 border-t border-border px-2 text-[11px] text-fg-muted">
         <span>
-          {fetchedTotal.toLocaleString()} rows
+          {fetchedTotal.toLocaleString()} {fetchedTotal === 1 ? "row" : "rows"}
           {estimatedTotal && estimatedTotal > fetchedTotal ? ` (~${fmt(estimatedTotal)} total)` : ""}
           {hasMore ? " · scroll for more" : ""}
         </span>
@@ -400,7 +400,7 @@ function CopyMenu({
       }}
     >
       <div
-        className="absolute w-56 rounded-md border border-border bg-bg-elev p-1 text-xs shadow-2xl"
+        className="ari-menu-in absolute w-56 rounded-lg border border-border bg-bg-elev p-1 text-xs shadow-2xl"
         // Footer (up): pin the bottom-right corner to the button's top-right → the menu
         // grows up/left, no need to know its height. Right-click: downward from the cursor.
         style={
@@ -490,7 +490,7 @@ function Item({
       disabled={disabled}
       onClick={onClick}
       title={hint}
-      className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left outline-none hover:bg-bg disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
+      className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-left outline-none hover:bg-bg-hover disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
     >
       {children}
     </button>

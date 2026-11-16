@@ -25,7 +25,7 @@ export function ConfirmDialog({
           {conf.estimated_rows != null ? ` — ~${conf.estimated_rows.toLocaleString()} rows affected` : ""}.
         </p>
         <p className="mt-1 text-[11px] text-fg-muted">
-          Statements before this one in the script have already run.
+          Nothing has run yet. Confirming runs the whole script from the start.
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <Button onClick={onCancel}>Cancel</Button>

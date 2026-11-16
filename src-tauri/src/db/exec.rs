@@ -15,9 +15,11 @@ use sqlx::pool::PoolConnection;
 use sqlx::{Executor, PgPool, Postgres, Row};
 use tokio::sync::Mutex;
 
-use super::classify::{classify, stmt_returns_rows, StmtInfo};
+use super::classify::{classify, first_keyword, preview, strip_leading_comments};
 use super::rows::{columns_from, read_rows};
-use super::types::{ColumnMeta, Confirmation, Page, RunResult, StatementResult, TxStatus};
+use super::types::{
+    ColumnMeta, Confirmation, Page, RunResult, StatementResult, StmtMeta, TxStatus,
+};
 use crate::error::{AriadneError, ErrorKind};
 
 pub const PAGE_SIZE: i64 = 500;
@@ -154,8 +156,7 @@ pub async fn run_query(
     pool: &PgPool,
     args: RunArgs<'_>,
 ) -> Result<RunResult, AriadneError> {
-    let started = std::time::Instant::now();
-    let stmts = pg_query::split_with_parser(args.sql).unwrap_or_else(|_| vec![args.sql]);
+    let stmts = split_statements(args.sql);
 
     let tab = reg.tab(args.tab_id);
     let mut st = tab.lock().await;
@@ -175,52 +176,89 @@ pub async fn run_query(
         (args.tab_id.to_string(), st.backend_pid),
     );
 
-    // Close the previous cursor (a new query arrived).
-    close_cursor(&mut st).await;
-
     let mut results: Vec<StatementResult> = Vec::new();
-    let mut needs_confirmation = None;
     let mut run_error: Option<AriadneError> = None;
     let mut error_statement_index: Option<usize> = None;
+    let mut error_statement: Option<StmtMeta> = None;
 
-    // The LAST row-returning statement takes the cursor path; the rest run normally.
-    let last_rows_idx = stmts
-        .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, s)| stmt_returns_rows(s))
-        .map(|(i, _)| i);
+    // Destructive guard. Checked for the whole script BEFORE anything executes: the
+    // confirmed run starts over from the first statement, so stopping halfway would
+    // run the statements ahead of the guarded one twice.
+    let needs_confirmation = if args.confirmed {
+        None
+    } else {
+        stmts.iter().enumerate().find_map(|(idx, stmt)| {
+            classify(stmt)
+                .destructive
+                .map(|(kind, table)| Confirmation {
+                    statement_index: idx,
+                    kind,
+                    table,
+                    estimated_rows: None,
+                })
+        })
+    };
+    let to_run: &[&str] = if needs_confirmation.is_some() {
+        &[]
+    } else {
+        // Close the previous cursor (a new query arrived).
+        close_cursor(&mut st).await;
+        &stmts
+    };
 
-    for (idx, stmt) in stmts.iter().enumerate() {
+    // Only the script's final statement may keep a cursor open. Anything running after
+    // a cursor would execute inside its internal READ ONLY transaction, and a later
+    // COMMIT would close the cursor mid-paging.
+    let last_idx = stmts.len().saturating_sub(1);
+
+    for (idx, stmt) in to_run.iter().enumerate() {
         let info = classify(stmt);
 
-        // Destructive guard.
-        if !args.confirmed {
-            if let Some((kind, table)) = &info.destructive {
-                needs_confirmation = Some(Confirmation {
-                    statement_index: idx,
-                    kind: kind.clone(),
-                    table: table.clone(),
-                    estimated_rows: None,
-                });
-                break;
-            }
-        }
-
-        let exec_res = if Some(idx) == last_rows_idx {
-            open_cursor_and_fetch(&mut st, stmt, args.query_id, args.page_size, started).await
+        let stmt_started = std::time::Instant::now();
+        let in_internal_tx = st.tx == TxStatus::Idle;
+        let exec_res = if info.cursorable && idx == last_idx {
+            open_cursor_and_fetch(&mut st, stmt, args.query_id, args.page_size).await
+        } else if info.cursorable {
+            run_bounded_select(&mut st, stmt, args.page_size, true).await
         } else if info.returns_rows {
-            // Row-returning but not the last one: still run it and take the first page (no cursor).
-            run_inline_rows(&mut st, stmt, started).await
+            run_inline_rows(&mut st, stmt).await
         } else {
-            run_non_query(&mut st, stmt, &info).await
+            run_non_query(&mut st, stmt, info.is_dml).await
+        };
+        // A query that writes (`SELECT nextval(…)`, `SELECT cron.schedule(…)`) can't run
+        // under the cursor's internal READ ONLY transaction. The failed attempt changed
+        // nothing, so run it again in a read-write transaction: to completion, keeping
+        // one page of its rows. On a read-only profile the retry fails the same way and
+        // that error is reported.
+        let exec_res = match exec_res {
+            Err(e)
+                if info.cursorable
+                    && in_internal_tx
+                    && e.sqlstate.as_deref() == Some(READ_ONLY_SQL_TRANSACTION) =>
+            {
+                rollback_internal_tx(&mut st).await;
+                run_bounded_select(&mut st, stmt, args.page_size, false).await
+            }
+            other => other,
         };
 
         match exec_res {
             Ok(mut r) => {
-                if let StatementResult::Rows { source_table, .. } = &mut r {
+                let elapsed_ms = stmt_started.elapsed().as_millis() as u64;
+                if let StatementResult::Rows {
+                    source_table,
+                    first_page,
+                    ..
+                } = &mut r
+                {
                     *source_table = info.source_table.clone();
+                    first_page.elapsed_ms = elapsed_ms;
                 }
+                *r.meta_mut() = StmtMeta {
+                    command: info.command.clone(),
+                    preview: preview(stmt, PREVIEW_CHARS),
+                    elapsed_ms,
+                };
                 results.push(r);
             }
             Err(mut e) => {
@@ -236,6 +274,11 @@ pub async fn run_query(
                 // error is embedded in RunResult, and remaining statements don't run (psql-like).
                 run_error = Some(e);
                 error_statement_index = Some(idx);
+                error_statement = Some(StmtMeta {
+                    command: info.command.clone(),
+                    preview: preview(stmt, PREVIEW_CHARS),
+                    elapsed_ms: stmt_started.elapsed().as_millis() as u64,
+                });
                 break;
             }
         }
@@ -257,7 +300,34 @@ pub async fn run_query(
         needs_confirmation,
         error: run_error,
         error_statement_index,
+        error_statement,
+        total_statements: stmts.len(),
     })
+}
+
+/// SQLSTATE 25006: a write was attempted inside a read-only transaction.
+const READ_ONLY_SQL_TRANSACTION: &str = "25006";
+/// Length of the statement preview shown in the Messages list.
+const PREVIEW_CHARS: usize = 160;
+
+/// Splits a script into statements, dropping fragments that are only comments or
+/// whitespace (a trailing `-- note` must not count as the script's last statement).
+fn split_statements(sql: &str) -> Vec<&str> {
+    pg_query::split_with_parser(sql)
+        .unwrap_or_else(|_| vec![sql])
+        .into_iter()
+        .filter(|s| !strip_leading_comments(s).is_empty())
+        .collect()
+}
+
+/// Ends the internal cursor transaction after a failed statement.
+async fn rollback_internal_tx(st: &mut TabState) {
+    if st.internal_tx {
+        if let Some(c) = st.conn.as_mut() {
+            let _ = sqlx::query("ROLLBACK").execute(&mut **c).await;
+        }
+        st.internal_tx = false;
+    }
 }
 
 /// Converts a statement-local 1-based Postgres position into the absolute 1-based
@@ -307,24 +377,22 @@ async fn close_cursor(st: &mut TabState) {
     }
 }
 
-async fn open_cursor_and_fetch(
-    st: &mut TabState,
-    stmt: &str,
-    query_id: &str,
-    page_size: i64,
-    started: std::time::Instant,
-) -> Result<StatementResult, AriadneError> {
-    let name = format!(
-        "ariadne_cur_{}",
-        query_id.replace('-', "").get(..16).unwrap_or("cur")
-    );
-    let conn = st.conn.as_mut().expect("conn").as_mut();
+/// The first page of a cursor, plus whether more rows are waiting behind it.
+struct FirstPage {
+    columns: Vec<ColumnMeta>,
+    rows: Vec<Vec<Option<String>>>,
+    truncated: bool,
+    has_more: bool,
+}
 
-    // Open an internal READ ONLY tx for the cursor if there's no user tx.
-    if st.tx == TxStatus::Idle {
-        sqlx::query("BEGIN READ ONLY").execute(&mut *conn).await?;
-        st.internal_tx = true;
-    }
+/// Declares `name` as a cursor over `stmt` and fetches its first page. The caller
+/// owns the surrounding transaction and decides whether the cursor stays open.
+async fn declare_and_fetch(
+    conn: &mut sqlx::postgres::PgConnection,
+    name: &str,
+    stmt: &str,
+    page_size: i64,
+) -> Result<FirstPage, AriadneError> {
     // Semantic errors (missing table/column, …) surface at DECLARE time; Postgres
     // reports the position relative to `decl`, so we subtract the prefix length to get
     // the statement-local position — otherwise the marker is off by ~58 chars. The
@@ -362,6 +430,52 @@ async fn open_cursor_and_fetch(
     if columns.is_empty() && page_rows.is_empty() {
         columns = describe_columns(conn, stmt).await;
     }
+    Ok(FirstPage {
+        columns,
+        rows: page_rows,
+        truncated,
+        has_more,
+    })
+}
+
+fn rows_result(page: FirstPage, has_more: bool, partial: bool) -> StatementResult {
+    let fetched_total = page.rows.len();
+    StatementResult::Rows {
+        // meta, elapsed_ms and source_table are filled by run_query, which knows the
+        // statement's classification and timing.
+        meta: StmtMeta::default(),
+        columns: page.columns,
+        first_page: Page {
+            rows: page.rows,
+            has_more,
+            fetched_total,
+            elapsed_ms: 0,
+        },
+        truncated_cells: page.truncated,
+        partial,
+        source_table: None,
+    }
+}
+
+async fn open_cursor_and_fetch(
+    st: &mut TabState,
+    stmt: &str,
+    query_id: &str,
+    page_size: i64,
+) -> Result<StatementResult, AriadneError> {
+    let name = format!(
+        "ariadne_cur_{}",
+        query_id.replace('-', "").get(..16).unwrap_or("cur")
+    );
+    let conn = st.conn.as_mut().expect("conn").as_mut();
+
+    // Open an internal READ ONLY tx for the cursor if there's no user tx.
+    if st.tx == TxStatus::Idle {
+        sqlx::query("BEGIN READ ONLY").execute(&mut *conn).await?;
+        st.internal_tx = true;
+    }
+    let page = declare_and_fetch(conn, &name, stmt, page_size).await?;
+    let has_more = page.has_more;
 
     if has_more {
         st.cursor = Some(Cursor {
@@ -379,68 +493,103 @@ async fn open_cursor_and_fetch(
             .await;
     }
     st.last_fetch = std::time::Instant::now();
-
-    let fetched_total = page_rows.len();
-    Ok(StatementResult::Rows {
-        columns,
-        first_page: Page {
-            rows: page_rows,
-            has_more,
-            fetched_total,
-            elapsed_ms: started.elapsed().as_millis() as u64,
-        },
-        truncated_cells: truncated,
-        source_table: None, // filled by run_query from the statement's StmtInfo
-    })
+    Ok(rows_result(page, has_more, false))
 }
 
-async fn run_inline_rows(
+/// Runs a query to completion while keeping only its first page: the rest of the
+/// cursor is skipped with `MOVE`, which executes every row (side effects included)
+/// without sending or storing them. Used for a SELECT that is not the script's last
+/// statement, and for a query that has to write. The result is flagged `partial` when
+/// rows were left out.
+///
+/// Without a user transaction it runs in its own: READ ONLY by default, read-write
+/// when `read_only` is false.
+async fn run_bounded_select(
     st: &mut TabState,
     stmt: &str,
-    started: std::time::Instant,
+    page_size: i64,
+    read_only: bool,
 ) -> Result<StatementResult, AriadneError> {
+    const NAME: &str = "ariadne_peek";
+    let conn = st.conn.as_mut().expect("conn").as_mut();
+    let own_tx = st.tx == TxStatus::Idle;
+    if own_tx {
+        let begin = if read_only {
+            "BEGIN READ ONLY"
+        } else {
+            "BEGIN"
+        };
+        sqlx::query(begin).execute(&mut *conn).await?;
+    }
+    let mut res = declare_and_fetch(conn, NAME, stmt, page_size).await;
+    if matches!(&res, Ok(page) if page.has_more) {
+        if let Err(e) = sqlx::query(&format!("MOVE FORWARD ALL IN {NAME}"))
+            .execute(&mut *conn)
+            .await
+        {
+            // A row past the first page failed: positioned against MOVE, so the
+            // position can't be mapped onto the statement.
+            let mut ae = AriadneError::from(e);
+            ae.position = None;
+            res = Err(ae);
+        }
+    }
+    if own_tx {
+        let end = if res.is_ok() { "COMMIT" } else { "ROLLBACK" };
+        let _ = sqlx::query(end).execute(&mut *conn).await;
+    } else if res.is_ok() {
+        let _ = sqlx::query(&format!("CLOSE {NAME}"))
+            .execute(&mut *conn)
+            .await;
+    }
+    let page = res?;
+    let partial = page.has_more;
+    Ok(rows_result(page, false, partial))
+}
+
+/// Runs a row-returning statement that can't go through a cursor (EXPLAIN, SHOW,
+/// DML … RETURNING). These are bounded by nature, so the rows are read directly.
+async fn run_inline_rows(st: &mut TabState, stmt: &str) -> Result<StatementResult, AriadneError> {
     let conn = st.conn.as_mut().expect("conn").as_mut();
     let rows = conn
         .fetch_all(sqlx::raw_sql(stmt))
         .await
         .map_err(AriadneError::from)?;
     let (mut columns, page_rows, truncated) = read_rows(&rows);
-    // See open_cursor_and_fetch: fill headers via describe on a zero-row result.
+    // See declare_and_fetch: fill headers via describe on a zero-row result.
     if columns.is_empty() && page_rows.is_empty() {
         columns = describe_columns(conn, stmt).await;
     }
-    let fetched_total = page_rows.len();
-    Ok(StatementResult::Rows {
-        columns,
-        first_page: Page {
+    Ok(rows_result(
+        FirstPage {
+            columns,
             rows: page_rows,
+            truncated,
             has_more: false,
-            fetched_total,
-            elapsed_ms: started.elapsed().as_millis() as u64,
         },
-        truncated_cells: truncated,
-        source_table: None, // filled by run_query from the statement's StmtInfo
-    })
+        false,
+        false,
+    ))
 }
 
 async fn run_non_query(
     st: &mut TabState,
     stmt: &str,
-    info: &StmtInfo,
+    is_dml: bool,
 ) -> Result<StatementResult, AriadneError> {
     let conn = st.conn.as_mut().expect("conn").as_mut();
     let res = conn
         .execute(sqlx::raw_sql(stmt))
         .await
         .map_err(AriadneError::from)?;
-    let command = info.command.clone();
-    if info.is_dml {
+    let meta = StmtMeta::default();
+    if is_dml {
         Ok(StatementResult::Affected {
-            command,
+            meta,
             row_count: res.rows_affected(),
         })
     } else {
-        Ok(StatementResult::Empty { command })
+        Ok(StatementResult::Empty { meta })
     }
 }
 
@@ -524,6 +673,90 @@ fn find_tab_by_cursor(reg: &ExecRegistry, query_id: &str) -> Option<String> {
                 .map(|_| e.key().clone())
         })
     })
+}
+
+// ---- explain ----
+
+/// Returns a statement's plan as `EXPLAIN (FORMAT JSON)` text.
+///
+/// With `analyze` the statement really executes, so it runs inside a transaction that
+/// is always rolled back: the timings are real, the side effects are not kept. The
+/// plan is produced on a pool connection rather than the tab's session, so it does not
+/// see that tab's uncommitted changes. Registered in `running`, so it can be cancelled
+/// like any query.
+pub async fn explain(
+    reg: &ExecRegistry,
+    pool: &PgPool,
+    sql: &str,
+    query_id: &str,
+    analyze: bool,
+) -> Result<String, AriadneError> {
+    // No fallback to "the whole text is one statement" here: EXPLAIN is prefixed to the
+    // text and sent as a simple query, so an unnoticed second statement would run for
+    // real, outside the ANALYZE rollback.
+    let stmts: Vec<&str> = pg_query::split_with_parser(sql)
+        .map_err(|e| {
+            AriadneError::new(
+                ErrorKind::QueryError,
+                format!("Can't explain this statement: {e}"),
+            )
+        })?
+        .into_iter()
+        .filter(|s| !strip_leading_comments(s).is_empty())
+        .collect();
+    let [stmt] = stmts.as_slice() else {
+        return Err(AriadneError::new(
+            ErrorKind::QueryError,
+            "Select exactly one statement to explain",
+        ));
+    };
+    if first_keyword(stmt) == "EXPLAIN" {
+        return Err(AriadneError::new(
+            ErrorKind::QueryError,
+            "The statement already starts with EXPLAIN — remove it, or just run the statement",
+        ));
+    }
+    let mut conn = pool.acquire().await.map_err(AriadneError::from)?;
+    let pid: i32 = sqlx::query("SELECT pg_backend_pid()")
+        .fetch_one(&mut *conn)
+        .await?
+        .try_get(0)?;
+    reg.running
+        .insert(query_id.to_string(), (String::new(), pid));
+    let res = explain_on(&mut conn, stmt, analyze).await;
+    reg.running.remove(query_id);
+    res
+}
+
+async fn explain_on(
+    conn: &mut sqlx::postgres::PgConnection,
+    stmt: &str,
+    analyze: bool,
+) -> Result<String, AriadneError> {
+    let prefix = if analyze {
+        "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "
+    } else {
+        "EXPLAIN (FORMAT JSON) "
+    };
+    if analyze {
+        sqlx::query("BEGIN").execute(&mut *conn).await?;
+    }
+    let res = conn
+        .fetch_one(sqlx::raw_sql(&format!("{prefix}{stmt}")))
+        .await;
+    if analyze {
+        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+    }
+    let row = res.map_err(|e| {
+        // The position is relative to the prefixed text; shift it back onto the statement.
+        let mut ae = AriadneError::from(e);
+        ae.position = ae
+            .position
+            .map(|p| p.saturating_sub(prefix.len() as u32).max(1));
+        ae
+    })?;
+    let plan: Option<String> = row.try_get_unchecked(0)?;
+    plan.ok_or_else(|| AriadneError::internal("EXPLAIN returned no plan"))
 }
 
 // ---- cancel_query ----
@@ -817,6 +1050,212 @@ mod tests {
         // For an already-finished query_id, false (not in the map).
         let again = force_kill_query(&reg, &pool, "qk").await.unwrap();
         assert!(!again, "false for a finished query");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
+    async fn non_cursor_row_statements_run() {
+        // EXPLAIN / SHOW / DML … RETURNING return rows but are not valid cursor queries.
+        let pool = pool().await;
+        let reg = ExecRegistry::default();
+        let r = run_query(&reg, &pool, args("EXPLAIN SELECT 1", "te", "qe"))
+            .await
+            .unwrap();
+        assert!(r.error.is_none(), "{:?}", r.error);
+        assert!(matches!(r.statements[0], StatementResult::Rows { .. }));
+
+        let r = run_query(
+            &reg,
+            &pool,
+            args(
+                "CREATE TEMP TABLE t_ret(id int); INSERT INTO t_ret VALUES (7) RETURNING id",
+                "te",
+                "qr",
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(r.error.is_none(), "{:?}", r.error);
+        match &r.statements[1] {
+            StatementResult::Rows { first_page, .. } => {
+                assert_eq!(first_page.rows[0][0].as_deref(), Some("7"))
+            }
+            other => panic!("expected Rows, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
+    async fn statements_after_a_select_are_not_read_only() {
+        // Only the final statement keeps a cursor (and its READ ONLY transaction), so
+        // a write following a SELECT must succeed, and every result set is returned.
+        let pool = pool().await;
+        let reg = ExecRegistry::default();
+        let r = run_query(
+            &reg,
+            &pool,
+            args(
+                "CREATE TEMP TABLE t_mix(id int); \
+                 SELECT g FROM generate_series(1, 700) g; \
+                 INSERT INTO t_mix VALUES (1); \
+                 -- a comment before the last statement\n SELECT count(*) FROM t_mix; -- trailing",
+                "tm",
+                "qm",
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(r.error.is_none(), "{:?}", r.error);
+        assert_eq!(r.statements.len(), 4);
+        match &r.statements[1] {
+            StatementResult::Rows {
+                first_page,
+                partial,
+                ..
+            } => {
+                assert_eq!(first_page.fetched_total, 501);
+                assert!(*partial, "an earlier SELECT is cut at one page");
+                assert!(!first_page.has_more);
+            }
+            other => panic!("expected Rows, got: {other:?}"),
+        }
+        match &r.statements[2] {
+            StatementResult::Affected { meta, row_count } => {
+                assert_eq!(meta.command, "INSERT");
+                assert_eq!(*row_count, 1);
+            }
+            other => panic!("expected Affected, got: {other:?}"),
+        }
+        match &r.statements[3] {
+            StatementResult::Rows {
+                first_page, meta, ..
+            } => {
+                assert_eq!(first_page.rows[0][0].as_deref(), Some("1"));
+                assert_eq!(meta.preview, "SELECT count(*) FROM t_mix");
+            }
+            other => panic!("expected Rows, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
+    async fn writing_select_falls_back_to_autocommit() {
+        // nextval() is rejected inside the cursor's READ ONLY transaction; the
+        // statement must be retried read-write instead of surfacing that error.
+        let pool = pool().await;
+        let reg = ExecRegistry::default();
+        let r = run_query(
+            &reg,
+            &pool,
+            args(
+                "CREATE TEMP SEQUENCE ari_seq; SELECT nextval('ari_seq')",
+                "tw",
+                "qw",
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(r.error.is_none(), "{:?}", r.error);
+        match &r.statements[1] {
+            StatementResult::Rows { first_page, .. } => {
+                assert_eq!(first_page.rows[0][0].as_deref(), Some("1"))
+            }
+            other => panic!("expected Rows, got: {other:?}"),
+        }
+        assert_eq!(r.tx_status, TxStatus::Idle);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
+    async fn bounded_select_runs_every_row() {
+        // An earlier SELECT keeps one page of rows but must still execute all of them:
+        // each row here advances a sequence, so the count proves it ran to the end.
+        let pool = pool().await;
+        let reg = ExecRegistry::default();
+        let r = run_query(
+            &reg,
+            &pool,
+            args(
+                "CREATE TEMP SEQUENCE ari_all; \
+                 SELECT nextval('ari_all') FROM generate_series(1, 1200); \
+                 SELECT last_value FROM ari_all",
+                "tb",
+                "qb",
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(r.error.is_none(), "{:?}", r.error);
+        match &r.statements[1] {
+            StatementResult::Rows {
+                first_page,
+                partial,
+                ..
+            } => {
+                assert_eq!(first_page.fetched_total, 501);
+                assert!(*partial);
+            }
+            other => panic!("expected Rows, got: {other:?}"),
+        }
+        match &r.statements[2] {
+            StatementResult::Rows { first_page, .. } => {
+                assert_eq!(first_page.rows[0][0].as_deref(), Some("1200"))
+            }
+            other => panic!("expected Rows, got: {other:?}"),
+        }
+        assert_eq!(r.tx_status, TxStatus::Idle);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
+    async fn destructive_guard_runs_nothing_before_confirmation() {
+        let pool = pool().await;
+        let reg = ExecRegistry::default();
+        let script = "CREATE TEMP TABLE t_guard(id int); INSERT INTO t_guard VALUES (1); \
+                      DELETE FROM t_guard";
+        let r = run_query(&reg, &pool, args(script, "tg", "qg0"))
+            .await
+            .unwrap();
+        let conf = r.needs_confirmation.expect("guard should ask");
+        assert_eq!(conf.statement_index, 2);
+        assert!(
+            r.statements.is_empty(),
+            "nothing may run before confirmation"
+        );
+
+        let confirmed = RunArgs {
+            confirmed: true,
+            ..args(script, "tg", "qg1")
+        };
+        let r = run_query(&reg, &pool, confirmed).await.unwrap();
+        assert!(r.error.is_none(), "{:?}", r.error);
+        assert_eq!(r.statements.len(), 3);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a live Postgres via ARIADNE_DATABASE_URL"]
+    async fn explain_returns_json_and_rolls_back_analyze() {
+        let pool = pool().await;
+        let reg = ExecRegistry::default();
+        let plan = explain(&reg, &pool, "SELECT 1", "qx", false).await.unwrap();
+        assert!(plan.contains("\"Plan\""), "{plan}");
+
+        let analyzed = explain(
+            &reg,
+            &pool,
+            "SELECT g FROM generate_series(1, 10) g",
+            "qy",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(analyzed.contains("Actual Total Time"), "{analyzed}");
+
+        let err = explain(&reg, &pool, "SELECT 1; SELECT 2", "qz", false)
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("exactly one"));
+        assert!(reg.running.is_empty(), "explain must unregister itself");
     }
 
     #[tokio::test]

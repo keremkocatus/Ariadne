@@ -20,6 +20,12 @@ pub struct RunResult {
     /// 0-based index of the failed statement in the script (for a "statement N" message).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_statement_index: Option<usize>,
+    /// What the failed statement was, so the Messages list can show it as a row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_statement: Option<StmtMeta>,
+    /// How many statements the script contained; more than `statements.len()` when a
+    /// failure or a pending confirmation stopped the run early.
+    pub total_statements: usize,
 }
 
 /// The single table a plain SELECT reads from — the basis for cell editing.
@@ -31,13 +37,29 @@ pub struct SourceTable {
     pub name: String,
 }
 
+/// Per-statement bookkeeping shared by every result kind: what ran and how long it
+/// took. Feeds the "Messages" list of a multi-statement run.
+#[derive(Debug, Default, Serialize)]
+pub struct StmtMeta {
+    /// Command tag, e.g. "SELECT", "CREATE FUNCTION", "COMMIT".
+    pub command: String,
+    /// The statement's text, comments stripped and collapsed to one short line.
+    pub preview: String,
+    pub elapsed_ms: u64,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StatementResult {
     Rows {
+        #[serde(flatten)]
+        meta: StmtMeta,
         columns: Vec<ColumnMeta>,
         first_page: Page,
         truncated_cells: bool,
+        /// The result was cut at one page and can't be paged further: only the last
+        /// statement of a script keeps a cursor open.
+        partial: bool,
         /// Present only when the statement was a plain single-table SELECT
         /// (no joins/set-ops/GROUP BY/DISTINCT/CTEs) — grid rows then map 1:1 to
         /// physical rows, so cell editing is safe to offer.
@@ -45,12 +67,22 @@ pub enum StatementResult {
         source_table: Option<SourceTable>,
     },
     Affected {
-        command: String,
+        #[serde(flatten)]
+        meta: StmtMeta,
         row_count: u64,
     },
     Empty {
-        command: String,
+        #[serde(flatten)]
+        meta: StmtMeta,
     },
+}
+
+impl StatementResult {
+    pub fn meta_mut(&mut self) -> &mut StmtMeta {
+        match self {
+            Self::Rows { meta, .. } | Self::Affected { meta, .. } | Self::Empty { meta } => meta,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
