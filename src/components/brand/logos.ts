@@ -66,15 +66,19 @@ export const LOGOS: LogoDef[] = [
   {
     id: "monogram",
     name: "Monogram",
-    note: "The letter A, with a spider on its thread where the crossbar was.",
+    note: "Half spider, half letter: the legs stand in for the left stroke of an A.",
     body:
-      `<g ${STROKE}>` +
-      `<path d="M11 57 32 7 53 57" stroke-width="5"/>` +
-      `<path d="M32 9V32" stroke-width="2.2"/>` +
-      `<g stroke-width="2.6">` +
-      mirrored(`<path d="M28 37 21.5 33"/><path d="M27.5 42 19 44"/>`) +
-      `</g></g>` +
-      `<circle cx="32" cy="39" r="6.5" fill="currentColor"/>`,
+      `<path d="M32 28.500A8.500 10.500 0 0 0 32 49.500Z" fill="currentColor"/>` +
+      `<path d="M32 19A5.500 5.500 0 0 0 32 30Z" fill="currentColor"/>` +
+      // Each leg bends at the line where the A's left stroke would run and follows
+      // it down, so the four legs together stand in for that stroke.
+      `<g ${STROKE} stroke-width="3.400">` +
+      `<path d="M29 25 24 9 20.500 18"/><path d="M28 30 19 22 15.500 31"/>` +
+      `<path d="M27 36 14 35 10.500 44"/><path d="M28 41 9 48 5.500 57"/>` +
+      `</g>` +
+      // The right half of a heavy A as one filled shape, so it carries the same
+      // weight as the half body it meets at the center line.
+      `<path fill="currentColor" fill-rule="evenodd" d="M32 4H37L59 60H48L43.300 48H32ZM32 19.300 39.400 38H32Z"/>`,
   },
   {
     id: "facet",
@@ -122,17 +126,21 @@ export const LOGOS: LogoDef[] = [
       `<circle cx="51.500" cy="51.500" r="4.500" fill="currentColor"/>`,
   },
   {
-    id: "labyrinth",
-    name: "Labyrinth",
-    note: "Rings of a maze with the thread leading to its center.",
+    id: "crawler",
+    name: "Crawler",
+    note: "Weaver on the move — turned onto the diagonal, mid-stride.",
     body:
-      `<g ${STROKE} stroke-width="3">` +
-      `<path d="M37 5.500A27 27 0 1 1 27 5.500"/>` +
-      `<path d="M50.500 28A19 19 0 1 1 46 19"/>` +
-      `<path d="M27 42A11 11 0 1 1 37 42"/>` +
-      `<path d="M32 4V21" stroke-width="2.2"/>` +
-      `</g>` +
-      `<circle cx="32" cy="32" r="4.500" fill="currentColor"/>`,
+      `<g transform="rotate(40 32 32) translate(32 32) scale(0.900) translate(-32 -32)">` +
+      `<ellipse cx="32" cy="39" rx="8.500" ry="10.500" fill="currentColor"/>` +
+      `<circle cx="32" cy="24.500" r="5.500" fill="currentColor"/>` +
+      `<g ${STROKE} stroke-width="3.200">` +
+      // The two sides are posed differently on purpose: legs caught in a stride read
+      // as a walking animal rather than as a symmetric emblem.
+      `<path d="M28 22 21 14 20 4"/><path d="M27 26 15 20 9 10"/>` +
+      `<path d="M27 30 13 31 5 39"/><path d="M28 34 20 42 19 55"/>` +
+      `<path d="M36 22 45 17 50 8"/><path d="M37 26 50 25 58 18"/>` +
+      `<path d="M37 30 50 36 55 47"/><path d="M36 34 42 46 39 58"/>` +
+      `</g></g>`,
   },
   {
     id: "graph",
